@@ -5,8 +5,9 @@ fixed-width Big5 text format. All file reading, validation, conversion, and
 download generation happen in the user's browser. No CSV data is uploaded to a
 server.
 
-> **Project status:** design, repository scaffold, and Traditional Chinese UI
-> prototype. The conversion engine is not yet implemented.
+> **Project status:** a minimum working browser flow and pure conversion core are
+> implemented. Automated tests, JSON settings import/export, and the remaining
+> release-hardening items are follow-up work.
 
 ## Contents
 
@@ -671,6 +672,9 @@ GitHub Pages is the primary runtime:
 - Reliable origin-scoped `localStorage`
 - Normal ES-module and asset loading
 - No server-side access to files selected in the browser
+- A production service worker precaches the application shell and all generated
+  assets. The UI reports when installation is complete; after that point the
+  page can be reloaded and used without a network connection.
 
 Moving the site to another scheme, host, or port creates a different storage
 origin, so saved preferences do not automatically follow it.
