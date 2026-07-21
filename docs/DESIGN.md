@@ -220,8 +220,10 @@ The settings screen also provides:
 - Display errors with source record number, output field, and reason.
 - Identify empty records and whitespace-only records explicitly instead of
   silently skipping them.
-- Show the first 20 valid record previews and all validation errors, with a
-  sensible display cap for extremely invalid files.
+- Show all valid record previews by default, let the user choose a smaller
+  preview count, and use one horizontal scrollbar for the entire preview block.
+  Show all validation errors, with a sensible display cap for extremely invalid
+  files.
 - Mark whitespace without changing the value: ASCII space as `·`, full-width
   space as `□`, tab as `→`, and embedded line break as `↵`. The actual output
   continues to contain the original characters, not these markers.

@@ -20,7 +20,6 @@ import {
 } from "./core/types";
 
 const STORAGE_KEY = "csv2txt.settings.v2";
-const PREVIEW_ROW_LIMIT = 20;
 const ISSUE_DISPLAY_LIMIT = 200;
 
 function requireElement<T extends Element>(selector: string): T {
@@ -163,10 +162,22 @@ app.innerHTML = `
             <span aria-hidden="true">4</span>
             <h2 id="preview-heading">驗證與預覽</h2>
           </div>
-          <label class="preview-option">
-            <input id="show-whitespace" type="checkbox" checked />
-            顯示來源空白標記
-          </label>
+          <div class="preview-options">
+            <label class="preview-row-count" for="preview-row-limit">
+              <span>預覽筆數</span>
+              <select id="preview-row-limit">
+                <option value="all" selected>全部</option>
+                <option value="20">20 筆</option>
+                <option value="50">50 筆</option>
+                <option value="100">100 筆</option>
+                <option value="200">200 筆</option>
+              </select>
+            </label>
+            <label class="preview-option">
+              <input id="show-whitespace" type="checkbox" checked />
+              顯示來源空白標記
+            </label>
+          </div>
         </div>
         <dl class="validation-summary" aria-label="驗證摘要">
           <div><dt>預期筆數</dt><dd id="expected-row-summary">200</dd></div>
@@ -227,6 +238,7 @@ const issueTableBody = requireElement<HTMLTableSectionElement>("#issue-table-bod
 const convertButton = requireElement<HTMLButtonElement>("#convert-button");
 const startOverButton = requireElement<HTMLButtonElement>("#start-over-button");
 const showWhitespaceInput = requireElement<HTMLInputElement>("#show-whitespace");
+const previewRowLimitSelect = requireElement<HTMLSelectElement>("#preview-row-limit");
 const offlineStatus = requireElement<HTMLElement>("#offline-status");
 
 let sourceFile: File | null = null;
@@ -386,8 +398,13 @@ function markWhitespace(value: string): string {
 }
 
 function renderPreview(result: ConversionResult): void {
+  const previousScrollLeft = previewResults.querySelector<HTMLElement>(".preview-chunk")?.scrollLeft ?? 0;
   previewResults.replaceChildren();
-  const validRows = result.rows.filter((row) => row.valid).slice(0, PREVIEW_ROW_LIMIT);
+  const allValidRows = result.rows.filter((row) => row.valid);
+  const selectedLimit = previewRowLimitSelect.value === "all"
+    ? allValidRows.length
+    : Number(previewRowLimitSelect.value);
+  const validRows = allValidRows.slice(0, selectedLimit);
 
   if (validRows.length === 0) {
     const notice = document.createElement("div");
@@ -403,8 +420,17 @@ function renderPreview(result: ConversionResult): void {
 
   const heading = document.createElement("p");
   heading.className = "preview-heading";
-  heading.textContent = `前 ${validRows.length} 筆正確資料預覽（每筆 ${result.recordWidthBytes} 位元組）`;
+  heading.textContent = validRows.length === allValidRows.length
+    ? `全部 ${allValidRows.length} 筆正確資料預覽（每筆 ${result.recordWidthBytes} 位元組）`
+    : `前 ${validRows.length} / ${allValidRows.length} 筆正確資料預覽（每筆 ${result.recordWidthBytes} 位元組）`;
   previewResults.append(heading);
+
+  const previewChunk = document.createElement("div");
+  previewChunk.className = "preview-chunk";
+  previewChunk.tabIndex = 0;
+  previewChunk.setAttribute("aria-label", "正確資料預覽，可左右捲動");
+  const previewChunkRows = document.createElement("div");
+  previewChunkRows.className = "preview-chunk-rows";
 
   validRows.forEach((row) => {
     const record = document.createElement("div");
@@ -415,6 +441,10 @@ function renderPreview(result: ConversionResult): void {
     const output = document.createElement("pre");
 
     row.fields.forEach((field) => {
+      const fieldFragment = document.createElement("span");
+      fieldFragment.className = "field-fragment";
+      fieldFragment.style.width = `${field.valueBytes + field.paddingBytes}ch`;
+
       const source = document.createElement("span");
       source.className = field.usedDefault ? "value-fragment default-fragment" : "value-fragment";
       source.title = field.usedDefault
@@ -428,15 +458,21 @@ function renderPreview(result: ConversionResult): void {
       padding.textContent = "·".repeat(field.paddingBytes);
 
       if (alignmentSelect.value === "right") {
-        output.append(padding, source);
+        fieldFragment.append(padding, source);
       } else {
-        output.append(source, padding);
+        fieldFragment.append(source, padding);
       }
+
+      output.append(fieldFragment);
     });
 
     record.append(label, output);
-    previewResults.append(record);
+    previewChunkRows.append(record);
   });
+
+  previewChunk.append(previewChunkRows);
+  previewResults.append(previewChunk);
+  previewChunk.scrollLeft = previousScrollLeft;
 }
 
 function renderIssues(issues: readonly ValidationIssue[]): void {
@@ -636,6 +672,11 @@ encodingSelect.addEventListener("change", decodeParseAndValidate);
 alignmentSelect.addEventListener("change", validateAndRender);
 expectedRowsInput.addEventListener("input", validateAndRender);
 showWhitespaceInput.addEventListener("change", () => {
+  if (lastResult) {
+    renderPreview(lastResult);
+  }
+});
+previewRowLimitSelect.addEventListener("change", () => {
   if (lastResult) {
     renderPreview(lastResult);
   }
