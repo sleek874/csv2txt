@@ -10,19 +10,25 @@ uploaded to a server.
 
 **[Open the live application](https://sleek874.github.io/csv2txt/)**
 
-> **Current status:** Traditional Chinese UI prototype. Settings can be edited
-> and saved locally, but CSV parsing, validation, conversion, and download are
-> not implemented yet.
+> **Current status:** Minimum working browser application. CSV decoding,
+> validation, fixed-width Big5 conversion, preview, and download are working.
+> The automated test suite and portable settings import/export remain follow-up
+> work.
 
-## Planned behavior
+## Current behavior
 
-- Accept UTF-8, UTF-16, and Big5 CSV input.
-- Treat the source as exactly 15 positional fields with no header row.
-- Apply configurable defaults, required rules, and Big5 byte widths.
-- Preserve source text and visibly flag suspicious whitespace.
-- Reject overflow and characters that cannot be represented safely in Big5.
-- Produce fixed-width Big5 records separated by CRLF, including a final CRLF.
-- Keep uploaded and generated data in browser memory only.
+- Accepts UTF-8, UTF-16, and Big5 CSV input as raw bytes.
+- Treats the source as exactly 15 positional fields with no header row.
+- Applies configurable defaults, required rules, alignment, and Big5 byte widths.
+- Preserves source text and visibly flags suspicious whitespace.
+- Rejects malformed CSV, wrong record/column counts, overflow, control characters,
+  and text that cannot round-trip safely through Big5.
+- Produces fixed-width Big5 records separated by CRLF, including a final CRLF.
+- Keeps uploaded and generated data in browser memory only; preferences alone may
+  be saved to `localStorage`.
+- Precaches the production application after the first online load. Once the
+  header reports `已可離線使用`, conversion and later reloads work without an
+  internet connection.
 
 The complete requirements, architecture, conversion rules, test strategy, and
 acceptance criteria are maintained in the
