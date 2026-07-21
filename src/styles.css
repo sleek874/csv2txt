@@ -34,7 +34,8 @@ select {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
-.table-scroll:focus-visible {
+.table-scroll:focus-visible,
+.preview-chunk:focus-visible {
   outline: 3px solid #2a7c78;
   outline-offset: 2px;
 }
@@ -255,12 +256,30 @@ select {
   margin-bottom: 1rem;
 }
 
-.preview-option {
+.preview-options,
+.preview-option,
+.preview-row-count {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
   font-size: 0.9rem;
   white-space: nowrap;
+}
+
+.preview-options {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.75rem 1rem;
+}
+
+.preview-row-count > span {
+  font-weight: 750;
+}
+
+.preview-row-count select {
+  min-width: 6.5rem;
+  min-height: 2.25rem;
+  padding-block: 0.3rem;
 }
 
 .table-scroll {
@@ -409,19 +428,37 @@ tfoot th {
   font-weight: 750;
 }
 
+.preview-chunk {
+  border: 1px solid #e0e5e8;
+  border-radius: 0.35rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.preview-chunk-rows {
+  width: max-content;
+  min-width: 100%;
+}
+
 .preview-record {
   display: grid;
   grid-template-columns: 4.75rem minmax(0, 1fr);
   align-items: stretch;
-  border: 1px solid #e0e5e8;
-  border-radius: 0.35rem;
-  overflow: hidden;
+  border-bottom: 1px solid #e0e5e8;
+}
+
+.preview-record:last-child {
+  border-bottom: 0;
 }
 
 .preview-row-label {
+  position: sticky;
+  left: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
   padding: 0.55rem;
+  border-right: 1px solid #e0e5e8;
   color: #53616c;
   background: #f2f5f6;
   font-size: 0.8rem;
@@ -429,15 +466,30 @@ tfoot th {
 }
 
 .preview-record pre {
+  display: flex;
   margin: 0;
   padding: 0.6rem;
-  overflow-x: auto;
+  overflow: visible;
   color: #17202b;
   background: #fff;
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
   font-size: 0.82rem;
   line-height: 1.55;
   white-space: pre;
+}
+
+.field-fragment {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.field-fragment:nth-child(odd) {
+  background: #fff;
+}
+
+.field-fragment:nth-child(even) {
+  background: #f0f5f6;
 }
 
 .value-fragment {
@@ -450,7 +502,7 @@ tfoot th {
 
 .padding-fragment {
   color: #2f729e;
-  background: #e4f3fc;
+  background: rgb(207 234 249 / 72%);
 }
 
 .issue-scroll {
@@ -578,6 +630,11 @@ button {
   .section-heading-row {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .preview-options {
+    align-items: flex-start;
+    justify-content: flex-start;
   }
 
   .file-button {
