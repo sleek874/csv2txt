@@ -1,0 +1,46 @@
+name: Bug report
+description: Report reproducible incorrect behavior using synthetic data.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Do not include real or sensitive CSV/TXT contents.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide minimal steps and synthetic sample data.
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      placeholder: Edge 000, Firefox 000, Safari 00
+    validations:
+      required: true
+  - type: dropdown
+    id: input-encoding
+    attributes:
+      label: Input encoding
+      options:
+        - UTF-8
+        - Big5
+        - Auto or ambiguous
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: bytes
+    attributes:
+      label: Expected and actual bytes
+      description: For output issues, provide a short hexadecimal comparison if safe.

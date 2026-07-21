@@ -1,0 +1,27 @@
+{
+  "name": "csv2txt",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Privacy-first browser conversion from CSV to 15-column fixed-width Big5 text.",
+  "scripts": {
+    "dev": "vite",
+    "check": "tsc --noEmit",
+    "build": "npm run check && vite build",
+    "generate:testdata": "node scripts/generate-testdata.mjs",
+    "preview": "vite preview"
+  },
+  "engines": {
+    "node": ">=22",
+    "npm": ">=10"
+  },
+  "dependencies": {
+    "iconv-lite": "^0.7.3",
+    "papaparse": "^5.5.4"
+  },
+  "devDependencies": {
+    "@types/papaparse": "^5.5.2",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.7"
+  }
+}
