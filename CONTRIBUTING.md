@@ -4,12 +4,13 @@ Thank you for helping improve CSV to Fixed-Width Big5 Converter.
 
 ## Before implementation
 
-Read the design in [README.md](README.md). Changes to encoding, byte widths,
-defaults, required fields, privacy behavior, or output bytes must update the
-design and tests in the same pull request.
+Read the [design specification](docs/DESIGN.md). Changes to encoding, byte
+widths, defaults, required fields, privacy behavior, or output bytes must
+update the design and tests in the same pull request.
 
-The 15 preset widths and fixed labels are documented in `README.md`. A sanitized
-legacy fixture is still required; do not invent production-derived test data.
+The 15 preset widths and fixed labels are documented in `docs/DESIGN.md`. A
+sanitized legacy fixture is still required; do not invent production-derived
+test data.
 
 ## Local setup
 
