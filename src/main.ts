@@ -9,6 +9,8 @@ import {
 import { parseCsv } from "./core/csv";
 import { decodeSource } from "./core/encoding";
 import { convertRows } from "./core/fixed-width";
+import { detectSourceFileType, type SourceFileType } from "./core/source";
+import { parseSpreadsheet } from "./core/spreadsheet";
 import {
   ALIGNMENTS,
   SOURCE_ENCODINGS,
@@ -65,7 +67,7 @@ app.innerHTML = `
     <header class="page-header">
       <div>
         <p class="eyebrow">全程離線處理</p>
-        <h1>CSV 轉 Big5 定長文字檔</h1>
+        <h1>CSV / Excel 轉 Big5 定長文字檔</h1>
         <p>檔案只在這個瀏覽器中讀取、驗證與轉換，不會上傳。</p>
       </div>
       <div class="header-badges">
@@ -84,11 +86,11 @@ app.innerHTML = `
           </div>
         </div>
         <div class="file-picker">
-          <label class="file-button" for="source-file">選擇 CSV 檔案</label>
-          <input id="source-file" class="visually-hidden-file" type="file" accept=".csv,text/csv" />
+          <label class="file-button" for="source-file">選擇來源檔案</label>
+          <input id="source-file" class="visually-hidden-file" type="file" accept=".csv,.xls,.xlsx" />
           <div>
             <p id="file-status" class="file-status">尚未選擇檔案</p>
-            <p id="encoding-status" class="help-text">支援 UTF-8、UTF-16 與 Big5，檔案上限 25 MiB。</p>
+            <p id="encoding-status" class="help-text">支援 CSV、XLS 與 XLSX；檔案上限 25 MiB。</p>
           </div>
         </div>
       </section>
@@ -100,7 +102,7 @@ app.innerHTML = `
         </div>
         <div class="global-options">
           <label class="control-group" for="source-encoding">
-            <span>來源編碼</span>
+            <span>來源編碼（僅 CSV）</span>
             <select id="source-encoding">
               <option value="auto">自動判斷（預設）</option>
               <option value="utf-8">UTF-8</option>
@@ -193,7 +195,7 @@ app.innerHTML = `
         <div id="preview-results" class="preview-results" role="region" aria-live="polite" aria-label="轉換預覽">
           <div class="notice neutral-notice">
             <strong>尚未驗證</strong>
-            <span>選擇 CSV 檔案後，這裡會顯示可輸出的資料列。</span>
+            <span>選擇 CSV 或 Excel 檔案後，這裡會顯示可輸出的資料列。</span>
           </div>
         </div>
         <div class="table-scroll issue-scroll" tabindex="0" aria-label="驗證問題表格，可左右捲動">
@@ -215,7 +217,7 @@ app.innerHTML = `
         <button id="convert-button" class="primary-button" type="button" disabled>轉換並下載</button>
       </section>
 
-      <p id="app-status" class="app-status" role="status" aria-live="polite">請先選擇一個 CSV 檔案。</p>
+      <p id="app-status" class="app-status" role="status" aria-live="polite">請先選擇一個 CSV、XLS 或 XLSX 檔案。</p>
     </main>
   </div>
 `;
@@ -242,6 +244,7 @@ const previewRowLimitSelect = requireElement<HTMLSelectElement>("#preview-row-li
 const offlineStatus = requireElement<HTMLElement>("#offline-status");
 
 let sourceFile: File | null = null;
+let sourceFileType: SourceFileType | null = null;
 let sourceBytes: Uint8Array | null = null;
 let parsedRows: string[][] | null = null;
 let parseErrorMessages: string[] = [];
@@ -506,6 +509,7 @@ function renderIssues(issues: readonly ValidationIssue[]): void {
 }
 
 function renderParseErrors(rows: readonly string[][], errors: readonly string[]): void {
+  const formatLabel = sourceFileType === "csv" ? "CSV" : "Excel";
   lastResult = null;
   convertButton.disabled = true;
   actualRowSummary.textContent = String(rows.length);
@@ -515,17 +519,17 @@ function renderParseErrors(rows: readonly string[][], errors: readonly string[])
 
   const issues: ValidationIssue[] = errors.map((message) => ({
     severity: "error",
-    code: "MALFORMED_CSV",
+    code: sourceFileType === "csv" ? "MALFORMED_CSV" : "MALFORMED_SPREADSHEET",
     message,
   }));
   renderIssues(issues);
   previewResults.innerHTML = `
     <div class="notice error-notice">
-      <strong>CSV 格式無法解析</strong>
+      <strong>${formatLabel} 格式無法解析</strong>
       <span>請修正下方問題後重新選擇檔案。</span>
     </div>
   `;
-  appStatus.textContent = `驗證失敗：找到 ${errors.length} 項 CSV 格式錯誤。`;
+  appStatus.textContent = `驗證失敗：找到 ${errors.length} 項 ${formatLabel} 格式錯誤。`;
 }
 
 function validateAndRender(): void {
@@ -562,18 +566,25 @@ function validateAndRender(): void {
     : `目前無法下載：找到 ${errorCount} 項錯誤與 ${result.warningCount} 項空白提醒。`;
 }
 
-function decodeParseAndValidate(): void {
+function parseAndValidate(): void {
   const settings = collectSettings();
-  if (!sourceBytes || !settings) {
+  if (!sourceBytes || !sourceFileType || !settings) {
     return;
   }
 
   try {
-    const decoded = decodeSource(sourceBytes, settings.sourceEncoding);
-    const parsed = parseCsv(decoded.text);
+    let parsed: { rows: string[][]; errors: string[] };
+    if (sourceFileType === "csv") {
+      const decoded = decodeSource(sourceBytes, settings.sourceEncoding);
+      parsed = parseCsv(decoded.text);
+      encodingStatus.textContent = `來源編碼：${decoded.label}${decoded.ambiguous ? "。請確認預覽內容是否正確。" : "。"}`;
+    } else {
+      const spreadsheet = parseSpreadsheet(sourceBytes, settings.columns.length);
+      parsed = spreadsheet;
+      encodingStatus.textContent = `來源格式：${sourceFileType.toUpperCase()}；使用第一個工作表「${spreadsheet.sheetName}」的格式化顯示值。`;
+    }
     parsedRows = parsed.rows;
     parseErrorMessages = parsed.errors;
-    encodingStatus.textContent = `來源編碼：${decoded.label}${decoded.ambiguous ? "。請確認預覽內容是否正確。" : "。"}`;
 
     if (parsed.errors.length > 0) {
       renderParseErrors(parsed.rows, parsed.errors);
@@ -589,10 +600,17 @@ function decodeParseAndValidate(): void {
     validRowSummary.textContent = "—";
     invalidRowSummary.textContent = "—";
     warningSummary.textContent = "—";
-    const message = error instanceof Error ? error.message : "無法讀取檔案編碼。";
+    const message = error instanceof Error ? error.message : "無法讀取來源檔案。";
     encodingStatus.textContent = message;
-    renderIssues([{ severity: "error", code: "MALFORMED_CSV", message }]);
-    previewResults.innerHTML = `<div class="notice error-notice"><strong>檔案無法讀取</strong><span>請指定正確的來源編碼，或改選其他檔案。</span></div>`;
+    renderIssues([{
+      severity: "error",
+      code: sourceFileType === "csv" ? "MALFORMED_CSV" : "MALFORMED_SPREADSHEET",
+      message,
+    }]);
+    const help = sourceFileType === "csv"
+      ? "請指定正確的來源編碼，或改選其他檔案。"
+      : "請確認檔案可正常開啟且未受密碼保護，或改選其他檔案。";
+    previewResults.innerHTML = `<div class="notice error-notice"><strong>檔案無法讀取</strong><span>${help}</span></div>`;
     appStatus.textContent = message;
   }
 }
@@ -600,22 +618,24 @@ function decodeParseAndValidate(): void {
 function clearFileState(): void {
   fileReadSequence += 1;
   sourceFile = null;
+  sourceFileType = null;
   sourceBytes = null;
   parsedRows = null;
   parseErrorMessages = [];
   lastResult = null;
   fileInput.value = "";
+  encodingSelect.disabled = false;
   fileStatus.textContent = "尚未選擇檔案";
-  encodingStatus.textContent = "支援 UTF-8、UTF-16 與 Big5，檔案上限 25 MiB。";
+  encodingStatus.textContent = "支援 CSV、XLS 與 XLSX；檔案上限 25 MiB。";
   actualRowSummary.textContent = "—";
   validRowSummary.textContent = "—";
   invalidRowSummary.textContent = "—";
   warningSummary.textContent = "—";
   convertButton.disabled = true;
   startOverButton.disabled = true;
-  previewResults.innerHTML = `<div class="notice neutral-notice"><strong>尚未驗證</strong><span>選擇 CSV 檔案後，這裡會顯示可輸出的資料列。</span></div>`;
+  previewResults.innerHTML = `<div class="notice neutral-notice"><strong>尚未驗證</strong><span>選擇 CSV 或 Excel 檔案後，這裡會顯示可輸出的資料列。</span></div>`;
   issueTableBody.innerHTML = `<tr><td colspan="4" class="empty-table-message">選擇檔案後顯示驗證結果</td></tr>`;
-  appStatus.textContent = "請先選擇一個 CSV 檔案。";
+  appStatus.textContent = "請先選擇一個 CSV、XLS 或 XLSX 檔案。";
 }
 
 function restoreDefaults(): void {
@@ -626,7 +646,7 @@ function restoreDefaults(): void {
     // In-memory defaults still apply when persistent storage is unavailable.
   }
   if (sourceBytes) {
-    decodeParseAndValidate();
+    parseAndValidate();
   }
   appStatus.textContent = sourceBytes ? "已恢復預設設定並重新驗證。" : "已恢復預設設定。";
 }
@@ -639,6 +659,14 @@ fileInput.addEventListener("change", async () => {
     return;
   }
 
+  const fileType = detectSourceFileType(file.name);
+  if (!fileType) {
+    clearFileState();
+    fileStatus.textContent = "不支援這個檔案類型；請選擇 .csv、.xls 或 .xlsx 檔案。";
+    appStatus.textContent = fileStatus.textContent;
+    return;
+  }
+
   if (file.size === 0 || file.size > MAX_FILE_BYTES) {
     clearFileState();
     fileStatus.textContent = file.size === 0 ? "無法使用空檔案。" : "檔案超過 25 MiB 上限。";
@@ -647,6 +675,8 @@ fileInput.addEventListener("change", async () => {
   }
 
   sourceFile = file;
+  sourceFileType = fileType;
+  encodingSelect.disabled = fileType !== "csv";
   startOverButton.disabled = false;
   fileStatus.textContent = `正在讀取 ${file.name}…`;
   appStatus.textContent = "正在讀取並驗證檔案…";
@@ -658,7 +688,7 @@ fileInput.addEventListener("change", async () => {
     }
     sourceBytes = new Uint8Array(buffer);
     fileStatus.textContent = `${file.name} · ${file.size.toLocaleString("zh-Hant-TW")} 位元組`;
-    decodeParseAndValidate();
+    parseAndValidate();
   } catch {
     if (sequence === fileReadSequence) {
       clearFileState();
@@ -668,7 +698,7 @@ fileInput.addEventListener("change", async () => {
   }
 });
 
-encodingSelect.addEventListener("change", decodeParseAndValidate);
+encodingSelect.addEventListener("change", parseAndValidate);
 alignmentSelect.addEventListener("change", validateAndRender);
 expectedRowsInput.addEventListener("input", validateAndRender);
 showWhitespaceInput.addEventListener("change", () => {
@@ -716,7 +746,7 @@ convertButton.addEventListener("click", () => {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = sourceFile.name.replace(/\.csv$/iu, "") + ".txt";
+  link.download = sourceFile.name.replace(/\.(?:csv|xlsx?)$/iu, "") + ".txt";
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
   appStatus.textContent = `已產生 ${link.download}（Big5、${bytes.length.toLocaleString("zh-Hant-TW")} 位元組）。`;
@@ -728,7 +758,7 @@ try {
     const parsed: unknown = JSON.parse(savedValue);
     if (isSavedSettings(parsed)) {
       applySettings(parsed);
-      appStatus.textContent = "已載入先前儲存的設定，請選擇 CSV 檔案。";
+      appStatus.textContent = "已載入先前儲存的設定，請選擇 CSV、XLS 或 XLSX 檔案。";
     } else {
       appStatus.textContent = "先前設定格式無效，已使用預設值。";
     }
