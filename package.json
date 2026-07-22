@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Privacy-first browser conversion from CSV and Excel to 15-column fixed-width Big5 text.",
+  "description": "Privacy-first browser conversion from CSV and Excel to fixed-width Big5 text with a default 15-column profile.",
   "scripts": {
     "dev": "vite",
     "check": "tsc --noEmit",

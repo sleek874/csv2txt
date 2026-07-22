@@ -5,9 +5,9 @@ a 15-column, fixed-width Big5 text format. All file reading, validation,
 conversion, and download generation happen in the user's browser. No source
 data is uploaded to a server.
 
-> **Project status:** a minimum working browser flow and pure conversion core are
-> implemented. Automated tests, JSON settings import/export, and the remaining
-> release-hardening items are follow-up work.
+> **Project status:** a minimum working browser flow, pure conversion core, and
+> explicit JSON settings load/save are implemented. Broader automated coverage
+> and the remaining release-hardening items are follow-up work.
 
 ## Contents
 
@@ -69,7 +69,8 @@ The replacement must:
   are never emitted as a header or read from the source data.
 - Let users edit fallback values, required flags, and widths, with one alignment
   setting applied to all fields.
-- Persist settings in `localStorage` and support JSON import/export.
+- Transparently auto-save the current converter settings in browser storage and
+  support explicit portable JSON load/save.
 - Provide row- and field-specific error messages before download.
 - Keep the application small, framework-free, and maintainable.
 
@@ -96,7 +97,7 @@ The replacement must:
 | Required check | Must contain a non-whitespace character | A required value made only of spaces is not meaningful and blocks download. |
 | Charset detection | Best effort plus user override | Some byte streams, especially ASCII, are valid in both UTF-8 and Big5. |
 | Processing | Browser only | Source files contain sensitive data. |
-| Settings | `localStorage` plus JSON backup | Convenient on stable web origins, with a portable recovery mechanism. |
+| Settings | Browser autosave plus explicit JSON load/save | Prevents accidental session loss while keeping portable settings files clearly distinct from source and output data. |
 | UI stack | TypeScript and DOM APIs, no UI framework | The workflow is small and does not need a framework runtime. |
 | CSV parser | Papa Parse | Correct handling of quoted fields, embedded delimiters, and multiline values. |
 | XLS/XLSX parser | SheetJS Community Edition | Browser-local parsing of both modern and legacy Excel formats into the common string-row model. |
@@ -171,27 +172,24 @@ candidates rather than certified replacements for the Office workflow.
 
 ## User experience
 
-The application is a single-page workflow with five stages.
+The application is a configuration-first single-page workflow with stages 0–4.
 
-### 1. Select input
+### 0. Settings file
 
-- Choose one `.csv`, `.xls`, or `.xlsx` file. Reject every other extension.
-- Read the file with the browser File API.
-- Display the filename and byte size.
-- Do not persist the file or its contents.
+- Clearly distinguish settings JSON from CSV/XLS/XLSX source data and Big5 TXT
+  output.
+- `上傳設定檔` selects and validates a local JSON settings file before applying it.
+- `下載設定檔` downloads the current field and global settings as JSON.
+- `載入預設設定` applies the built-in 15-field profile.
+- Restore the last valid browser-autosaved settings on startup, falling back to
+  the built-in profile when none are usable.
+- Show a quiet status banner when settings are restored or auto-saved.
+- Never include source data, filenames, previews, validation results, or output
+  content in a settings file.
+- Auto-save only valid converter settings; invalid edits must not overwrite the
+  last valid browser copy.
 
-### 2. Confirm input format
-
-- For CSV, show the detected source encoding: UTF-8, UTF-16LE, UTF-16BE, Big5,
-  or ambiguous.
-- Let the user select `自動判斷（預設）`, `UTF-8`, `UTF-16`, or `Big5`.
-- For XLS/XLSX, disable the encoding control and show the imported worksheet
-  name. Use the first worksheet in workbook order.
-- Show a decoded preview of a small number of rows.
-- Treat the source as positional data with no header row. Every row must contain
-  exactly 15 values.
-
-### 3. Configure 15 fields
+### 1. Configure fields
 
 Render one row for every output field with:
 
@@ -203,18 +201,28 @@ Render one row for every output field with:
 | Default value | Used only when the corresponding source cell is empty |
 | Accumulated width | Read-only running total recalculated whenever a width changes |
 
-Above the table, one global alignment dropdown applies `靠左` or `靠右` to all
-15 output fields. It defaults to `靠左`. The global settings also contain an
-`預期資料筆數` positive-integer input that defaults to `200`.
+Display the current field count and total Big5 record width. Explain required,
+default, and byte-width behavior immediately above the table.
 
-The settings screen also provides:
+### 2. Configure global input/output behavior
 
-- Save preferences
-- Restore predefined defaults
-- Export settings as JSON
-- Import settings from JSON
+- Let the user select `自動判斷（預設）`, `UTF-8`, `UTF-16`, or `Big5` for
+  CSV input. Disable the control for XLS/XLSX.
+- Let the user set the expected positive record count, defaulting to `200`.
+- Let one alignment dropdown apply `靠左` or `靠右` to every output field.
+- Explain each option inline and include these values in settings JSON.
 
-### 4. Validate and preview
+### 3. Select source data
+
+- Choose one `.csv`, `.xls`, or `.xlsx` file. Reject every other extension.
+- Read the file with the browser File API, display its name and byte size, and
+  never persist its contents.
+- Repeat the currently expected field count before selection.
+- Parse and validate automatically after selection. Replacing settings while a
+  file is loaded reparses or revalidates that file.
+- `清除檔案` clears only file-derived state and preserves current settings.
+
+### 4. Validate, preview, and download
 
 - Resolve required rules and defaults for every record.
 - Validate all 15 fields.
@@ -238,10 +246,12 @@ The settings screen also provides:
 
 ### 5. Download
 
-- Enable download only when the full input passes validation.
+- Show the issue list before the output preview so blocking problems are easier
+  to find.
+- Enable `下載 Big5 TXT` only when the full input passes validation.
 - Generate a Big5 byte array in memory.
 - Download a `.txt` file with CRLF after every record, including the last.
-- Clear file-derived state when the user selects **Start over**.
+- Keep download actions visually and textually distinct from settings JSON save.
 
 ## Functional requirements
 
@@ -337,11 +347,14 @@ The settings screen also provides:
 ### Settings
 
 - **FR-040:** Load predefined settings on first use.
-- **FR-041:** Save user preferences under a versioned storage key.
-- **FR-042:** Recover gracefully from absent, invalid, or outdated stored JSON.
-- **FR-043:** Support JSON export and import.
-- **FR-044:** Validate imported settings before applying them.
-- **FR-045:** Never store uploaded filenames, previews, rows, or output content.
+- **FR-041:** Debounce and auto-save valid converter settings under a versioned
+  browser-storage key.
+- **FR-042:** Recover gracefully from invalid or outdated settings JSON without
+  replacing the current in-memory settings.
+- **FR-043:** Support explicit JSON load and save.
+- **FR-044:** Validate loaded settings before applying them.
+- **FR-045:** Never include uploaded filenames, previews, rows, or output content
+  in settings JSON or browser storage.
 
 ## Default 15-column profile
 
@@ -427,7 +440,7 @@ interface ValidationIssue {
 ```
 
 Runtime validation is still required because TypeScript types do not validate
-JSON loaded from `localStorage` or a user-selected settings file.
+JSON loaded from browser storage or a user-selected settings file.
 
 ## Conversion rules
 
@@ -574,13 +587,10 @@ Example Traditional Chinese validation messages:
 
 ## Settings persistence
 
-Settings are stored under:
-
-```text
-csv2txt.settings.v2
-```
-
-### Stored
+Valid converter settings are automatically persisted under the versioned key
+`csv2txt.settings.v2`. On startup, the app restores this value before falling
+back to the built-in profile. `下載設定檔` also downloads a portable versioned JSON
+document containing:
 
 - Field widths
 - Required flags
@@ -596,14 +606,14 @@ csv2txt.settings.v2
 - Validation values
 - Uploaded filenames or local paths
 
-All storage access must be wrapped in `try/catch`. If storage is unavailable,
-the app continues with in-memory settings and explains that preferences will
-not persist.
-
-JSON settings import/export provides portability and recovery. Imported JSON
-must have a supported version, exactly 15 uniquely positioned columns, unique
-IDs, positive integer widths, known enum values, and no unknown executable
-content.
+The settings status banner discloses successful restore/autosave and storage
+failures. Source filenames, bytes, parsed rows, previews, validation results,
+and generated output are never written to browser storage. JSON settings
+load/save provides portability and recovery. Loaded JSON must have a supported
+version, at least one column,
+positive integer widths, known enum values, and no executable content. The
+current fixed field editor also requires the loaded profile to match its visible
+field count; variable-length editing is a separate future change.
 
 ## Architecture
 
@@ -622,7 +632,8 @@ flowchart LR
     F --> G[Big5 encoder and round-trip check]
     G --> H[Byte-width validator and padding]
     H --> I[Blob download]
-    L[localStorage or settings JSON] --> S
+    L[Browser autosave or user-selected settings JSON] --> S
+    S --> J[Downloaded settings JSON]
 ```
 
 Recommended source boundaries:
@@ -695,25 +706,23 @@ small pull requests. CI uses `npm ci` for reproducible installs.
 GitHub Pages is the primary runtime:
 
 - Stable HTTPS origin
-- Reliable origin-scoped `localStorage`
 - Normal ES-module and asset loading
 - No server-side access to files selected in the browser
 - A production service worker precaches the application shell and all generated
   assets. The UI reports when installation is complete; after that point the
   page can be reloaded and used without a network connection.
 
-Moving the site to another scheme, host, or port creates a different storage
-origin, so saved preferences do not automatically follow it.
+Browser autosave is origin-scoped; settings JSON remains portable across
+schemes, hosts, browsers, and devices.
 
 ### Double-clicked local HTML
 
 A local page runs under a `file://` URL. The File API and Blob download can work,
-but browsers may block module imports or related-file fetches. `localStorage`
-behavior for `file://` is not standardized and must not be relied upon.
+but browsers may block module imports or related-file fetches.
 
 The optional offline release should therefore be one self-contained HTML file
 with bundled classic JavaScript, CSS, encoding tables, and CSV/Excel parsers. It
-must make no network requests and must retain JSON settings import/export as the
+must make no network requests and must retain JSON settings load/save as the
 portable persistence mechanism.
 
 Serving the normal development build from `localhost` is not the same as
@@ -834,7 +843,7 @@ the expected TXT byte-for-byte.
 - Implement file selection, detection, CSV parsing, preview, configuration, and
   validation UI.
 - Add accessible error handling and downloads.
-- Add `localStorage` plus JSON settings backup.
+- Add browser settings autosave plus explicit JSON settings load/save.
 
 ### Milestone 3 — release hardening
 
@@ -857,7 +866,8 @@ The first production release is accepted when:
 6. Overflow and lossy Big5 encoding block download.
 7. Output matches the approved legacy fixture byte-for-byte.
 8. Ambiguous encoding requires visible confirmation or override.
-9. Settings persist on a stable origin and survive JSON export/import.
+9. Valid settings auto-save and restore on the same browser origin and also
+   survive explicit JSON save/load.
 10. Uploaded and generated data are absent from persistent browser storage.
 11. CI type-checks and builds the project successfully.
 12. Keyboard-only operation completes the full workflow.
