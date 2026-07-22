@@ -3,17 +3,16 @@
 [![CI](https://github.com/sleek874/csv2txt/actions/workflows/ci.yml/badge.svg)](https://github.com/sleek874/csv2txt/actions/workflows/ci.yml)
 [![Deploy GitHub Pages](https://github.com/sleek874/csv2txt/actions/workflows/pages.yml/badge.svg)](https://github.com/sleek874/csv2txt/actions/workflows/pages.yml)
 
-A privacy-first browser application for converting 15-column CSV, XLS, and XLSX
-files into fixed-width Big5 text. File reading, validation, conversion, and
-download generation happen entirely in the browser; source data is not uploaded
-to a server.
+A privacy-first browser application for converting CSV, XLS, and XLSX files with
+a default 15-column profile into fixed-width Big5 text. File reading, validation,
+conversion, and download generation happen entirely in the browser; source data
+is not uploaded to a server.
 
 **[Open the live application](https://sleek874.github.io/csv2txt/)**
 
 > **Current status:** Minimum working browser application. CSV and Excel import,
-> validation, fixed-width Big5 conversion, preview, and download are working.
-> The automated test suite and portable settings import/export remain follow-up
-> work.
+> portable JSON settings, validation, fixed-width Big5 conversion, preview, and
+> download are working. Broader automated coverage remains follow-up work.
 
 ## Current behavior
 
@@ -24,14 +23,17 @@ to a server.
   directly to the common row model. Missing cells become empty strings, and
   locale-sensitive built-in dates use the deterministic `yyyy/mm/dd` fallback.
 - Uses saved formula results; formulas without a cached result block conversion.
-- Treats the source as exactly 15 positional fields with no header row.
+- Currently treats the source as the default 15 positional fields with no header
+  row; a variable-length field editor is planned separately.
 - Applies configurable defaults, required rules, alignment, and Big5 byte widths.
 - Preserves source text and visibly flags suspicious whitespace.
 - Rejects malformed CSV, wrong record/column counts, overflow, control characters,
   and text that cannot round-trip safely through Big5.
 - Produces fixed-width Big5 records separated by CRLF, including a final CRLF.
-- Keeps uploaded and generated data in browser memory only; preferences alone may
-  be saved to `localStorage`.
+- Keeps uploaded and generated data in browser memory only. The current converter
+  settings are transparently auto-saved to browser storage and restored on the
+  next visit; explicit settings-file upload/download provides a portable JSON backup. Source data,
+  previews, and generated output are never included in either settings store.
 - Precaches the production application after the first online load. Once the
   header reports `已可離線使用`, conversion and later reloads work without an
   internet connection.
