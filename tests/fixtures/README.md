@@ -1,4 +1,4 @@
-# Synthetic CSV fixtures
+# Synthetic CSV and Excel fixtures
 
 These files contain generated, fictional data only. They do not contain real
 people, identifiers, phone numbers, or production addresses.
@@ -28,17 +28,19 @@ make the sample data easier to inspect.
 
 ## Files
 
-- `synthetic-valid-200.utf8.csv` has no header and contains exactly 200 records
-  with 15 fields each. Every value round-trips through Big5 and fits its preset
-  byte width. The first record includes an exact 10-byte name and exact
-  120-byte address. Later records include a quoted comma, an escaped quote, and
-  visible spaces.
-- `synthetic-invalid-boundaries.utf8.csv` has five 15-field records. Set the
-  expected record count to `5` before testing it. Its records intentionally test
-  a field-1 overflow, field-5 overflow, field-9 overflow, an emoji unavailable
-  in Big5, and field-10 overflow, in that order.
+- `synthetic-valid-200.utf8.csv`, `synthetic-valid-200.xls`, and
+  `synthetic-valid-200.xlsx` contain the same 200 records with 15 fields each
+  and no header. Every value round-trips through Big5 and fits its preset byte
+  width. The first record includes an exact 10-byte name and exact 120-byte
+  address. Later records include a comma, a quote, and visible spaces. Excel
+  cells are explicitly generated from strings, preserving leading zeros.
+- `synthetic-invalid-boundaries.utf8.csv`, `synthetic-invalid-boundaries.xls`,
+  and `synthetic-invalid-boundaries.xlsx` contain the same five 15-field
+  records. Set the expected record count to `5` before testing them. Their
+  records intentionally test a field-1 overflow, field-5 overflow, field-9
+  overflow, an emoji unavailable in Big5, and field-10 overflow, in that order.
 
-Regenerate both files from the project root with:
+Regenerate all six files from the project root with:
 
 ```bash
 npm run generate:testdata

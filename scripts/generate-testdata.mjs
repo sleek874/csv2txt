@@ -3,6 +3,10 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import iconv from "iconv-lite";
+import * as cptable from "xlsx/dist/cpexcel.full.mjs";
+import { set_cptable, utils, write } from "xlsx";
+
+set_cptable(cptable);
 
 const WIDTHS = [1, 2, 1, 10, 10, 8, 12, 1, 120, 15, 10, 1, 8, 8, 1];
 const RECORD_COUNT = 200;
@@ -115,6 +119,22 @@ function serialize(rows) {
   return `${rows.map((row) => row.map(escapeCsv).join(",")).join("\r\n")}\r\n`;
 }
 
+function serializeSpreadsheet(rows, bookType) {
+  const worksheet = utils.aoa_to_sheet(rows);
+  const workbook = utils.book_new(worksheet, "資料");
+  return write(workbook, {
+    type: "buffer",
+    bookType,
+    compression: bookType === "xlsx",
+  });
+}
+
+function writeFixtureSet(baseName, rows) {
+  writeFileSync(join(fixtureDirectory, `${baseName}.utf8.csv`), serialize(rows), "utf8");
+  writeFileSync(join(fixtureDirectory, `${baseName}.xls`), serializeSpreadsheet(rows, "biff8"));
+  writeFileSync(join(fixtureDirectory, `${baseName}.xlsx`), serializeSpreadsheet(rows, "xlsx"));
+}
+
 const validRows = Array.from({ length: RECORD_COUNT }, (_, index) => makeValidRow(index));
 validRows.forEach((row, index) => assertValidRow(row, index + 1));
 assert.equal(big5Bytes(validRows[0][4]).length, WIDTHS[4]);
@@ -131,7 +151,9 @@ invalidRows.forEach((row, index) => {
 });
 
 mkdirSync(fixtureDirectory, { recursive: true });
-writeFileSync(join(fixtureDirectory, "synthetic-valid-200.utf8.csv"), serialize(validRows), "utf8");
-writeFileSync(join(fixtureDirectory, "synthetic-invalid-boundaries.utf8.csv"), serialize(invalidRows), "utf8");
+writeFixtureSet("synthetic-valid-200", validRows);
+writeFixtureSet("synthetic-invalid-boundaries", invalidRows);
 
-console.log(`Generated ${validRows.length} valid records and ${invalidRows.length} invalid records.`);
+console.log(
+  `Generated CSV, XLS, and XLSX fixtures with ${validRows.length} valid records and ${invalidRows.length} invalid records.`,
+);

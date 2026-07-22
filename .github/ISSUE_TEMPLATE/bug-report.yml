@@ -36,6 +36,7 @@ body:
         - UTF-8
         - Big5
         - Auto or ambiguous
+        - Excel XLS/XLSX (not applicable)
         - Unknown
     validations:
       required: true

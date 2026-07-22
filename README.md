@@ -1,23 +1,29 @@
-# CSV to Fixed-Width Big5 Converter
+# CSV / Excel to Fixed-Width Big5 Converter
 
 [![CI](https://github.com/sleek874/csv2txt/actions/workflows/ci.yml/badge.svg)](https://github.com/sleek874/csv2txt/actions/workflows/ci.yml)
 [![Deploy GitHub Pages](https://github.com/sleek874/csv2txt/actions/workflows/pages.yml/badge.svg)](https://github.com/sleek874/csv2txt/actions/workflows/pages.yml)
 
-A privacy-first browser application for converting 15-column CSV files into
-fixed-width Big5 text. File reading, validation, conversion, and download
-generation are designed to happen entirely in the browser; source data is not
-uploaded to a server.
+A privacy-first browser application for converting 15-column CSV, XLS, and XLSX
+files into fixed-width Big5 text. File reading, validation, conversion, and
+download generation happen entirely in the browser; source data is not uploaded
+to a server.
 
 **[Open the live application](https://sleek874.github.io/csv2txt/)**
 
-> **Current status:** Minimum working browser application. CSV decoding,
+> **Current status:** Minimum working browser application. CSV and Excel import,
 > validation, fixed-width Big5 conversion, preview, and download are working.
 > The automated test suite and portable settings import/export remain follow-up
 > work.
 
 ## Current behavior
 
+- Accepts only `.csv`, `.xls`, and `.xlsx` filenames and selects the parser from
+  the filename extension.
 - Accepts UTF-8, UTF-16, and Big5 CSV input as raw bytes.
+- Reads the first XLS/XLSX worksheet and converts formatted cell display values
+  directly to the common row model. Missing cells become empty strings, and
+  locale-sensitive built-in dates use the deterministic `yyyy/mm/dd` fallback.
+- Uses saved formula results; formulas without a cached result block conversion.
 - Treats the source as exactly 15 positional fields with no header row.
 - Applies configurable defaults, required rules, alignment, and Big5 byte widths.
 - Preserves source text and visibly flags suspicious whitespace.
@@ -54,6 +60,7 @@ Type-check and create a production build:
 
 ```bash
 npm run check
+npm test
 npm run build
 npm run preview
 ```
@@ -88,5 +95,6 @@ The deployed site is available at <https://sleek874.github.io/csv2txt/>.
 - [Contributing guide](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
 - [Synthetic fixture guide](tests/fixtures/README.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 No project license has been selected yet.
