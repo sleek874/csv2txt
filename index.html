@@ -3,6 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f4f7f8" />
     <meta
       name="description"
       content="在瀏覽器中將 CSV、XLS、XLSX 轉換為 Big5 定長文字檔，資料不會上傳。"
@@ -14,6 +16,12 @@
     <title>CSV / Excel 轉 Big5 定長文字檔</title>
   </head>
   <body>
+    <noscript>
+      <div class="noscript-warning" role="alert" aria-labelledby="noscript-heading">
+        <strong id="noscript-heading">JavaScript 已停用，應用程式無法載入</strong>
+        <p>這個工具需要 JavaScript 才能在瀏覽器內讀取、驗證與轉換檔案。請啟用 JavaScript，然後重新整理頁面；檔案仍不會上傳。</p>
+      </div>
+    </noscript>
     <main id="app"></main>
     <script type="module" src="/src/main.ts"></script>
   </body>
