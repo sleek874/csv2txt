@@ -1,7 +1,7 @@
 import "./styles.css";
 
 import {
-  COLUMN_COUNT,
+  DEFAULT_COLUMN_COUNT,
   MAX_FILE_BYTES,
   PRESET_WIDTHS,
   createDefaultSettings,
@@ -21,11 +21,13 @@ import {
   type ValidationIssue,
 } from "./core/types";
 
-const STORAGE_KEY = "csv2txt.settings.v2";
 const THEME_STORAGE_KEY = "csv2txt.theme";
+const SETTINGS_STORAGE_KEY = "csv2txt.settings.v2";
 const ISSUE_DISPLAY_LIMIT = 200;
+const MAX_SETTINGS_FILE_BYTES = 1024 * 1024;
 
 type Theme = "light" | "dark";
+type SettingsAutoSaveState = "idle" | "pending" | "saved" | "invalid" | "unavailable";
 
 const systemDarkTheme = window.matchMedia("(prefers-color-scheme: dark)");
 let manualTheme: Theme | null = null;
@@ -109,9 +111,9 @@ app.innerHTML = `
   <div class="page-shell">
     <header class="page-header">
       <div>
-        <p class="eyebrow">全程離線處理</p>
+        <p class="eyebrow">瀏覽器本機處理</p>
         <h1>CSV / Excel 轉 Big5 定長文字檔</h1>
-        <p>檔案只在這個瀏覽器中讀取、驗證與轉換，不會上傳。</p>
+        <p>先設定轉換規則，再選擇來源檔案。所有處理都在此瀏覽器完成。</p>
       </div>
       <div class="header-badges">
         <button id="theme-toggle" class="theme-toggle" type="button" role="switch" aria-checked="false">
@@ -119,70 +121,63 @@ app.innerHTML = `
           <span class="theme-toggle-mode">系統</span>
           <span class="theme-toggle-track" aria-hidden="true"></span>
         </button>
-        <div class="privacy-badge" aria-label="資料不離開裝置">資料不離開裝置</div>
         <div id="offline-status" class="offline-status" role="status">正在準備離線使用…</div>
       </div>
     </header>
 
     <main>
-      <section class="panel" aria-labelledby="file-heading">
+      <section class="panel" aria-labelledby="profile-heading">
         <div class="step-heading">
-          <span aria-hidden="true">1</span>
+          <span aria-hidden="true">0</span>
           <div>
-            <h2 id="file-heading">選擇來源檔案</h2>
-            <p class="help-text">來源必須正好有 15 欄，第一列也會視為資料。</p>
+            <h2 id="profile-heading">設定檔</h2>
+            <p class="help-text">
+              <span class="help-line">設定會自動儲存在這個瀏覽器，也可上傳、下載或恢復預設設定檔。</span>
+              <span class="help-line">套用設定後，已選的來源檔案會自動重新驗證；設定檔不包含來源資料。</span>
+            </p>
           </div>
         </div>
-        <div class="file-picker">
-          <label class="file-button" for="source-file">選擇來源檔案</label>
-          <input id="source-file" class="visually-hidden-file" type="file" accept=".csv,.xls,.xlsx" />
-          <div>
-            <p id="file-status" class="file-status">尚未選擇檔案</p>
-            <p id="encoding-status" class="help-text">支援 CSV、XLS 與 XLSX；檔案上限 25 MiB。</p>
-          </div>
-        </div>
-      </section>
 
-      <section class="panel" aria-labelledby="global-heading">
-        <div class="step-heading">
-          <span aria-hidden="true">2</span>
-          <h2 id="global-heading">全域設定</h2>
+        <div class="profile-actions">
+          <div class="action-explainer compact-card">
+            <button id="load-settings-button" class="secondary-button" type="button">上傳設定檔</button>
+            <input id="settings-file" class="visually-hidden-file" type="file" accept=".json,application/json" />
+            <span>選擇本機 JSON 設定檔，檢查後套用；不會傳送到網路。</span>
+          </div>
+          <div class="action-explainer compact-card">
+            <button id="save-settings-button" class="secondary-button" type="button">下載設定檔</button>
+            <span>將目前的欄位與全域設定下載為 JSON 備份。</span>
+          </div>
+          <div class="action-explainer compact-card">
+            <button id="load-default-button" class="secondary-button" type="button">載入預設設定</button>
+            <span>套用內建的 ${DEFAULT_COLUMN_COUNT} 欄預設設定。</span>
+          </div>
         </div>
-        <div class="global-options">
-          <label class="control-group" for="source-encoding">
-            <span>來源編碼（僅 CSV）</span>
-            <select id="source-encoding">
-              <option value="auto">自動判斷（預設）</option>
-              <option value="utf-8">UTF-8</option>
-              <option value="utf-16">UTF-16</option>
-              <option value="big5">Big5</option>
-            </select>
-          </label>
-          <label class="control-group" for="alignment">
-            <span>全部欄位對齊</span>
-            <select id="alignment">
-              <option value="left">靠左（預設）</option>
-              <option value="right">靠右</option>
-            </select>
-          </label>
-          <label class="control-group" for="expected-rows">
-            <span>預期資料筆數</span>
-            <input id="expected-rows" class="expected-rows-input" type="number"
-              min="1" step="1" inputmode="numeric" value="200" />
-          </label>
+
+        <div id="settings-status" class="profile-status" role="status" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <div><strong>目前設定：內建預設設定</strong><span>${DEFAULT_COLUMN_COUNT} 欄；修改後會自動儲存。</span></div>
         </div>
       </section>
 
       <section class="panel" aria-labelledby="columns-heading">
         <div class="section-heading-row">
           <div class="step-heading">
-            <span aria-hidden="true">3</span>
+            <span aria-hidden="true">1</span>
             <div>
               <h2 id="columns-heading">欄位設定</h2>
-              <p class="help-text">欄寬以 Big5 位元組計算；空值預設只套用到完全空白的儲存格。</p>
+              <p class="help-text">設定每個欄位的空值處理方式與 Big5 輸出寬度。</p>
             </div>
           </div>
-          <button id="restore-button" class="secondary-button" type="button">恢復預設值</button>
+          <div class="schema-summary" aria-label="目前欄位格式摘要">
+            <span><strong id="field-count-summary">${DEFAULT_COLUMN_COUNT}</strong> 欄</span>
+            <span><strong id="record-width-summary">208</strong> 位元組／筆</span>
+          </div>
+        </div>
+        <div class="option-guide" aria-label="欄位選項說明">
+          <div class="compact-card"><strong>不可空白</strong><span>來源值必須含有非空白字元，且不能使用空值預設。</span></div>
+          <div class="compact-card"><strong>空值預設</strong><span>來源儲存格完全沒有內容時才代入；空格不算空值。</span></div>
+          <div class="compact-card"><strong>欄寬</strong><span>以 Big5 位元組計算；內容過長會報錯，不會截斷。</span></div>
         </div>
         <div class="table-scroll" tabindex="0" aria-label="欄位設定表格，可左右捲動">
           <table>
@@ -206,12 +201,98 @@ app.innerHTML = `
         </div>
       </section>
 
+      <section class="panel" aria-labelledby="global-heading">
+        <div class="step-heading">
+          <span aria-hidden="true">2</span>
+          <div>
+            <h2 id="global-heading">全域設定</h2>
+            <p class="help-text">這些選項套用到整份來源檔案及所有輸出欄位。</p>
+          </div>
+        </div>
+        <div class="global-options">
+          <label class="control-group" for="source-encoding">
+            <span>來源編碼</span>
+            <select id="source-encoding">
+              <option value="auto">自動判斷（預設）</option>
+              <option value="utf-8">UTF-8</option>
+              <option value="utf-16">UTF-16</option>
+              <option value="big5">Big5</option>
+            </select>
+            <small>僅用於 CSV。Excel 會直接讀取工作表內容；不確定時請保留自動判斷。</small>
+          </label>
+          <label class="control-group" for="expected-rows">
+            <span>預期資料筆數</span>
+            <input id="expected-rows" class="expected-rows-input" type="number"
+              min="1" step="1" inputmode="numeric" value="200" />
+            <small>實際資料筆數必須完全相同；第一列也算一筆資料，不視為標題。</small>
+          </label>
+          <label class="control-group" for="alignment">
+            <span>輸出對齊方式</span>
+            <select id="alignment">
+              <option value="left">全部靠左（預設）</option>
+              <option value="right">全部靠右</option>
+            </select>
+            <small>內容不足欄寬時，以半形空格補在右側或左側。</small>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="file-heading">
+        <div class="step-heading">
+          <span aria-hidden="true">3</span>
+          <div>
+            <h2 id="file-heading">選擇來源檔案</h2>
+            <p class="help-text">選擇後會立即驗證；每筆來源資料必須正好有 <strong id="source-contract-count">${DEFAULT_COLUMN_COUNT}</strong> 欄。</p>
+          </div>
+        </div>
+        <div class="file-picker source-file-picker">
+          <div class="file-picker-actions">
+            <button id="select-source-button" class="primary-button" type="button">選擇來源檔案</button>
+            <input id="source-file" class="visually-hidden-file" type="file" accept=".csv,.xls,.xlsx" />
+            <button id="start-over-button" class="secondary-button" type="button" disabled>清除檔案</button>
+          </div>
+          <div>
+            <p id="file-status" class="file-status">尚未選擇檔案</p>
+            <p id="encoding-status" class="help-text">支援 CSV、XLS 與 XLSX；檔案上限 25 MiB。</p>
+          </div>
+        </div>
+      </section>
+
       <section class="panel" aria-labelledby="preview-heading">
         <div class="section-heading-row">
           <div class="step-heading">
             <span aria-hidden="true">4</span>
-            <h2 id="preview-heading">驗證與預覽</h2>
+            <div>
+              <h2 id="preview-heading">驗證、預覽與下載</h2>
+              <p class="help-text">選檔或修改設定後會自動重新驗證；只有全部通過時才能下載 Big5 TXT。</p>
+            </div>
           </div>
+        </div>
+        <dl class="validation-summary" aria-label="驗證摘要">
+          <div><dt>預期欄數</dt><dd id="expected-column-summary">${DEFAULT_COLUMN_COUNT}</dd></div>
+          <div><dt>預期筆數</dt><dd id="expected-row-summary">200</dd></div>
+          <div><dt>實際筆數</dt><dd id="actual-row-summary">—</dd></div>
+          <div><dt>正確筆數</dt><dd id="valid-row-summary">—</dd></div>
+          <div><dt>錯誤筆數</dt><dd id="invalid-row-summary">—</dd></div>
+          <div><dt>空白提醒</dt><dd id="whitespace-warning-summary">—</dd></div>
+        </dl>
+
+        <div class="subsection-heading">
+          <div><h3>問題清單</h3><p>錯誤會阻止下載；提醒只協助檢查可疑空白，不會修改原始內容。</p></div>
+        </div>
+        <div class="table-scroll issue-scroll" tabindex="0" aria-label="驗證問題表格，可左右捲動">
+          <table class="error-table">
+            <thead>
+              <tr><th scope="col">資料列</th><th scope="col">欄位</th><th scope="col">類型</th><th scope="col">問題</th></tr>
+            </thead>
+            <tbody id="issue-table-body">
+              <tr><td colspan="4" class="empty-table-message">選擇檔案後顯示驗證結果</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="subsection-heading preview-subsection-heading">
+          <div><h3>輸出預覽</h3><p>預覽會標示來源內容與補齊空格；實際欄寬仍以 Big5 位元組為準。</p></div>
           <div class="preview-options">
             <label class="preview-row-count" for="preview-row-limit">
               <span>預覽筆數</span>
@@ -229,16 +310,9 @@ app.innerHTML = `
             </label>
           </div>
         </div>
-        <dl class="validation-summary" aria-label="驗證摘要">
-          <div><dt>預期筆數</dt><dd id="expected-row-summary">200</dd></div>
-          <div><dt>實際筆數</dt><dd id="actual-row-summary">—</dd></div>
-          <div><dt>正確筆數</dt><dd id="valid-row-summary">—</dd></div>
-          <div><dt>錯誤筆數</dt><dd id="invalid-row-summary">—</dd></div>
-          <div><dt>空白提醒</dt><dd id="whitespace-warning-summary">—</dd></div>
-        </dl>
         <p class="whitespace-legend">
-          <span class="legend-line">來源標記：空格 <code>·</code>、全形空格 <code>□</code>、定位 <code>→</code>、換行 <code>↵</code>；</span>
-          <span class="legend-line"><span class="padding-key">藍色圓點 <span aria-hidden="true">·</span></span>代表輸出補齊空格。實際欄寬以 Big5 位元組為準。</span>
+          <span class="legend-line">橘底為來源空白：半形 <code>·</code>、全形 <code>□</code>、定位字元 <code>→</code>、換行 <code>↵</code>、不換行空格 <code>⍽</code>。</span>
+          <span class="legend-line"><span class="padding-key">藍底圓點 <span aria-hidden="true">·</span></span>為輸出補齊空格。</span>
         </p>
         <div id="preview-results" class="preview-results" role="region" aria-live="polite" aria-label="轉換預覽">
           <div class="notice neutral-notice">
@@ -246,26 +320,13 @@ app.innerHTML = `
             <span>選擇 CSV 或 Excel 檔案後，這裡會顯示可輸出的資料列。</span>
           </div>
         </div>
-        <div class="table-scroll issue-scroll" tabindex="0" aria-label="驗證問題表格，可左右捲動">
-          <table class="error-table">
-            <thead>
-              <tr><th scope="col">資料列</th><th scope="col">欄位</th><th scope="col">類型</th><th scope="col">問題</th></tr>
-            </thead>
-            <tbody id="issue-table-body">
-              <tr><td colspan="4" class="empty-table-message">選擇檔案後顯示驗證結果</td></tr>
-            </tbody>
-          </table>
+        <div class="download-bar">
+          <div><strong>輸出檔案</strong><span>驗證通過後，可下載與來源檔同名、採 Big5 編碼的 .txt 檔案。</span></div>
+          <button id="convert-button" class="primary-button" type="button" disabled>下載 Big5 TXT</button>
         </div>
       </section>
 
-      <section class="actions" aria-label="設定與轉換操作">
-        <button id="start-over-button" class="text-button" type="button" disabled>清除檔案</button>
-        <span class="action-spacer"></span>
-        <button id="save-button" class="secondary-button" type="button">儲存設定</button>
-        <button id="convert-button" class="primary-button" type="button" disabled>轉換並下載</button>
-      </section>
-
-      <p id="app-status" class="app-status" role="status" aria-live="polite">請先選擇一個 CSV、XLS 或 XLSX 檔案。</p>
+      <p id="app-status" class="app-status" role="status" aria-live="polite">尚未選擇來源檔案。</p>
     </main>
   </div>
 `;
@@ -279,8 +340,16 @@ const validRowSummary = requireElement<HTMLElement>("#valid-row-summary");
 const invalidRowSummary = requireElement<HTMLElement>("#invalid-row-summary");
 const warningSummary = requireElement<HTMLElement>("#whitespace-warning-summary");
 const totalWidth = requireElement<HTMLElement>("#total-width");
+const fieldCountSummary = requireElement<HTMLElement>("#field-count-summary");
+const recordWidthSummary = requireElement<HTMLElement>("#record-width-summary");
+const expectedColumnSummary = requireElement<HTMLElement>("#expected-column-summary");
+const sourceContractCount = requireElement<HTMLElement>("#source-contract-count");
 const appStatus = requireElement<HTMLElement>("#app-status");
+const settingsStatus = requireElement<HTMLElement>("#settings-status");
+const settingsFileInput = requireElement<HTMLInputElement>("#settings-file");
+const loadSettingsButton = requireElement<HTMLButtonElement>("#load-settings-button");
 const fileInput = requireElement<HTMLInputElement>("#source-file");
+const selectSourceButton = requireElement<HTMLButtonElement>("#select-source-button");
 const fileStatus = requireElement<HTMLElement>("#file-status");
 const encodingStatus = requireElement<HTMLElement>("#encoding-status");
 const previewResults = requireElement<HTMLElement>("#preview-results");
@@ -317,6 +386,11 @@ let parsedRows: string[][] | null = null;
 let parseErrorMessages: string[] = [];
 let lastResult: ConversionResult | null = null;
 let fileReadSequence = 0;
+let settingsDisplayName = "內建預設設定";
+let settingsDownloadName = "csv2txt-settings.json";
+let settingsAreDirty = false;
+let settingsAutoSaveState: SettingsAutoSaveState = "idle";
+let settingsAutoSaveTimer: number | null = null;
 
 async function enableOfflineUse(): Promise<void> {
   if (!import.meta.env.PROD) {
@@ -348,6 +422,81 @@ void enableOfflineUse();
 
 function widthInputs(): HTMLInputElement[] {
   return Array.from(document.querySelectorAll<HTMLInputElement>(".width-input"));
+}
+
+function renderSettingsStatus(detail?: string): void {
+  settingsStatus.classList.toggle("profile-status-dirty", settingsAreDirty);
+  settingsStatus.classList.toggle("profile-status-autosaved", settingsAreDirty && settingsAutoSaveState === "saved");
+  const dot = document.createElement("span");
+  dot.className = "status-dot";
+  dot.setAttribute("aria-hidden", "true");
+  const copy = document.createElement("div");
+  const title = document.createElement("strong");
+  const stateLabels: Record<SettingsAutoSaveState, string> = {
+    idle: "",
+    pending: " · 正在儲存…",
+    saved: " · 已儲存於此瀏覽器",
+    invalid: " · 尚未儲存",
+    unavailable: " · 無法自動儲存",
+  };
+  const stateLabel = settingsAreDirty ? stateLabels[settingsAutoSaveState] : "";
+  title.textContent = `目前設定：${settingsDisplayName}${stateLabel}`;
+  const description = document.createElement("span");
+  description.textContent = detail ?? (settingsAreDirty
+    ? settingsAutoSaveState === "saved"
+      ? "變更已自動儲存；需要備份時可下載設定檔。"
+      : "正在自動儲存變更。"
+    : `${widthInputs().length} 欄；修改後會自動儲存。`);
+  copy.append(title, description);
+  settingsStatus.replaceChildren(dot, copy);
+}
+
+function persistSettingsToBrowser(settings: ConverterSettings): boolean {
+  try {
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function scheduleSettingsAutoSave(): void {
+  if (settingsAutoSaveTimer !== null) {
+    window.clearTimeout(settingsAutoSaveTimer);
+  }
+  settingsAutoSaveTimer = window.setTimeout(() => {
+    settingsAutoSaveTimer = null;
+    const settings = collectSettings();
+    if (!settings) {
+      settingsAutoSaveState = "invalid";
+      renderSettingsStatus("欄寬或預期筆數無效；保留上次的有效設定。");
+      return;
+    }
+    const saved = persistSettingsToBrowser(settings);
+    settingsAutoSaveState = saved ? "saved" : "unavailable";
+    renderSettingsStatus(saved
+      ? "變更已自動儲存於此瀏覽器。"
+      : "瀏覽器不允許自動儲存；設定只會保留到關閉頁面，建議下載設定檔備份。");
+  }, 250);
+}
+
+function markSettingsDirty(): void {
+  if (!settingsAreDirty) {
+    settingsDisplayName = "自訂設定";
+  }
+  settingsAutoSaveState = "pending";
+  settingsAreDirty = true;
+  renderSettingsStatus();
+  scheduleSettingsAutoSave();
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function syncDefaultInput(index: number): void {
@@ -390,6 +539,11 @@ function updateCumulativeWidths(): boolean {
   });
 
   totalWidth.textContent = valid ? String(cumulative) : "—";
+  recordWidthSummary.textContent = valid ? String(cumulative) : "—";
+  const columnCount = widthInputs().length;
+  fieldCountSummary.textContent = String(columnCount);
+  expectedColumnSummary.textContent = String(columnCount);
+  sourceContractCount.textContent = String(columnCount);
   return valid;
 }
 
@@ -420,7 +574,7 @@ function collectSettings(): ConverterSettings | null {
     sourceEncoding,
     alignment,
     expectedRows,
-    columns: PRESET_WIDTHS.map((_, index) => {
+    columns: widthInputs().map((_, index) => {
       const required = requireElement<HTMLInputElement>(`#required-${index}`).checked;
       return {
         required,
@@ -443,7 +597,7 @@ function isSavedSettings(value: unknown): value is ConverterSettings {
     && Number.isInteger(candidate.expectedRows)
     && (candidate.expectedRows ?? 0) > 0
     && Array.isArray(candidate.columns)
-    && candidate.columns.length === COLUMN_COUNT
+    && candidate.columns.length > 0
     && candidate.columns.every((column) => (
       typeof column === "object"
       && column !== null
@@ -452,6 +606,21 @@ function isSavedSettings(value: unknown): value is ConverterSettings {
       && Number.isInteger(column.widthBytes)
       && column.widthBytes > 0
     ));
+}
+
+function matchesBuiltInDefaults(settings: Readonly<ConverterSettings>): boolean {
+  const defaults = createDefaultSettings();
+  return settings.sourceEncoding === defaults.sourceEncoding
+    && settings.alignment === defaults.alignment
+    && settings.expectedRows === defaults.expectedRows
+    && settings.columns.length === defaults.columns.length
+    && settings.columns.every((column, index) => {
+      const defaultColumn = defaults.columns[index];
+      return defaultColumn !== undefined
+        && column.required === defaultColumn.required
+        && column.defaultValue === defaultColumn.defaultValue
+        && column.widthBytes === defaultColumn.widthBytes;
+    });
 }
 
 function applySettings(settings: ConverterSettings): void {
@@ -470,19 +639,53 @@ function applySettings(settings: ConverterSettings): void {
   validateExpectedRows();
 }
 
-function markWhitespace(value: string): string {
+function appendPreviewValue(container: HTMLElement, value: string): void {
   if (!showWhitespaceInput.checked) {
-    return value;
+    container.textContent = value;
+    return;
   }
 
-  return value
-    .replaceAll(" ", "·")
-    .replaceAll("　", "□")
-    .replaceAll("\t", "→")
-    .replaceAll("\r\n", "↵")
-    .replaceAll("\r", "↵")
-    .replaceAll("\n", "↵")
-    .replaceAll("\u00a0", "⍽");
+  const markers: Record<string, { symbol: string; label: string; wide?: boolean }> = {
+    " ": { symbol: "·", label: "來源半形空格" },
+    "　": { symbol: "□", label: "來源全形空格", wide: true },
+    "\t": { symbol: "→", label: "來源定位字元" },
+    "\r": { symbol: "↵", label: "來源換行字元" },
+    "\n": { symbol: "↵", label: "來源換行字元" },
+    "\u00a0": { symbol: "⍽", label: "來源不換行空格" },
+  };
+  let plainText = "";
+
+  const flushPlainText = (): void => {
+    if (plainText !== "") {
+      container.append(document.createTextNode(plainText));
+      plainText = "";
+    }
+  };
+
+  for (let index = 0; index < value.length; index += 1) {
+    let character = value[index] ?? "";
+    if (character === "\r" && value[index + 1] === "\n") {
+      character = "\r";
+      index += 1;
+    }
+    const markerDefinition = markers[character];
+    if (!markerDefinition) {
+      plainText += character;
+      continue;
+    }
+
+    flushPlainText();
+    const marker = document.createElement("span");
+    marker.className = markerDefinition.wide
+      ? "source-whitespace-marker source-whitespace-marker-wide"
+      : "source-whitespace-marker";
+    marker.textContent = markerDefinition.symbol;
+    marker.title = markerDefinition.label;
+    marker.setAttribute("aria-label", markerDefinition.label);
+    container.append(marker);
+  }
+
+  flushPlainText();
 }
 
 function renderPreview(result: ConversionResult): void {
@@ -566,7 +769,7 @@ function renderPreview(result: ConversionResult): void {
       source.title = field.usedDefault
         ? `欄位${field.fieldIndex}：使用空值預設，${field.valueBytes} 位元組`
         : `欄位${field.fieldIndex}：${field.valueBytes} 位元組`;
-      source.textContent = markWhitespace(field.resolvedValue);
+      appendPreviewValue(source, field.resolvedValue);
 
       const padding = document.createElement("span");
       padding.className = "padding-fragment";
@@ -750,21 +953,93 @@ function clearFileState(): void {
   startOverButton.disabled = true;
   previewResults.innerHTML = `<div class="notice neutral-notice"><strong>尚未驗證</strong><span>選擇 CSV 或 Excel 檔案後，這裡會顯示可輸出的資料列。</span></div>`;
   issueTableBody.innerHTML = `<tr><td colspan="4" class="empty-table-message">選擇檔案後顯示驗證結果</td></tr>`;
-  appStatus.textContent = "請先選擇一個 CSV、XLS 或 XLSX 檔案。";
+  appStatus.textContent = "尚未選擇來源檔案。";
 }
 
-function restoreDefaults(): void {
-  applySettings(createDefaultSettings());
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    // In-memory defaults still apply when persistent storage is unavailable.
+function loadDefaultSettings(): void {
+  if (settingsAreDirty && !window.confirm("載入預設設定會取代目前設定。確定要繼續嗎？")) {
+    return;
   }
+  if (settingsAutoSaveTimer !== null) {
+    window.clearTimeout(settingsAutoSaveTimer);
+    settingsAutoSaveTimer = null;
+  }
+  const defaults = createDefaultSettings();
+  applySettings(defaults);
+  settingsDisplayName = "內建預設設定";
+  settingsDownloadName = "csv2txt-settings.json";
+  settingsAreDirty = false;
+  const saved = persistSettingsToBrowser(defaults);
+  settingsAutoSaveState = saved ? "saved" : "unavailable";
+  renderSettingsStatus(saved
+    ? `已套用內建 ${widthInputs().length} 欄預設，並儲存於此瀏覽器。`
+    : `已套用內建 ${widthInputs().length} 欄預設；瀏覽器不允許自動儲存。`);
   if (sourceBytes) {
     parseAndValidate();
   }
-  appStatus.textContent = sourceBytes ? "已恢復預設設定並重新驗證。" : "已恢復預設設定。";
+  appStatus.textContent = sourceBytes ? "已套用預設設定並重新驗證來源檔案。" : "已套用預設設定。";
 }
+
+settingsFileInput.addEventListener("change", async () => {
+  const file = settingsFileInput.files?.[0];
+  if (!file) {
+    return;
+  }
+
+  try {
+    if (!/\.json$/iu.test(file.name)) {
+      throw new Error("設定檔必須是 .json 檔案。");
+    }
+    if (file.size === 0) {
+      throw new Error("設定檔是空的，無法套用。");
+    }
+    if (file.size > MAX_SETTINGS_FILE_BYTES) {
+      throw new Error("設定檔超過 1 MiB 上限，無法套用。");
+    }
+
+    const parsed: unknown = JSON.parse(await file.text());
+    if (!isSavedSettings(parsed)) {
+      throw new Error("設定檔格式不正確或版本不受支援；目前設定未變更。");
+    }
+    if (parsed.columns.length !== widthInputs().length) {
+      throw new Error(`這份設定有 ${parsed.columns.length} 欄，目前欄位編輯器為 ${widthInputs().length} 欄；目前設定未變更。`);
+    }
+    if (settingsAreDirty && !window.confirm("套用這份設定檔會取代目前設定。確定要繼續嗎？")) {
+      return;
+    }
+
+    if (settingsAutoSaveTimer !== null) {
+      window.clearTimeout(settingsAutoSaveTimer);
+      settingsAutoSaveTimer = null;
+    }
+    applySettings(parsed);
+    settingsDisplayName = file.name;
+    settingsDownloadName = file.name;
+    settingsAreDirty = false;
+    const saved = persistSettingsToBrowser(parsed);
+    settingsAutoSaveState = saved ? "saved" : "unavailable";
+    renderSettingsStatus(saved
+      ? `已套用 ${parsed.columns.length} 欄設定，並儲存於此瀏覽器。`
+      : `已套用 ${parsed.columns.length} 欄設定；瀏覽器不允許自動儲存。`);
+    if (sourceBytes) {
+      parseAndValidate();
+    }
+    appStatus.textContent = sourceBytes
+      ? `已套用 ${file.name}，並重新驗證來源檔案。`
+      : `已套用 ${file.name}；請確認設定後選擇來源檔案。`;
+  } catch (error) {
+    const message = error instanceof SyntaxError
+      ? "設定檔不是有效的 JSON；目前設定未變更。"
+      : error instanceof Error ? error.message : "無法讀取設定檔；目前設定未變更。";
+    renderSettingsStatus(message);
+    appStatus.textContent = message;
+  } finally {
+    settingsFileInput.value = "";
+  }
+});
+
+loadSettingsButton.addEventListener("click", () => settingsFileInput.click());
+selectSourceButton.addEventListener("click", () => fileInput.click());
 
 fileInput.addEventListener("change", async () => {
   const file = fileInput.files?.[0];
@@ -813,9 +1088,18 @@ fileInput.addEventListener("change", async () => {
   }
 });
 
-encodingSelect.addEventListener("change", parseAndValidate);
-alignmentSelect.addEventListener("change", validateAndRender);
-expectedRowsInput.addEventListener("input", validateAndRender);
+encodingSelect.addEventListener("change", () => {
+  markSettingsDirty();
+  parseAndValidate();
+});
+alignmentSelect.addEventListener("change", () => {
+  markSettingsDirty();
+  validateAndRender();
+});
+expectedRowsInput.addEventListener("input", () => {
+  markSettingsDirty();
+  validateAndRender();
+});
 showWhitespaceInput.addEventListener("change", () => {
   if (lastResult) {
     renderPreview(lastResult);
@@ -827,33 +1111,57 @@ previewRowLimitSelect.addEventListener("change", () => {
   }
 });
 
-widthInputs().forEach((input) => input.addEventListener("input", validateAndRender));
+window.addEventListener("pagehide", () => {
+  if (settingsAutoSaveTimer !== null) {
+    window.clearTimeout(settingsAutoSaveTimer);
+    settingsAutoSaveTimer = null;
+  }
+  const settings = collectSettings();
+  if (settings) {
+    persistSettingsToBrowser(settings);
+  }
+});
+
+widthInputs().forEach((input) => input.addEventListener("input", () => {
+  markSettingsDirty();
+  validateAndRender();
+}));
 document.querySelectorAll<HTMLInputElement>(".required-input").forEach((input, index) => {
   input.addEventListener("change", () => {
     syncDefaultInput(index);
+    markSettingsDirty();
     validateAndRender();
   });
 });
 document.querySelectorAll<HTMLInputElement>(".default-input").forEach((input) => {
-  input.addEventListener("input", validateAndRender);
+  input.addEventListener("input", () => {
+    markSettingsDirty();
+    validateAndRender();
+  });
 });
 
-requireElement<HTMLButtonElement>("#save-button").addEventListener("click", () => {
+requireElement<HTMLButtonElement>("#save-settings-button").addEventListener("click", () => {
   const settings = collectSettings();
   if (!settings) {
-    appStatus.textContent = "設定尚未儲存：請先修正無效的數字。";
+    const message = "無法下載設定檔：請將預期筆數與所有欄寬設為大於 0 的整數。";
+    renderSettingsStatus(message);
+    appStatus.textContent = message;
     return;
   }
 
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-    appStatus.textContent = "設定已儲存在這個瀏覽器中；來源檔案與預覽不會被儲存。";
-  } catch {
-    appStatus.textContent = "瀏覽器不允許儲存設定；目前設定只會保留到關閉頁面為止。";
-  }
+  const json = `${JSON.stringify(settings, null, 2)}\n`;
+  downloadBlob(new Blob([json], { type: "application/json;charset=utf-8" }), settingsDownloadName);
+  const browserSaved = persistSettingsToBrowser(settings);
+  settingsDisplayName = settingsDownloadName;
+  settingsAreDirty = false;
+  settingsAutoSaveState = browserSaved ? "saved" : "unavailable";
+  renderSettingsStatus(browserSaved
+    ? "已下載設定檔；目前設定也已儲存於此瀏覽器。"
+    : "已下載設定檔；瀏覽器不允許自動儲存。JSON 備份仍可正常使用。");
+  appStatus.textContent = `已下載 ${settingsDownloadName}。`;
 });
 
-requireElement<HTMLButtonElement>("#restore-button").addEventListener("click", restoreDefaults);
+requireElement<HTMLButtonElement>("#load-default-button").addEventListener("click", loadDefaultSettings);
 startOverButton.addEventListener("click", clearFileState);
 
 convertButton.addEventListener("click", () => {
@@ -863,27 +1171,50 @@ convertButton.addEventListener("click", () => {
   }
 
   const bytes = lastResult.outputBytes;
-  const blob = new Blob([bytes.slice().buffer], { type: "text/plain" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = sourceFile.name.replace(/\.(?:csv|xlsx?)$/iu, "") + ".txt";
-  link.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
-  appStatus.textContent = `已產生 ${link.download}（Big5、${bytes.length.toLocaleString("zh-Hant-TW")} 位元組）。`;
+  const filename = sourceFile.name.replace(/\.(?:csv|xlsx?)$/iu, "") + ".txt";
+  downloadBlob(new Blob([bytes.slice().buffer], { type: "text/plain" }), filename);
+  appStatus.textContent = `已產生 ${filename}（Big5、${bytes.length.toLocaleString("zh-Hant-TW")} 位元組）。`;
 });
 
-try {
-  const savedValue = localStorage.getItem(STORAGE_KEY);
-  if (savedValue) {
-    const parsed: unknown = JSON.parse(savedValue);
-    if (isSavedSettings(parsed)) {
-      applySettings(parsed);
-      appStatus.textContent = "已載入先前儲存的設定，請選擇 CSV、XLS 或 XLSX 檔案。";
-    } else {
-      appStatus.textContent = "先前設定格式無效，已使用預設值。";
+function restoreSettingsAtStartup(): void {
+  let storedValue: string | null;
+  try {
+    storedValue = localStorage.getItem(SETTINGS_STORAGE_KEY);
+  } catch {
+    applySettings(createDefaultSettings());
+    renderSettingsStatus("目前使用內建預設設定；瀏覽器不允許自動儲存，建議下載設定檔備份。");
+    return;
+  }
+
+  if (storedValue) {
+    try {
+      const parsed: unknown = JSON.parse(storedValue);
+      if (isSavedSettings(parsed) && parsed.columns.length === widthInputs().length) {
+        applySettings(parsed);
+        const restoredDefaults = matchesBuiltInDefaults(parsed);
+        settingsDisplayName = restoredDefaults ? "內建預設設定" : "上次的自訂設定";
+        settingsAreDirty = false;
+        settingsAutoSaveState = "saved";
+        renderSettingsStatus(restoredDefaults
+          ? `目前使用內建 ${parsed.columns.length} 欄預設。`
+          : `已復原此瀏覽器中的 ${parsed.columns.length} 欄自訂設定。`);
+        appStatus.textContent = restoredDefaults
+          ? "目前使用內建預設設定；請選擇來源檔案。"
+          : "已復原你上次的自訂設定；請確認後選擇來源檔案。";
+        return;
+      }
+    } catch {
+      // Fall through to a fresh built-in profile when stored JSON is unusable.
     }
   }
-} catch {
-  appStatus.textContent = "無法讀取先前設定，已使用預設值。";
+
+  const defaults = createDefaultSettings();
+  applySettings(defaults);
+  const saved = persistSettingsToBrowser(defaults);
+  settingsAutoSaveState = saved ? "saved" : "unavailable";
+  renderSettingsStatus(saved
+    ? `目前使用內建 ${defaults.columns.length} 欄預設；後續變更會自動儲存。`
+    : "目前使用內建預設設定；瀏覽器不允許自動儲存，建議下載設定檔備份。");
 }
+
+restoreSettingsAtStartup();
