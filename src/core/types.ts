@@ -34,7 +34,8 @@ export type ValidationCode =
   | "UNSUPPORTED_CONTROL_CHARACTER"
   | "UNENCODABLE_BIG5"
   | "WIDTH_OVERFLOW"
-  | "MALFORMED_CSV";
+  | "MALFORMED_CSV"
+  | "MALFORMED_SPREADSHEET";
 
 export interface ValidationIssue {
   severity: ValidationSeverity;

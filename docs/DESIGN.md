@@ -1,9 +1,9 @@
-# CSV to Fixed-Width Big5 Converter — Design Specification
+# CSV / Excel to Fixed-Width Big5 Converter — Design Specification
 
-A privacy-first browser application that converts CSV files into a 15-column,
-fixed-width Big5 text format. All file reading, validation, conversion, and
-download generation happen in the user's browser. No CSV data is uploaded to a
-server.
+A privacy-first browser application that converts CSV, XLS, and XLSX files into
+a 15-column, fixed-width Big5 text format. All file reading, validation,
+conversion, and download generation happen in the user's browser. No source
+data is uploaded to a server.
 
 > **Project status:** a minimum working browser flow and pure conversion core are
 > implemented. Automated tests, JSON settings import/export, and the remaining
@@ -40,7 +40,7 @@ guarantee consistent validation, byte widths, character encoding, and privacy.
 
 The replacement must:
 
-1. Accept a CSV encoded as UTF-8, UTF-16, or Big5.
+1. Accept a CSV encoded as UTF-8, UTF-16, or Big5, or an XLS/XLSX workbook.
 2. Read exactly 15 positional source columns and write exactly 15 output fields
    in the same order.
 3. Substitute user-configured defaults when corresponding input cells are empty.
@@ -56,7 +56,8 @@ The replacement must:
 
 - Run as a static site on GitHub Pages.
 - Perform all sensitive-data processing locally in the browser.
-- Support CSV input decoded as UTF-8, UTF-16, or Big5.
+- Support CSV input decoded as UTF-8, UTF-16, or Big5 and the first worksheet
+  of XLS/XLSX workbooks.
 - Produce exactly 15 output fields in a deterministic order.
 - Require exactly 200 parsed data records by default, with an editable expected
   record count in global settings.
@@ -76,7 +77,7 @@ The replacement must:
 
 - Server-side file storage or conversion.
 - User accounts or cloud synchronization.
-- XLS/XLSX input or output.
+- Spreadsheet output.
 - Automatic transliteration of characters unavailable in Big5.
 - Supporting arbitrary output schemas beyond the predefined 15 fields.
 - Silently truncating overlong values.
@@ -91,13 +92,14 @@ The replacement must:
 | Fixed width | Count Big5 bytes | Legacy consumers usually address byte positions; Chinese characters normally occupy two Big5 bytes while ASCII occupies one. |
 | Overflow | Block conversion | Silent truncation can corrupt identifiers and must not be the default. |
 | Unencodable text | Block conversion | Replacing characters with `?` would cause undetected data loss. |
-| Default trigger | An exactly empty parsed CSV string (`""`) | Whitespace is preserved and does not silently trigger a default. |
+| Default trigger | An exactly empty parsed cell string (`""`) | Whitespace is preserved and does not silently trigger a default. |
 | Required check | Must contain a non-whitespace character | A required value made only of spaces is not meaningful and blocks download. |
 | Charset detection | Best effort plus user override | Some byte streams, especially ASCII, are valid in both UTF-8 and Big5. |
 | Processing | Browser only | Source files contain sensitive data. |
 | Settings | `localStorage` plus JSON backup | Convenient on stable web origins, with a portable recovery mechanism. |
 | UI stack | TypeScript and DOM APIs, no UI framework | The workflow is small and does not need a framework runtime. |
 | CSV parser | Papa Parse | Correct handling of quoted fields, embedded delimiters, and multiline values. |
+| XLS/XLSX parser | SheetJS Community Edition | Browser-local parsing of both modern and legacy Excel formats into the common string-row model. |
 | Big5 encoder | `iconv-lite` bundled locally | Browser `TextEncoder` only produces UTF-8. |
 | UI language | Traditional Chinese only | The target users are Traditional Chinese readers. |
 | Output labels | `欄位1`–`欄位15` | Business names and subtitles are intentionally unnecessary. |
@@ -173,16 +175,18 @@ The application is a single-page workflow with five stages.
 
 ### 1. Select input
 
-- Choose or drag one `.csv` file.
+- Choose one `.csv`, `.xls`, or `.xlsx` file. Reject every other extension.
 - Read the file with the browser File API.
 - Display the filename and byte size.
 - Do not persist the file or its contents.
 
 ### 2. Confirm input format
 
-- Show the detected source encoding: UTF-8, UTF-16LE, UTF-16BE, Big5, or
-  ambiguous.
+- For CSV, show the detected source encoding: UTF-8, UTF-16LE, UTF-16BE, Big5,
+  or ambiguous.
 - Let the user select `自動判斷（預設）`, `UTF-8`, `UTF-16`, or `Big5`.
+- For XLS/XLSX, disable the encoding control and show the imported worksheet
+  name. Use the first worksheet in workbook order.
 - Show a decoded preview of a small number of rows.
 - Treat the source as positional data with no header row. Every row must contain
   exactly 15 values.
@@ -266,10 +270,22 @@ The settings screen also provides:
 - **FR-019A:** Parse with empty-line skipping disabled so blank records remain
   available for validation.
 
+### XLS/XLSX parsing
+
+- **FR-019B:** Select CSV, XLS, or XLSX parsing from the case-insensitive file
+  extension and reject every other extension before reading the file.
+- **FR-019C:** Parse the first worksheet directly into the common `string[][]`
+  row model without generating intermediate CSV text.
+- **FR-019D:** Use formatted display strings, fill absent cells through column 15
+  with `""`, and preserve populated columns beyond column 15 for validation.
+- **FR-019E:** Normalize locale-sensitive built-in date formats to `yyyy/mm/dd`.
+- **FR-019F:** Use cached formula results and block conversion when a formula has
+  no saved result.
+
 ### Field validation and defaults
 
 - **FR-020:** Always create exactly 15 output fields in profile order.
-- **FR-021:** Require every source row to contain exactly 15 parsed CSV values.
+- **FR-021:** Require every source row to contain exactly 15 parsed cell values.
 - **FR-022:** Map source column N directly to output field N.
 - **FR-023:** Apply the default only when the parsed input value equals `""`.
 - **FR-024:** Validate defaults with the same rules as source values.
@@ -402,6 +418,7 @@ interface ValidationIssue {
     | "UNENCODABLE_BIG5"
     | "WIDTH_OVERFLOW"
     | "MALFORMED_CSV"
+    | "MALFORMED_SPREADSHEET"
     | "INVALID_SETTINGS";
   sourceRow?: number;
   fieldId?: string;
@@ -414,7 +431,7 @@ JSON loaded from `localStorage` or a user-selected settings file.
 
 ## Conversion rules
 
-For each parsed CSV row and each of the 15 configured fields:
+For each normalized source row and each of the 15 configured fields:
 
 ```text
 sourceValue = source row value at the same one-based position
@@ -510,6 +527,8 @@ and re-parse the original byte array.
 - Empty or oversized input file
 - Unsupported or invalid input encoding
 - Malformed CSV
+- Unreadable, encrypted, or empty Excel workbook
+- Excel formula without a saved calculation result
 - Parsed record count different from the configured expected count
 - Empty or whitespace-only source record
 - Source row with fewer or more than 15 values
@@ -532,8 +551,8 @@ and re-parse the original byte array.
 - Do not expose complete sensitive rows unnecessarily.
 - Display the offending value only while the file remains loaded, and consider
   masking it in a future high-privacy mode.
-- Render source values with DOM `textContent`, never by inserting untrusted CSV
-  text as HTML.
+- Render source values with DOM `textContent`, never by inserting untrusted
+  source text as HTML.
 - Allow downloading an error report only after an explicit user action.
 
 Whitespace warnings do not alter source values. Leading/trailing or non-ASCII
@@ -593,7 +612,10 @@ flowchart LR
     A[User-selected CSV bytes] --> B[Encoding detector]
     B --> C[UTF-8, UTF-16, or Big5 decoder]
     C --> D[CSV parser]
-    D --> E[15-field positional defaults]
+    X[User-selected XLS/XLSX bytes] --> Y[Excel parser]
+    D --> N[Common string row model]
+    Y --> N
+    N --> E[15-field positional defaults]
     S[Validated settings] --> E
     E --> W[Whitespace inspector]
     W --> F[Required-field validator]
@@ -612,6 +634,8 @@ src/
   core/
     encoding.ts        Detection, decoding, and Big5 encoding adapter
     csv.ts             Papa Parse adapter
+    source.ts          Filename-extension source type detection
+    spreadsheet.ts     XLS/XLSX adapter and cell normalization
     defaults.ts        Positional default resolution
     fixed-width.ts     Validation, byte padding, and record assembly
     settings.ts        Runtime validation and migration
@@ -688,8 +712,8 @@ but browsers may block module imports or related-file fetches. `localStorage`
 behavior for `file://` is not standardized and must not be relied upon.
 
 The optional offline release should therefore be one self-contained HTML file
-with bundled classic JavaScript, CSS, encoding tables, and CSV parser. It must
-make no network requests and must retain JSON settings import/export as the
+with bundled classic JavaScript, CSS, encoding tables, and CSV/Excel parsers. It
+must make no network requests and must retain JSON settings import/export as the
 portable persistence mechanism.
 
 Serving the normal development build from `localhost` is not the same as
@@ -757,6 +781,14 @@ All fixtures must be synthetic and contain no production data.
 - Rows with fewer or more than 15 values
 - Malformed quotations
 
+### Spreadsheet tests
+
+- Case-insensitive CSV/XLS/XLSX extension detection and rejection of other types
+- XLS and XLSX formatted strings, dates, percentages, booleans, and Chinese text
+- Missing-cell padding through column 15 and preservation of populated extras
+- Cached formula results and rejection of formulas without saved results
+- First worksheet selection and preservation of leading blank rows
+
 ### Integration tests
 
 - UTF-8 CSV to expected Big5 TXT bytes
@@ -816,8 +848,8 @@ the expected TXT byte-for-byte.
 
 The first production release is accepted when:
 
-1. A supported UTF-8, UTF-16, or Big5 CSV can be processed without network
-   requests.
+1. A supported UTF-8, UTF-16, or Big5 CSV or XLS/XLSX workbook can be processed
+   without runtime network requests.
 2. Exactly 15 configured fields are emitted in order.
 3. Defaults are applied only to empty source values in the same field position.
 4. Required empty values block download with row/field errors.
