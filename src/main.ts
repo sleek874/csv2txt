@@ -22,7 +22,50 @@ import {
 } from "./core/types";
 
 const STORAGE_KEY = "csv2txt.settings.v2";
+const THEME_STORAGE_KEY = "csv2txt.theme";
 const ISSUE_DISPLAY_LIMIT = 200;
+
+type Theme = "light" | "dark";
+
+const systemDarkTheme = window.matchMedia("(prefers-color-scheme: dark)");
+let manualTheme: Theme | null = null;
+
+try {
+  const storedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+  if (storedTheme === "light" || storedTheme === "dark") {
+    manualTheme = storedTheme;
+  }
+} catch {
+  // The in-memory toggle still works when persistent storage is unavailable.
+}
+
+function resolvedTheme(): Theme {
+  return manualTheme ?? (systemDarkTheme.matches ? "dark" : "light");
+}
+
+function applyTheme(): void {
+  const theme = resolvedTheme();
+  document.documentElement.dataset.theme = theme;
+  document.documentElement.style.colorScheme = theme;
+  document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+    ?.setAttribute("content", theme === "dark" ? "#10171c" : "#f4f7f8");
+
+  const toggle = document.querySelector<HTMLButtonElement>("#theme-toggle");
+  if (toggle) {
+    const source = manualTheme ? "手動" : "系統";
+    toggle.setAttribute("aria-checked", String(theme === "dark"));
+    toggle.setAttribute("aria-label", `深色模式，目前${theme === "dark" ? "開啟" : "關閉"}，${source}設定`);
+    toggle.title = manualTheme
+      ? `目前為${theme === "dark" ? "深色" : "淺色"}模式（手動設定）`
+      : `目前為${theme === "dark" ? "深色" : "淺色"}模式（跟隨系統）`;
+    const mode = toggle.querySelector<HTMLElement>(".theme-toggle-mode");
+    if (mode) {
+      mode.textContent = source;
+    }
+  }
+}
+
+applyTheme();
 
 function requireElement<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -71,6 +114,11 @@ app.innerHTML = `
         <p>檔案只在這個瀏覽器中讀取、驗證與轉換，不會上傳。</p>
       </div>
       <div class="header-badges">
+        <button id="theme-toggle" class="theme-toggle" type="button" role="switch" aria-checked="false">
+          <span>深色模式</span>
+          <span class="theme-toggle-mode">系統</span>
+          <span class="theme-toggle-track" aria-hidden="true"></span>
+        </button>
         <div class="privacy-badge" aria-label="資料不離開裝置">資料不離開裝置</div>
         <div id="offline-status" class="offline-status" role="status">正在準備離線使用…</div>
       </div>
@@ -189,8 +237,8 @@ app.innerHTML = `
           <div><dt>空白提醒</dt><dd id="whitespace-warning-summary">—</dd></div>
         </dl>
         <p class="whitespace-legend">
-          來源標記：空格 <code>·</code>、全形空格 <code>□</code>、定位 <code>→</code>、換行 <code>↵</code>；
-          <span class="padding-key">藍色圓點</span>代表輸出補齊空格。實際欄寬以 Big5 位元組為準。
+          <span class="legend-line">來源標記：空格 <code>·</code>、全形空格 <code>□</code>、定位 <code>→</code>、換行 <code>↵</code>；</span>
+          <span class="legend-line"><span class="padding-key">藍色圓點 <span aria-hidden="true">·</span></span>代表輸出補齊空格。實際欄寬以 Big5 位元組為準。</span>
         </p>
         <div id="preview-results" class="preview-results" role="region" aria-live="polite" aria-label="轉換預覽">
           <div class="notice neutral-notice">
@@ -242,6 +290,25 @@ const startOverButton = requireElement<HTMLButtonElement>("#start-over-button");
 const showWhitespaceInput = requireElement<HTMLInputElement>("#show-whitespace");
 const previewRowLimitSelect = requireElement<HTMLSelectElement>("#preview-row-limit");
 const offlineStatus = requireElement<HTMLElement>("#offline-status");
+const themeToggle = requireElement<HTMLButtonElement>("#theme-toggle");
+
+applyTheme();
+
+themeToggle.addEventListener("click", () => {
+  manualTheme = resolvedTheme() === "dark" ? "light" : "dark";
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, manualTheme);
+  } catch {
+    // The selected theme remains active for this page session.
+  }
+  applyTheme();
+});
+
+systemDarkTheme.addEventListener("change", () => {
+  if (!manualTheme) {
+    applyTheme();
+  }
+});
 
 let sourceFile: File | null = null;
 let sourceFileType: SourceFileType | null = null;
@@ -283,6 +350,17 @@ function widthInputs(): HTMLInputElement[] {
   return Array.from(document.querySelectorAll<HTMLInputElement>(".width-input"));
 }
 
+function syncDefaultInput(index: number): void {
+  const requiredInput = requireElement<HTMLInputElement>(`#required-${index}`);
+  const defaultInput = requireElement<HTMLInputElement>(`#default-${index}`);
+  defaultInput.disabled = requiredInput.checked;
+  defaultInput.placeholder = requiredInput.checked ? "已停用" : "選填";
+
+  if (requiredInput.checked) {
+    defaultInput.value = "";
+  }
+}
+
 function updateCumulativeWidths(): boolean {
   const outputs = Array.from(document.querySelectorAll<HTMLElement>(".cumulative-width"));
   let cumulative = 0;
@@ -291,17 +369,20 @@ function updateCumulativeWidths(): boolean {
   widthInputs().forEach((input, index) => {
     const width = Number(input.value);
     const output = outputs[index];
+    const widthIsValid = Number.isInteger(width) && width >= 1;
 
-    if (!Number.isInteger(width) || width < 1) {
+    input.toggleAttribute("aria-invalid", !widthIsValid);
+    if (!widthIsValid) {
       valid = false;
-      input.setAttribute("aria-invalid", "true");
+    }
+
+    if (!valid) {
       if (output) {
         output.textContent = "—";
       }
       return;
     }
 
-    input.removeAttribute("aria-invalid");
     cumulative += width;
     if (output) {
       output.textContent = String(cumulative);
@@ -339,11 +420,14 @@ function collectSettings(): ConverterSettings | null {
     sourceEncoding,
     alignment,
     expectedRows,
-    columns: PRESET_WIDTHS.map((_, index) => ({
-      required: requireElement<HTMLInputElement>(`#required-${index}`).checked,
-      defaultValue: requireElement<HTMLInputElement>(`#default-${index}`).value,
-      widthBytes: Number(requireElement<HTMLInputElement>(`#width-${index}`).value),
-    })),
+    columns: PRESET_WIDTHS.map((_, index) => {
+      const required = requireElement<HTMLInputElement>(`#required-${index}`).checked;
+      return {
+        required,
+        defaultValue: required ? "" : requireElement<HTMLInputElement>(`#default-${index}`).value,
+        widthBytes: Number(requireElement<HTMLInputElement>(`#width-${index}`).value),
+      };
+    }),
   };
 }
 
@@ -379,6 +463,7 @@ function applySettings(settings: ConverterSettings): void {
     requireElement<HTMLInputElement>(`#required-${index}`).checked = column.required;
     requireElement<HTMLInputElement>(`#default-${index}`).value = column.defaultValue;
     requireElement<HTMLInputElement>(`#width-${index}`).value = String(column.widthBytes);
+    syncDefaultInput(index);
   });
 
   updateCumulativeWidths();
@@ -431,9 +516,35 @@ function renderPreview(result: ConversionResult): void {
   const previewChunk = document.createElement("div");
   previewChunk.className = "preview-chunk";
   previewChunk.tabIndex = 0;
-  previewChunk.setAttribute("aria-label", "正確資料預覽，可左右捲動");
+  previewChunk.setAttribute("aria-label", "正確資料預覽，可上下及左右捲動");
   const previewChunkRows = document.createElement("div");
   previewChunkRows.className = "preview-chunk-rows";
+
+  const columnGuide = document.createElement("div");
+  columnGuide.className = "preview-column-guide";
+  const columnGuideLabel = document.createElement("span");
+  columnGuideLabel.className = "preview-column-guide-label";
+  columnGuideLabel.textContent = "欄位";
+  const columnGuideFields = document.createElement("div");
+  columnGuideFields.className = "preview-column-guide-fields big5-text";
+
+  const guideSourceFields = validRows[0]?.fields ?? [];
+  guideSourceFields.forEach((field) => {
+    const widthBytes = field.valueBytes + field.paddingBytes;
+    const guideField = document.createElement("span");
+    guideField.className = "column-guide-fragment";
+    guideField.style.width = `${widthBytes}ch`;
+    guideField.title = `欄位${field.fieldIndex}：欄寬 ${widthBytes} 位元組`;
+
+    const number = document.createElement("span");
+    number.className = "column-guide-number";
+    number.textContent = String(field.fieldIndex);
+    guideField.append(number);
+    columnGuideFields.append(guideField);
+  });
+
+  columnGuide.append(columnGuideLabel, columnGuideFields);
+  previewChunkRows.append(columnGuide);
 
   validRows.forEach((row) => {
     const record = document.createElement("div");
@@ -442,6 +553,7 @@ function renderPreview(result: ConversionResult): void {
     label.className = "preview-row-label";
     label.textContent = `第 ${row.sourceRow} 筆`;
     const output = document.createElement("pre");
+    output.className = "big5-text";
 
     row.fields.forEach((field) => {
       const fieldFragment = document.createElement("span");
@@ -450,6 +562,7 @@ function renderPreview(result: ConversionResult): void {
 
       const source = document.createElement("span");
       source.className = field.usedDefault ? "value-fragment default-fragment" : "value-fragment";
+      source.style.width = `${field.valueBytes}ch`;
       source.title = field.usedDefault
         ? `欄位${field.fieldIndex}：使用空值預設，${field.valueBytes} 位元組`
         : `欄位${field.fieldIndex}：${field.valueBytes} 位元組`;
@@ -457,6 +570,7 @@ function renderPreview(result: ConversionResult): void {
 
       const padding = document.createElement("span");
       padding.className = "padding-fragment";
+      padding.style.width = `${field.paddingBytes}ch`;
       padding.title = `欄位${field.fieldIndex}：補 ${field.paddingBytes} 個空格`;
       padding.textContent = "·".repeat(field.paddingBytes);
 
@@ -533,6 +647,8 @@ function renderParseErrors(rows: readonly string[][], errors: readonly string[])
 }
 
 function validateAndRender(): void {
+  const settings = collectSettings();
+
   if (!parsedRows) {
     return;
   }
@@ -542,7 +658,6 @@ function validateAndRender(): void {
     return;
   }
 
-  const settings = collectSettings();
   if (!settings) {
     lastResult = null;
     convertButton.disabled = true;
@@ -713,7 +828,13 @@ previewRowLimitSelect.addEventListener("change", () => {
 });
 
 widthInputs().forEach((input) => input.addEventListener("input", validateAndRender));
-document.querySelectorAll<HTMLInputElement>(".required-input, .default-input").forEach((input) => {
+document.querySelectorAll<HTMLInputElement>(".required-input").forEach((input, index) => {
+  input.addEventListener("change", () => {
+    syncDefaultInput(index);
+    validateAndRender();
+  });
+});
+document.querySelectorAll<HTMLInputElement>(".default-input").forEach((input) => {
   input.addEventListener("input", validateAndRender);
 });
 
