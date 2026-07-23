@@ -36,13 +36,11 @@ is not uploaded to a server.
   previews, and generated output are never included in either settings store.
 - Precaches the production application after the first online load. Once the
   header reports `已可離線使用`, conversion and later reloads work without an
-  internet connection. Browser refresh controls (`F5`, `Ctrl`/`Cmd` + `R`, the
-  toolbar, or the browser menu) are also the cache-maintenance entry point. If a
-  source file is loaded, reloading requires confirmation. An online reload clears
-  only this application's caches, unregisters only its scoped service worker, and
-  retrieves the latest deployed version; the temporary refresh marker is removed
-  from the displayed URL and browser-saved settings are preserved. An offline
-  reload keeps the existing offline cache available.
+  internet connection. Browser refresh controls retain their normal behavior and
+  show the browser's standard leave-page warning only when a source file is held
+  in memory. Updates are downloaded quietly into a complete versioned cache and
+  take effect after tabs using the previous version have closed. The preview font
+  is prepared separately while the browser is idle and reused across app updates.
 - Refuses to initialize inside an iframe and instead offers a direct-open link.
   This runtime guard mitigates clickjacking on GitHub Pages, which cannot emit a
   header-delivered `frame-ancestors` policy.
