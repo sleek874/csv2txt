@@ -709,8 +709,15 @@ GitHub Pages is the primary runtime:
 - Normal ES-module and asset loading
 - No server-side access to files selected in the browser
 - A production service worker precaches the application shell and all generated
-  assets. The UI reports when installation is complete; after that point the
-  page can be reloaded and used without a network connection.
+  code and style assets. The preview font is cached separately while the browser
+  is idle and retained across application updates. The UI reports only whether
+  offline preparation is complete; after that point the page can be reloaded and
+  used without a network connection.
+- Native browser refresh controls are not intercepted. When a source file is
+  held in memory, the browser's standard leave-page warning protects it.
+- Updated application versions are installed quietly into a separate complete
+  cache. The open page remains on its current version, and the new worker
+  activates after tabs using the previous version have closed.
 
 Browser autosave is origin-scoped; settings JSON remains portable across
 schemes, hosts, browsers, and devices.

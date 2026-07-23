@@ -1,13 +1,18 @@
-import "./styles.css";
-
-function removeForceRefreshMarker(): void {
-  const cleanUrl = new URL(window.location.href);
-  if (!cleanUrl.searchParams.has("force-refresh")) {
-    return;
+function revealApplication(): void {
+  const app = document.querySelector<HTMLElement>("#app");
+  if (app) {
+    app.hidden = false;
   }
+  document.querySelector("#app-loading")?.remove();
+}
 
-  cleanUrl.searchParams.delete("force-refresh");
-  window.history.replaceState(window.history.state, "", cleanUrl);
+function renderLoadingError(): void {
+  const loading = document.querySelector<HTMLElement>("#app-loading");
+  const message = loading?.querySelector<HTMLElement>(".app-loading__text");
+  loading?.classList.add("app-loading--error");
+  if (message) {
+    message.textContent = "載入失敗，請重新整理後再試。";
+  }
 }
 
 function renderEmbeddedPage(): void {
@@ -44,7 +49,12 @@ function renderEmbeddedPage(): void {
 
 if (window.self !== window.top) {
   renderEmbeddedPage();
+  revealApplication();
 } else {
-  removeForceRefreshMarker();
-  void import("./main");
+  void import("./main")
+    .then(revealApplication)
+    .catch((error: unknown) => {
+      console.error("Application initialization failed.", error);
+      renderLoadingError();
+    });
 }
