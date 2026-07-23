@@ -36,7 +36,16 @@ is not uploaded to a server.
   previews, and generated output are never included in either settings store.
 - Precaches the production application after the first online load. Once the
   header reports `已可離線使用`, conversion and later reloads work without an
-  internet connection.
+  internet connection. Browser refresh controls (`F5`, `Ctrl`/`Cmd` + `R`, the
+  toolbar, or the browser menu) are also the cache-maintenance entry point. If a
+  source file is loaded, reloading requires confirmation. An online reload clears
+  only this application's caches, unregisters only its scoped service worker, and
+  retrieves the latest deployed version; the temporary refresh marker is removed
+  from the displayed URL and browser-saved settings are preserved. An offline
+  reload keeps the existing offline cache available.
+- Refuses to initialize inside an iframe and instead offers a direct-open link.
+  This runtime guard mitigates clickjacking on GitHub Pages, which cannot emit a
+  header-delivered `frame-ancestors` policy.
 
 The complete requirements, architecture, conversion rules, test strategy, and
 acceptance criteria are maintained in the
@@ -46,13 +55,14 @@ acceptance criteria are maintained in the
 
 Requirements:
 
-- Node.js 22 or newer
-- npm 10 or newer
+- Node.js 24.18.0 (the version pinned in `.nvmrc`)
+- npm 11.16.x
 
 Install dependencies and start the Vite development server:
 
 ```bash
-npm ci
+nvm use
+npm ci --ignore-scripts
 npm run dev
 ```
 
@@ -70,6 +80,10 @@ npm run preview
 The production files are written to `dist/`. Use `npm install` only when
 intentionally adding or updating dependencies, and commit changes to both
 `package.json` and `package-lock.json`.
+
+This repository disables dependency lifecycle scripts by default in `.npmrc`.
+Only override that setting for a reviewed dependency that explicitly requires an
+installation script.
 
 ## Synthetic test data
 

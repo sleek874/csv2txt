@@ -13,8 +13,8 @@
     "preview": "vite preview"
   },
   "engines": {
-    "node": ">=22",
-    "npm": ">=10"
+    "node": ">=24.18.0 <25",
+    "npm": ">=11.16.0 <12"
   },
   "dependencies": {
     "buffer": "^6.0.3",

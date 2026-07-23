@@ -1,5 +1,18 @@
 import { defineConfig, type Plugin } from "vite";
 
+function developmentContentSecurityPolicy(): Plugin {
+  return {
+    name: "development-content-security-policy",
+    apply: "serve",
+    transformIndexHtml(html) {
+      return html.replace(
+        "style-src 'self';",
+        "style-src 'self' 'unsafe-inline';",
+      );
+    },
+  };
+}
+
 function offlineServiceWorker(): Plugin {
   return {
     name: "offline-service-worker",
@@ -105,6 +118,7 @@ export default defineConfig({
     },
   },
   plugins: [
+    developmentContentSecurityPolicy(),
     offlineServiceWorker(),
     {
       name: "production-content-security-policy",
@@ -117,6 +131,6 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
-    sourcemap: true,
+    sourcemap: false,
   },
 });
