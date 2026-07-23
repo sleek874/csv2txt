@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#f4f7f8" />
-    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <meta
       name="description"
       content="在瀏覽器中將 CSV、XLS、XLSX 轉換為 Big5 定長文字檔，資料不會上傳。"
@@ -14,6 +13,11 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <noscript>
+      <link vite-ignore rel="stylesheet" href="./noscript.css" />
+    </noscript>
     <title>CSV / Excel 轉 Big5 定長文字檔</title>
   </head>
   <body>
@@ -23,7 +27,13 @@
         <p>這個工具需要 JavaScript 才能在瀏覽器內讀取、驗證與轉換檔案。請啟用 JavaScript，然後重新整理頁面；檔案仍不會上傳。</p>
       </div>
     </noscript>
-    <main id="app"></main>
+    <div id="app-loading" class="app-loading" role="status" aria-live="polite">
+      <div class="app-loading__hint">
+        <span class="app-loading__spinner" aria-hidden="true"></span>
+        <span class="app-loading__text">正在載入轉換工具…</span>
+      </div>
+    </div>
+    <main id="app" hidden></main>
     <script type="module" src="/src/bootstrap.ts"></script>
   </body>
 </html>

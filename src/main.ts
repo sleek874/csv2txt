@@ -19,10 +19,10 @@ import {
   type ValidationIssue,
 } from "./core/types";
 import {
-  createCacheMaintenance,
-  type CacheMaintenanceState,
-} from "./browser/cache-maintenance";
-import { createReloadControl, wasBrowserReload } from "./browser/reload-control";
+  createOfflineCache,
+  type OfflineCacheState,
+} from "./browser/offline-cache";
+import { createUnloadGuard } from "./browser/unload-guard";
 
 const THEME_STORAGE_KEY = "csv2txt.theme";
 const SETTINGS_STORAGE_KEY = "csv2txt.settings.v2";
@@ -394,42 +394,30 @@ let settingsDownloadName = "csv2txt-settings.json";
 let settingsAreDirty = false;
 let settingsAutoSaveState: SettingsAutoSaveState = "idle";
 let settingsAutoSaveTimer: number | null = null;
-type OfflineStatusState = CacheMaintenanceState | "offline";
-
-function renderOfflineStatus(state: OfflineStatusState): void {
-  const messages: Record<OfflineStatusState, string> = {
-    development: "開發模式不建立離線快取",
-    unsupported: "此瀏覽器不支援離線快取",
+function renderOfflineStatus(state: OfflineCacheState): void {
+  const messages: Record<OfflineCacheState, string> = {
+    development: "開發模式",
+    unsupported: "無法建立離線版本",
+    preparing: "正在準備離線使用…",
     ready: "已可離線使用",
-    refreshing: "正在清除快取並取得最新版本…",
-    error: "離線快取或更新失敗",
-    offline: "目前離線，已保留離線版本",
+    error: "無法完成離線準備",
   };
   offlineStatus.textContent = messages[state];
-  offlineStatus.classList.toggle("offline-status-ready", state === "ready" || state === "offline");
-  offlineStatus.classList.toggle("offline-status-error", state === "error");
+  offlineStatus.classList.toggle("offline-status-ready", state === "ready");
+  offlineStatus.classList.toggle(
+    "offline-status-error",
+    state === "error" || state === "unsupported",
+  );
 }
 
-const cacheMaintenance = createCacheMaintenance({
+const offlineCache = createOfflineCache({
   baseUrl: import.meta.env.BASE_URL,
-  cachePrefix: "csv2txt-app-",
   production: import.meta.env.PROD,
   onStateChange: renderOfflineStatus,
 });
-const reloadControl = createReloadControl({
-  confirmMessage: "重新整理會清除目前選取的檔案與預覽，但會保留轉換設定。要繼續嗎？",
-  onConfirmedReload: cacheMaintenance.refresh,
-});
+const unloadGuard = createUnloadGuard();
 
-if (wasBrowserReload()) {
-  if (navigator.onLine) {
-    void reloadControl.requestReload();
-  } else {
-    renderOfflineStatus("offline");
-  }
-} else {
-  void cacheMaintenance.enableOfflineUse();
-}
+void offlineCache.prepareOfflineUse();
 
 function widthInputs(): HTMLInputElement[] {
   return Array.from(document.querySelectorAll<HTMLInputElement>(".width-input"));
@@ -947,7 +935,7 @@ function parseAndValidate(): void {
 function clearFileState(): void {
   fileReadSequence += 1;
   sourceFile = null;
-  reloadControl.setPendingFile(false);
+  unloadGuard.setPendingFile(false);
   sourceFileType = null;
   sourceBytes = null;
   parsedRows = null;
@@ -1077,7 +1065,7 @@ fileInput.addEventListener("change", async () => {
   }
 
   sourceFile = file;
-  reloadControl.setPendingFile(true);
+  unloadGuard.setPendingFile(true);
   sourceFileType = fileType;
   encodingSelect.disabled = fileType !== "csv";
   startOverButton.disabled = false;
