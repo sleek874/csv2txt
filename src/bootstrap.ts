@@ -1,8 +1,13 @@
+import { installTheme } from "./browser/theme";
+
+document.documentElement.classList.remove("no-js");
+
 function revealApplication(): void {
   const app = document.querySelector<HTMLElement>("#app");
   if (app) {
-    app.hidden = false;
+    app.removeAttribute("aria-busy");
   }
+  document.querySelector<HTMLElement>("#app-content")?.removeAttribute("inert");
   document.querySelector("#app-loading")?.remove();
 }
 
@@ -10,6 +15,8 @@ function renderLoadingError(): void {
   const loading = document.querySelector<HTMLElement>("#app-loading");
   const message = loading?.querySelector<HTMLElement>(".app-loading__text");
   loading?.classList.add("app-loading--error");
+  loading?.setAttribute("role", "alert");
+  loading?.setAttribute("aria-live", "assertive");
   if (message) {
     message.textContent = "載入失敗，請重新整理後再試。";
   }
@@ -46,6 +53,8 @@ function renderEmbeddedPage(): void {
   notice.append(eyebrow, heading, detail, link);
   app.replaceChildren(notice);
 }
+
+installTheme();
 
 if (window.self !== window.top) {
   renderEmbeddedPage();

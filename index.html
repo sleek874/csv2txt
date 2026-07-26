@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="zh-Hant" class="no-js">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -9,31 +9,302 @@
       name="description"
       content="在瀏覽器中將 CSV、XLS、XLSX 轉換為 Big5 定長文字檔，資料不會上傳。"
     />
+    <meta name="robots" content="index, follow" />
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
-    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="canonical" href="https://sleek874.github.io/csv2txt/" />
+    <link
+      rel="alternate"
+      type="text/plain"
+      href="./llms.txt"
+      title="工具與隱私說明"
+    />
+    <link rel="icon" type="image/svg+xml" href="/src/assets/favicon.svg" />
     <link rel="stylesheet" href="/src/styles.css" />
-    <noscript>
-      <link vite-ignore rel="stylesheet" href="./noscript.css" />
-    </noscript>
     <title>CSV / Excel 轉 Big5 定長文字檔</title>
   </head>
   <body>
-    <noscript>
-      <div class="noscript-warning" role="alert" aria-labelledby="noscript-heading">
-        <strong id="noscript-heading">JavaScript 已停用，應用程式無法載入</strong>
-        <p>這個工具需要 JavaScript 才能在瀏覽器內讀取、驗證與轉換檔案。請啟用 JavaScript，然後重新整理頁面；檔案仍不會上傳。</p>
+    <div id="app" class="page-shell" aria-busy="true">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">瀏覽器本機處理</p>
+          <h1>CSV / Excel 轉 Big5 定長文字檔</h1>
+          <p>先設定轉換規則，再選擇來源檔案。所有處理都在此瀏覽器完成。</p>
+        </div>
+        <div class="header-badges">
+          <button
+            id="theme-toggle"
+            class="theme-toggle"
+            type="button"
+            role="switch"
+            aria-checked="false"
+            aria-label="深色模式 系統"
+          >
+            <span>深色模式</span>
+            <span class="theme-toggle-mode">系統</span>
+            <span class="theme-toggle-track" aria-hidden="true"></span>
+          </button>
+          <div id="offline-status" class="offline-status" role="status" aria-atomic="true">正在準備離線使用…</div>
+        </div>
+      </header>
+
+      <noscript>
+        <div class="noscript-warning" role="alert" aria-labelledby="noscript-heading">
+          <strong id="noscript-heading">JavaScript 已停用，轉換功能無法使用</strong>
+          <p>這個工具需要 JavaScript 才能在瀏覽器內讀取、驗證與轉換檔案。請啟用 JavaScript，然後重新整理頁面；檔案仍不會上傳。</p>
+        </div>
+      </noscript>
+
+      <div id="app-loading" class="app-loading" role="status" aria-live="polite" aria-atomic="true">
+        <span class="busy-spinner" aria-hidden="true"></span>
+        <span class="app-loading__text">正在啟用轉換功能…</span>
       </div>
-    </noscript>
-    <div id="app-loading" class="app-loading" role="status" aria-live="polite">
-      <div class="app-loading__hint">
-        <span class="app-loading__spinner" aria-hidden="true"></span>
-        <span class="app-loading__text">正在載入轉換工具…</span>
-      </div>
+
+      <main id="app-content" aria-label="CSV 與 Excel 轉換流程" inert>
+        <nav class="workflow-nav" aria-label="轉換步驟">
+          <ol>
+            <li><a href="#profile-step" aria-label="步驟 0：設定檔"><span aria-hidden="true">0</span>設定檔</a></li>
+            <li><a href="#columns-step" aria-label="步驟 1：欄位設定"><span aria-hidden="true">1</span>欄位</a></li>
+            <li><a href="#global-step" aria-label="步驟 2：全域設定"><span aria-hidden="true">2</span>全域</a></li>
+            <li><a href="#source-step" aria-label="步驟 3：選擇來源檔案"><span aria-hidden="true">3</span>選檔</a></li>
+            <li><a href="#results-step" aria-label="步驟 4：驗證、預覽與下載"><span aria-hidden="true">4</span>結果</a></li>
+          </ol>
+        </nav>
+
+        <section id="profile-step" class="panel" aria-labelledby="profile-heading">
+          <div class="step-heading">
+            <span aria-hidden="true">0</span>
+            <div>
+              <h2 id="profile-heading">設定檔</h2>
+              <p class="help-text">
+                <span class="help-line">設定會自動儲存在這個瀏覽器，也可上傳或下載設定檔，或載入預設設定。</span>
+                <span class="help-line">套用設定後，已選的來源檔案會自動重新驗證；設定檔不包含來源資料。</span>
+              </p>
+            </div>
+          </div>
+
+          <div class="profile-actions">
+            <div class="action-explainer compact-card">
+              <button id="load-settings-button" class="secondary-button" type="button" aria-describedby="settings-upload-help">上傳設定檔</button>
+              <input
+                id="settings-file"
+                class="visually-hidden"
+                type="file"
+                accept=".json,application/json"
+                aria-label="選擇 JSON 設定檔"
+                aria-describedby="settings-upload-help"
+                tabindex="-1"
+              />
+              <span id="settings-upload-help">選擇本機 JSON 設定檔，檢查後套用；不會傳送到網路。</span>
+            </div>
+            <div class="action-explainer compact-card">
+              <button id="save-settings-button" class="secondary-button" type="button" aria-describedby="save-settings-help">下載設定檔</button>
+              <span id="save-settings-help">將目前的欄位與全域設定下載為 JSON 備份。</span>
+            </div>
+            <div class="action-explainer compact-card">
+              <button id="load-default-button" class="secondary-button" type="button" aria-describedby="settings-default-help">載入預設設定</button>
+              <span id="settings-default-help">套用內建的 15 欄預設設定。</span>
+            </div>
+          </div>
+
+          <div id="settings-status" class="profile-status" role="status" aria-live="polite" aria-atomic="true">
+            <span class="status-dot" aria-hidden="true"></span>
+            <div class="profile-status-copy">
+              <strong id="settings-status-title">目前設定：內建預設設定</strong>
+              <span id="settings-status-detail">15 欄；修改後會自動儲存。</span>
+            </div>
+            <button id="revert-valid-settings-button" class="secondary-button profile-status-action" type="button" hidden>
+              復原上次有效設定
+            </button>
+          </div>
+        </section>
+
+        <section id="columns-step" class="panel" aria-labelledby="columns-heading">
+          <div class="section-heading-row">
+            <div class="step-heading">
+              <span aria-hidden="true">1</span>
+              <div>
+                <h2 id="columns-heading">欄位設定</h2>
+                <p class="help-text">設定每個欄位的空值處理方式與 Big5 輸出寬度。</p>
+              </div>
+            </div>
+            <div class="schema-summary" aria-label="目前欄位格式摘要">
+              <span><strong id="field-count-summary">15</strong> 欄</span>
+              <span><strong id="record-width-summary">208</strong> 位元組／筆</span>
+            </div>
+          </div>
+          <div class="option-guide" aria-label="欄位選項說明">
+            <div id="required-help" class="compact-card"><strong>不可空白</strong><span>來源值必須含有非空白字元，且不能使用空值預設。</span></div>
+            <div id="default-help" class="compact-card"><strong>空值預設</strong><span>來源儲存格完全沒有內容時才代入；空格不算空值。</span></div>
+            <div id="width-help" class="compact-card"><strong>欄寬</strong><span>以 Big5 位元組計算；內容過長會報錯，不會截斷。</span></div>
+          </div>
+          <div class="table-scroll" tabindex="0" aria-label="欄位設定表格，可左右捲動">
+            <table>
+              <caption class="visually-hidden">各欄位的不可空白、空值預設、Big5 位元組欄寬與累計寬度設定</caption>
+              <thead>
+                <tr>
+                  <th scope="col">欄位</th>
+                  <th scope="col">不可空白</th>
+                  <th scope="col">空值預設</th>
+                  <th scope="col">欄寬（位元組）</th>
+                  <th scope="col">累計寬度</th>
+                </tr>
+              </thead>
+              <tbody id="column-settings-body"></tbody>
+              <tfoot>
+                <tr>
+                  <th colspan="4" scope="row">每筆總寬度</th>
+                  <td id="total-width" class="number-cell">208</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </section>
+
+        <section id="global-step" class="panel" aria-labelledby="global-heading">
+          <div class="step-heading">
+            <span aria-hidden="true">2</span>
+            <div>
+              <h2 id="global-heading">全域設定</h2>
+              <p class="help-text">這些選項套用到整份來源檔案及所有輸出欄位。</p>
+            </div>
+          </div>
+          <div class="global-options">
+            <label class="control-group" for="source-encoding">
+              <span>來源編碼</span>
+              <select id="source-encoding" aria-describedby="source-encoding-help">
+                <option value="auto">自動判斷（預設）</option>
+                <option value="utf-8">UTF-8</option>
+                <option value="utf-16">UTF-16</option>
+                <option value="big5">Big5</option>
+              </select>
+              <small id="source-encoding-help">僅用於 CSV。Excel 會直接讀取工作表內容；不確定時請保留自動判斷。</small>
+            </label>
+            <label class="control-group" for="expected-rows">
+              <span>預期資料筆數</span>
+              <input id="expected-rows" class="expected-rows-input" type="number"
+                min="1" step="1" inputmode="numeric" value="200"
+                aria-describedby="expected-rows-help" />
+              <small id="expected-rows-help">實際資料筆數必須完全相同；第一列也算一筆資料，不視為標題。</small>
+            </label>
+            <label class="control-group" for="alignment">
+              <span>輸出對齊方式</span>
+              <select id="alignment" aria-describedby="alignment-help">
+                <option value="left">全部靠左（預設）</option>
+                <option value="right">全部靠右</option>
+              </select>
+              <small id="alignment-help">內容不足欄寬時，以半形空格補在右側或左側。</small>
+            </label>
+          </div>
+        </section>
+
+        <section id="source-step" class="panel" aria-labelledby="file-heading">
+          <div class="step-heading">
+            <span aria-hidden="true">3</span>
+            <div>
+              <h2 id="file-heading">選擇來源檔案</h2>
+              <p class="help-text">選擇後會立即驗證；每筆來源資料必須正好有 <strong id="source-contract-count">15</strong> 欄。</p>
+            </div>
+          </div>
+          <div id="source-file-picker" class="file-picker source-file-picker" aria-describedby="source-file-help">
+            <div class="file-picker-actions">
+              <button id="select-source-button" class="primary-button" type="button" aria-describedby="source-file-help">選擇來源檔案</button>
+              <input
+                id="source-file"
+                class="visually-hidden"
+                type="file"
+                accept=".csv,.xls,.xlsx"
+                aria-label="選擇 CSV、XLS 或 XLSX 來源檔案"
+                aria-describedby="source-file-help"
+                tabindex="-1"
+              />
+              <button id="start-over-button" class="secondary-button" type="button" disabled>清除檔案</button>
+            </div>
+            <div>
+              <p class="file-status-line">
+                <span id="file-processing-indicator" class="busy-spinner" hidden aria-hidden="true"></span>
+                <span id="file-status" class="file-status">尚未選擇檔案</span>
+              </p>
+              <p id="source-file-help" class="help-text">支援 CSV、XLS 與 XLSX；檔案上限 25 MiB。</p>
+              <p id="encoding-status" class="help-text">尚未判斷來源格式。</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="results-step" class="panel" aria-labelledby="preview-heading">
+          <div class="section-heading-row">
+            <div class="step-heading">
+              <span aria-hidden="true">4</span>
+              <div>
+                <h2 id="preview-heading">驗證、預覽與下載</h2>
+                <p class="help-text">選檔或修改設定後會自動重新驗證；只有全部通過時才能下載 Big5 TXT。</p>
+              </div>
+            </div>
+          </div>
+          <dl class="validation-summary" aria-label="驗證摘要">
+            <div><dt>預期欄數</dt><dd id="expected-column-summary">15</dd></div>
+            <div><dt>預期筆數</dt><dd id="expected-row-summary">200</dd></div>
+            <div><dt>實際筆數</dt><dd id="actual-row-summary">—</dd></div>
+            <div><dt>正確筆數</dt><dd id="valid-row-summary">—</dd></div>
+            <div><dt>錯誤筆數</dt><dd id="invalid-row-summary">—</dd></div>
+            <div><dt>空白提醒</dt><dd id="whitespace-warning-summary">—</dd></div>
+          </dl>
+
+          <div class="subsection-heading">
+            <div><h3 id="issues-heading">問題清單</h3><p>錯誤會阻止下載；提醒只協助檢查可疑空白，不會修改原始內容。</p></div>
+          </div>
+          <div id="issue-results" class="table-scroll issue-scroll" tabindex="0" aria-labelledby="issues-heading">
+            <table class="error-table">
+              <caption class="visually-hidden">來源資料與設定的驗證問題</caption>
+              <thead>
+                <tr><th scope="col">資料列</th><th scope="col">欄位</th><th scope="col">類型</th><th scope="col">問題</th></tr>
+              </thead>
+              <tbody id="issue-table-body">
+                <tr><td colspan="4" class="empty-table-message">選擇檔案後顯示驗證結果</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="subsection-heading preview-subsection-heading">
+            <div><h3 id="preview-output-heading">輸出預覽</h3><p>預覽會標示來源內容與補齊空格；實際欄寬仍以 Big5 位元組為準。</p></div>
+            <div class="preview-options">
+              <label class="preview-row-count" for="preview-row-limit">
+                <span>預覽筆數</span>
+                <select id="preview-row-limit">
+                  <option value="all" selected>全部</option>
+                  <option value="20">20 筆</option>
+                  <option value="50">50 筆</option>
+                  <option value="100">100 筆</option>
+                  <option value="200">200 筆</option>
+                </select>
+              </label>
+              <label class="preview-option">
+                <input id="show-whitespace" type="checkbox" checked />
+                顯示來源空白標記
+              </label>
+            </div>
+          </div>
+          <p class="whitespace-legend">
+            <span class="legend-line">橘底為來源空白：半形 <code>·</code>、全形 <code>□</code>、定位字元 <code>→</code>、換行 <code>↵</code>、不換行空格 <code>⍽</code>。</span>
+            <span class="legend-line"><span class="padding-key">藍底圓點 <span aria-hidden="true">·</span></span>為輸出補齊空格。</span>
+          </p>
+          <div id="preview-results" class="preview-results" role="region" aria-labelledby="preview-output-heading">
+            <div class="notice neutral-notice">
+              <strong>尚未驗證</strong>
+              <span>選擇 CSV 或 Excel 檔案後，這裡會顯示可輸出的資料列。</span>
+            </div>
+          </div>
+          <div class="download-bar">
+            <div><strong>輸出檔案</strong><span id="download-help">驗證通過後，可下載與來源檔同名、採 Big5 編碼的 .txt 檔案。</span></div>
+            <button id="convert-button" class="primary-button" type="button" aria-describedby="download-help" disabled>下載 Big5 TXT</button>
+          </div>
+        </section>
+
+        <p id="app-status" class="app-status" role="status" aria-live="polite" aria-atomic="true">尚未選擇來源檔案。</p>
+      </main>
     </div>
-    <main id="app" hidden></main>
     <script type="module" src="/src/bootstrap.ts"></script>
   </body>
 </html>

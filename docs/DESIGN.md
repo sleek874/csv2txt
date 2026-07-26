@@ -648,28 +648,42 @@ flowchart LR
 Recommended source boundaries:
 
 ```text
+build/vite/            CSP and offline-service-worker build plugins
+public/                Agent discovery files copied without runtime bundling
 src/
-  app/                 UI orchestration and state
+  app/
+    column-editor.ts   Repeated field-row DOM construction
+    resource-priority.ts
+                       CSV/Excel first-use resource ordering
+    results-view.ts    Preview and issue rendering
+    settings-controller.ts
+                       Settings DOM, persistence, import, and recovery
+    spreadsheet-loader.ts
+                       Retrying dynamic Excel import
+  browser/             Theme, offline preparation, and unload guard
   settings/            Built-in profile and settings-state helpers
   core/
     encoding.ts        Detection, decoding, and Big5 encoding adapter
     csv.ts             Papa Parse adapter
     source.ts          Filename-extension source type detection
     spreadsheet.ts     XLS/XLSX adapter and cell normalization
-    defaults.ts        Positional default resolution
     fixed-width.ts     Validation, byte padding, and record assembly
-    settings.ts        Runtime validation and migration
-  ui/                  DOM rendering and accessible components
-  main.ts              Browser entry point
-  styles.css
+  styles/
+    foundation.css     Tokens, themes, loading, and shared controls
+    results.css        Validation, issue, and preview presentation
+    preview-font.css   Dynamically loaded local preview font
+  main.ts              Thin application coordinator
+  styles.css           Workflow styles and style-module imports
 tests/
-  fixtures/            Synthetic, non-sensitive CSV/TXT samples
-  unit/
-  integration/
+  fixtures/            Synthetic, non-sensitive CSV/XLS/XLSX samples
+scripts/
+  verify-build.mjs     Manifest, accessibility, discovery, and size assertions
 ```
 
 Core modules must not depend on DOM APIs. Keeping byte conversion pure makes it
-possible to unit-test the most safety-critical behavior.
+possible to unit-test the most safety-critical behavior. Invariant headings,
+controls, help text, and empty states live in `index.html`; JavaScript hydrates
+that semantic shell instead of generating the whole application.
 
 ## Privacy and security
 
@@ -717,11 +731,22 @@ GitHub Pages is the primary runtime:
 - Stable HTTPS origin
 - Normal ES-module and asset loading
 - No server-side access to files selected in the browser
-- A production service worker precaches the application shell and all generated
-  code and style assets. The preview font is cached separately while the browser
-  is idle and retained across application updates. The UI reports only whether
-  offline preparation is complete; after that point the page can be reloaded and
-  used without a network connection.
+- The static 0–4 workflow remains visible but inert while the main coordinator
+  initializes. A shared spinner and reduced opacity make that temporary state
+  explicit. File reading and Excel parser loading expose a second inline busy
+  indicator after initialization.
+- A production service worker precaches only the base application shell. Excel
+  parsing and preview-font resources use separate generated resource groups.
+  Vite's production manifest is the canonical graph for all three groups; the
+  worker follows static `imports` but does not pull optional `dynamicImports`
+  into the base group. Its application-cache build ID is a SHA-256 digest of the
+  emitted manifest and final static HTML, so both asset and HTML-only changes
+  install a new complete cache without a hand-maintained version hash.
+  With no selection, idle preparation caches Excel first and the font second.
+  CSV selection promotes the font immediately without blocking parsing; Excel
+  selection loads the Excel chunk before the font. The UI reports offline
+  readiness only after every group is cached, after which the page can be
+  reloaded and used without a network connection.
 - Native browser refresh controls are not intercepted. When a source file is
   held in memory, the browser's standard leave-page warning protects it.
 - Updated application versions are installed quietly into a separate complete
@@ -748,15 +773,20 @@ the browser.
 ## Accessibility and compatibility
 
 - Target current stable Chrome, Edge, Firefox, and Safari.
-- Use semantic form controls and an actual table for the 15-field editor.
-- Associate every control with a visible label.
+- Use named landmarks, an ordered workflow navigation, semantic form controls,
+  and actual tables with captions.
+- Associate every control with a visible label or table header and connect
+  concise help through `aria-describedby`.
 - Make all actions keyboard accessible.
 - Do not communicate validity through color alone.
-- Announce validation summaries with an appropriate live region.
-- Move focus to the error summary after a failed conversion.
+- Keep live regions concise; do not announce the entire generated preview.
+- After a user-selected file fails validation, move focus to the problem table.
 - Meet WCAG 2.2 AA contrast and focus-visible requirements.
 - Use responsive layout without hiding configuration columns; smaller screens
   may present one output field as a card.
+- Publish canonical metadata, `robots.txt`, `sitemap.xml`, and a concise
+  Traditional Chinese `llms.txt` so crawlers and browsing agents can discover
+  the workflow and privacy boundary without executing the application.
 
 ## Performance limits
 

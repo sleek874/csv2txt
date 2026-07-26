@@ -1,0 +1,274 @@
+import { createHash } from "node:crypto";
+
+import type { OutputAsset } from "rollup";
+import type { Manifest, Plugin } from "vite";
+
+const MANIFEST_FILE_NAME = ".vite/manifest.json";
+const BASE_MANIFEST_ROOTS = ["index.html", "src/main.ts"];
+const EXCEL_MANIFEST_ROOTS = ["src/core/spreadsheet.ts"];
+const FONT_MANIFEST_ROOTS = [
+  "src/styles/preview-font.css",
+  "src/assets/fonts/SarasaMonoTC-Regular.woff2",
+];
+
+function collectManifestGroup(
+  manifest: Manifest,
+  roots: readonly string[],
+): Set<string> {
+  const pending = [...roots];
+  const files = new Set<string>();
+  const visitedKeys = new Set<string>();
+
+  while (pending.length > 0) {
+    const key = pending.pop();
+    if (!key || visitedKeys.has(key)) {
+      continue;
+    }
+    visitedKeys.add(key);
+    const chunk = manifest[key];
+    if (!chunk) {
+      throw new Error(`Vite manifest is missing the required entry: ${key}`);
+    }
+    files.add(chunk.file);
+    chunk.css?.forEach((file) => files.add(file));
+    chunk.assets?.forEach((file) => files.add(file));
+    pending.push(...(chunk.imports ?? []));
+  }
+
+  return files;
+}
+
+function readAssetSource(asset: OutputAsset): string {
+  return typeof asset.source === "string"
+    ? asset.source
+    : new TextDecoder().decode(asset.source);
+}
+
+function readManifestAsset(asset: OutputAsset): {
+  manifest: Manifest;
+  source: string;
+} {
+  const source = readAssetSource(asset);
+  return {
+    manifest: JSON.parse(source) as Manifest,
+    source,
+  };
+}
+
+function relativePaths(files: Iterable<string>): string[] {
+  return Array.from(files, (fileName) => `./${fileName}`).sort();
+}
+
+export function offlineServiceWorker(): Plugin {
+  return {
+    name: "offline-service-worker",
+    apply: "build",
+    enforce: "post",
+    generateBundle: {
+      order: "post",
+      handler(_options, bundle) {
+        const manifestAsset = bundle[MANIFEST_FILE_NAME];
+        const indexHtmlAsset = bundle["index.html"];
+        if (!manifestAsset || manifestAsset.type !== "asset") {
+          this.error(
+            `Vite did not emit ${MANIFEST_FILE_NAME} before service-worker generation.`,
+          );
+        }
+        if (!indexHtmlAsset || indexHtmlAsset.type !== "asset") {
+          this.error("Vite did not emit index.html before service-worker generation.");
+        }
+
+        const { manifest, source: manifestSource } = readManifestAsset(manifestAsset);
+        const indexHtmlSource = readAssetSource(indexHtmlAsset);
+        const excelFiles = collectManifestGroup(manifest, EXCEL_MANIFEST_ROOTS);
+        const fontFiles = collectManifestGroup(manifest, FONT_MANIFEST_ROOTS);
+        const baseFiles = collectManifestGroup(manifest, BASE_MANIFEST_ROOTS);
+        excelFiles.forEach((file) => baseFiles.delete(file));
+        fontFiles.forEach((file) => {
+          baseFiles.delete(file);
+          excelFiles.delete(file);
+        });
+
+        const precachePaths = ["./", ...relativePaths(baseFiles)];
+        const excelPaths = relativePaths(excelFiles);
+        const fontPaths = relativePaths(fontFiles);
+        const buildId = createHash("sha256")
+          .update(manifestSource)
+          .update("\n")
+          .update(indexHtmlSource)
+          .digest("hex")
+          .slice(0, 16);
+        const cacheName = `csv2txt-app-${buildId}`;
+        const source = `const APP_CACHE_NAME = ${JSON.stringify(cacheName)};
+const MANAGED_CACHE_PREFIX = "csv2txt-";
+const FONT_CACHE_NAME = "csv2txt-fonts";
+const PRECACHE_PATHS = ${JSON.stringify(precachePaths)};
+const EXCEL_PATHS = ${JSON.stringify(excelPaths)};
+const FONT_PATHS = ${JSON.stringify(fontPaths)};
+
+function scopedRequest(path, cache) {
+  return new Request(new URL(path, self.registration.scope), { cache });
+}
+
+async function cacheResources(cacheName, paths, removeUnexpected = false) {
+  const cache = await caches.open(cacheName);
+  const expectedUrls = new Set(
+    paths.map((path) => new URL(path, self.registration.scope).href),
+  );
+
+  await Promise.all(paths.map(async (path) => {
+    const request = scopedRequest(path, "force-cache");
+    if (await cache.match(request, { ignoreVary: true })) {
+      return;
+    }
+
+    const response = await fetch(request);
+    if (!response || response.status !== 200 || response.type === "opaque") {
+      throw new Error("Unable to cache an optional application resource.");
+    }
+    await cache.put(request, response);
+  }));
+
+  if (removeUnexpected) {
+    const cachedRequests = await cache.keys();
+    await Promise.all(
+      cachedRequests
+        .filter((request) => !expectedUrls.has(request.url))
+        .map((request) => cache.delete(request)),
+    );
+  }
+}
+
+async function installApplication() {
+  const cache = await caches.open(APP_CACHE_NAME);
+  const requests = PRECACHE_PATHS.map((path) => scopedRequest(
+    path,
+    path.startsWith("./assets/") ? "force-cache" : "no-cache",
+  ));
+
+  try {
+    await cache.addAll(requests);
+  } catch (error) {
+    await caches.delete(APP_CACHE_NAME);
+    throw error;
+  }
+}
+
+function prepareExcel() {
+  return cacheResources(APP_CACHE_NAME, EXCEL_PATHS);
+}
+
+function prepareFonts() {
+  return cacheResources(FONT_CACHE_NAME, FONT_PATHS, true);
+}
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(installApplication());
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches.keys()
+      .then((names) => Promise.all(
+        names
+          .filter((name) => (
+            name.startsWith(MANAGED_CACHE_PREFIX)
+            && name !== APP_CACHE_NAME
+            && name !== FONT_CACHE_NAME
+          ))
+          .map((name) => caches.delete(name)),
+      ))
+      .then(() => self.clients.claim()),
+  );
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type !== "PREPARE_RESOURCES") {
+    return;
+  }
+
+  const replyPort = event.ports[0];
+  const preparation = event.data.includeExcel
+    ? prepareExcel().then(prepareFonts)
+    : prepareFonts();
+  event.waitUntil(
+    preparation
+      .then(() => replyPort?.postMessage({ ok: true }))
+      .catch(() => replyPort?.postMessage({ ok: false })),
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  const request = event.request;
+  const requestUrl = new URL(request.url);
+  const scopeUrl = new URL(self.registration.scope);
+  const isFontRequest = FONT_PATHS.some(
+    (path) => new URL(path, self.registration.scope).href === requestUrl.href,
+  );
+
+  if (
+    request.method !== "GET"
+    || requestUrl.origin !== scopeUrl.origin
+    || !requestUrl.pathname.startsWith(scopeUrl.pathname)
+  ) {
+    return;
+  }
+
+  if (isFontRequest) {
+    event.respondWith(
+      caches.open(FONT_CACHE_NAME).then(async (cache) => {
+        const cached = await cache.match(request, {
+          ignoreSearch: true,
+          ignoreVary: true,
+        });
+        if (cached) {
+          return cached;
+        }
+
+        const response = await fetch(request);
+        if (response && response.status === 200 && response.type !== "opaque") {
+          await cache.put(request, response.clone());
+        }
+        return response;
+      }),
+    );
+    return;
+  }
+
+  event.respondWith(
+    caches.open(APP_CACHE_NAME).then(async (cache) => {
+      const cached = await cache.match(request, {
+        ignoreSearch: true,
+        ignoreVary: true,
+      });
+      if (cached) {
+        return cached;
+      }
+
+      if (request.mode === "navigate") {
+        const shell = await cache.match(
+          new URL("./", self.registration.scope),
+          { ignoreVary: true },
+        );
+        return shell ?? fetch(request);
+      }
+
+      const response = await fetch(request);
+      if (response && response.status === 200 && response.type !== "opaque") {
+        await cache.put(request, response.clone());
+      }
+      return response;
+    }),
+  );
+});
+`;
+
+      this.emitFile({
+        type: "asset",
+        fileName: "sw.js",
+        source,
+      });
+      },
+    },
+  };
+}

@@ -1,0 +1,319 @@
+.validation-summary {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(6.5rem, 1fr));
+  margin: 0 0 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.subsection-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 1.2rem 0 0.65rem;
+}
+
+.subsection-heading p {
+  margin: 0.2rem 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.preview-subsection-heading {
+  margin-top: 1.4rem;
+}
+
+.validation-summary div {
+  padding: 0.85rem;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface-soft);
+}
+
+.validation-summary div:last-child {
+  border-right: 0;
+}
+
+.validation-summary dt {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.validation-summary dd {
+  margin: 0.18rem 0 0;
+  font-size: 1.35rem;
+  font-weight: 800;
+}
+
+.whitespace-legend {
+  margin-bottom: 1rem;
+  color: var(--color-text-muted);
+  font-size: 0.86rem;
+  line-height: 1.65;
+}
+
+.whitespace-legend code {
+  display: inline-block;
+  min-width: 1.45rem;
+  padding: 0 0.2rem;
+  border-radius: 0.2rem;
+  color: var(--color-warning-text);
+  background: var(--color-warning-bg);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-weight: 800;
+  text-align: center;
+}
+
+.legend-line {
+  display: block;
+}
+
+.legend-line + .legend-line {
+  margin-top: 0.25rem;
+}
+
+.padding-key {
+  display: inline-block;
+  margin-right: 0.2rem;
+  padding: 0.08rem 0.3rem;
+  color: var(--color-info-text);
+  background: var(--color-info-bg);
+}
+
+.preview-results {
+  display: grid;
+  gap: 0.55rem;
+  margin-bottom: 1rem;
+}
+
+.notice {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.85rem;
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-neutral);
+  border-radius: 0.35rem;
+  background: var(--color-surface-muted);
+}
+
+.notice span {
+  color: var(--color-text-muted);
+}
+
+.error-notice {
+  border-color: var(--color-error-border);
+  border-left-color: var(--color-error);
+  background: var(--color-error-bg);
+}
+
+.preview-heading {
+  margin-bottom: 0.15rem;
+  font-size: 0.9rem;
+  font-weight: 750;
+}
+
+.preview-chunk {
+  max-height: min(70vh, 36rem);
+  border: 1px solid var(--color-border);
+  border-radius: 0.35rem;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.preview-chunk-rows {
+  width: max-content;
+  min-width: 100%;
+}
+
+.preview-column-guide {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: 4.75rem minmax(0, 1fr);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-muted);
+}
+
+.preview-column-guide-label {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  padding: 0.35rem 0.55rem;
+  border-right: 1px solid var(--color-border);
+  color: var(--color-text-subtle);
+  background: var(--color-surface-muted);
+  font-size: 0.7rem;
+  font-weight: 750;
+}
+
+.preview-column-guide-fields {
+  display: flex;
+  padding: 0.35rem 0.6rem;
+  background: var(--color-surface-muted);
+  font-size: 0.82rem;
+}
+
+.column-guide-fragment {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 3px solid var(--color-preview-a);
+  color: var(--color-text-subtle);
+}
+
+.column-guide-fragment:nth-child(even) {
+  border-bottom-color: var(--color-preview-b);
+}
+
+.column-guide-number {
+  font-family: "Sarasa Mono TC", ui-monospace, monospace;
+  font-size: 0.41rem;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.preview-record {
+  display: grid;
+  grid-template-columns: 4.75rem minmax(0, 1fr);
+  align-items: stretch;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.preview-record:last-child {
+  border-bottom: 0;
+}
+
+.preview-row-label {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  padding: 0.55rem;
+  border-right: 1px solid var(--color-border);
+  color: var(--color-text-subtle);
+  background: var(--color-surface-muted);
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+.preview-record pre {
+  display: flex;
+  margin: 0;
+  padding: 0.6rem;
+  overflow: visible;
+  color: var(--color-text);
+  background: var(--color-surface);
+  font-size: 0.82rem;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.big5-text {
+  font-family: "Sarasa Mono TC", ui-monospace, monospace;
+  font-variant-ligatures: none;
+}
+
+.field-fragment {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  border-bottom: 3px solid var(--color-preview-a);
+}
+
+.field-fragment:nth-child(even) {
+  border-bottom-color: var(--color-preview-b);
+}
+
+.value-fragment,
+.padding-fragment {
+  display: inline-block;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.default-fragment {
+  background: var(--color-warning-bg);
+}
+
+.source-whitespace-marker {
+  display: inline-block;
+  width: 1ch;
+  border-radius: 0.15rem;
+  color: var(--color-warning-text);
+  background: var(--color-warning-bg);
+  font-weight: 800;
+  text-align: center;
+}
+
+.source-whitespace-marker-wide {
+  width: 2ch;
+}
+
+.padding-fragment {
+  color: var(--color-padding-text);
+  background: var(--color-padding-bg);
+}
+
+.issue-scroll {
+  margin-top: 0;
+}
+
+.error-table {
+  min-width: 38rem;
+}
+
+.issue-error td:nth-child(3) {
+  color: var(--color-error-text);
+  font-weight: 750;
+}
+
+.issue-warning td:nth-child(3) {
+  color: var(--color-warning-text);
+  font-weight: 750;
+}
+
+.empty-table-message {
+  padding: 1.25rem;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.success-message {
+  color: var(--color-accent-text);
+  background: var(--color-accent-bg);
+}
+
+.download-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.55rem;
+  background: var(--color-surface-soft);
+}
+
+.download-bar strong {
+  color: var(--color-text);
+}
+
+.download-bar span {
+  margin-top: 0.15rem;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.download-bar button {
+  flex: none;
+}

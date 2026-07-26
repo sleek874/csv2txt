@@ -15,18 +15,28 @@ interface OfflinePreparationResult {
   ok: boolean;
 }
 
-const PREVIEW_FONT = '400 1em "Sarasa Mono TC"';
-
-function runWhenIdle(task: () => void): void {
-  if (typeof window.requestIdleCallback === "function") {
-    window.requestIdleCallback(task, { timeout: 2_000 });
-    return;
-  }
-
-  window.setTimeout(task, 1_000);
+interface OfflinePreparationRequest {
+  includeExcel: boolean;
+  type: "PREPARE_RESOURCES";
 }
 
-function prepareOfflineFont(worker: ServiceWorker): Promise<void> {
+const PREVIEW_FONT = '400 1em "Sarasa Mono TC"';
+const IDLE_PREPARATION_DELAY_MS = 1_500;
+
+function runWhenIdle(task: () => void): void {
+  window.setTimeout(() => {
+    if (typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(task, { timeout: 4_000 });
+      return;
+    }
+    task();
+  }, IDLE_PREPARATION_DELAY_MS);
+}
+
+function requestPreparation(
+  worker: ServiceWorker,
+  includeExcel: boolean,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const channel = new MessageChannel();
 
@@ -35,40 +45,47 @@ function prepareOfflineFont(worker: ServiceWorker): Promise<void> {
       if (event.data.ok) {
         resolve();
       } else {
-        reject(new Error("離線字型準備失敗。"));
+        reject(new Error("離線資源準備失敗。"));
       }
     };
     channel.port1.onmessageerror = () => {
       channel.port1.close();
-      reject(new Error("無法確認離線字型狀態。"));
+      reject(new Error("無法確認離線資源狀態。"));
     };
 
-    worker.postMessage({ type: "PREPARE_OFFLINE" }, [channel.port2]);
+    const request: OfflinePreparationRequest = {
+      includeExcel,
+      type: "PREPARE_RESOURCES",
+    };
+    worker.postMessage(request, [channel.port2]);
   });
 }
 
-async function activatePreviewFont(worker: ServiceWorker): Promise<void> {
-  await prepareOfflineFont(worker);
+async function loadPreviewFont(): Promise<void> {
+  await import("../styles/preview-font.css");
   const loadedFonts = await document.fonts.load(PREVIEW_FONT);
   if (loadedFonts.length === 0) {
     throw new Error("無法載入預覽字型。");
   }
 }
 
+async function activatePreviewFont(
+  worker: ServiceWorker,
+  includeExcel: boolean,
+): Promise<void> {
+  await requestPreparation(worker, includeExcel);
+  await loadPreviewFont();
+}
+
 export function createOfflineCache(options: OfflineCacheOptions) {
-  async function prepareOfflineUse(): Promise<void> {
-    if (!options.production) {
-      options.onStateChange("development");
-      return;
-    }
-    if (!("serviceWorker" in navigator)) {
-      options.onStateChange("unsupported");
-      return;
-    }
+  let workerPromise: Promise<ServiceWorker | null> | null = null;
 
-    options.onStateChange("preparing");
+  function prepareWorker(): Promise<ServiceWorker | null> {
+    workerPromise ??= (async () => {
+      if (!options.production || !("serviceWorker" in navigator)) {
+        return null;
+      }
 
-    try {
       const scope = new URL(options.baseUrl, window.location.href).href;
       const existingRegistration = await navigator.serviceWorker.getRegistration(scope);
       const registration = existingRegistration
@@ -84,14 +101,36 @@ export function createOfflineCache(options: OfflineCacheOptions) {
         });
       }
 
+      return readyRegistration.active;
+    })().catch((error: unknown) => {
+      workerPromise = null;
+      throw error;
+    });
+    return workerPromise;
+  }
+
+  async function prepareOfflineUse(): Promise<void> {
+    if (!options.production) {
+      options.onStateChange("development");
+      return;
+    }
+    if (!("serviceWorker" in navigator)) {
+      options.onStateChange("unsupported");
+      return;
+    }
+
+    options.onStateChange("preparing");
+
+    try {
+      const worker = await prepareWorker();
+
       runWhenIdle(() => {
-        const worker = readyRegistration.active;
         if (!worker) {
           options.onStateChange("error");
           return;
         }
 
-        void activatePreviewFont(worker)
+        void activatePreviewFont(worker, true)
           .then(() => options.onStateChange("ready"))
           .catch(() => options.onStateChange("error"));
       });
@@ -100,5 +139,23 @@ export function createOfflineCache(options: OfflineCacheOptions) {
     }
   }
 
-  return { prepareOfflineUse };
+  async function prioritizePreviewFont(): Promise<void> {
+    if (!options.production) {
+      await loadPreviewFont();
+      return;
+    }
+
+    try {
+      const worker = await prepareWorker();
+      if (worker) {
+        await activatePreviewFont(worker, false);
+      } else {
+        await loadPreviewFont();
+      }
+    } catch {
+      // The system monospace fallback remains usable while offline preparation retries.
+    }
+  }
+
+  return { prepareOfflineUse, prioritizePreviewFont };
 }

@@ -10,10 +10,6 @@ is not uploaded to a server.
 
 **[Open the live application](https://sleek874.github.io/csv2txt/)**
 
-> **Current status:** Minimum working browser application. CSV and Excel import,
-> portable JSON settings, validation, fixed-width Big5 conversion, preview, and
-> download are working. Broader automated coverage remains follow-up work.
-
 ## Current behavior
 
 - Accepts only `.csv`, `.xls`, and `.xlsx` filenames and selects the parser from
@@ -30,7 +26,7 @@ is not uploaded to a server.
 - Rejects malformed CSV, wrong record/column counts, overflow, control characters,
   and text that cannot round-trip safely through Big5.
 - Produces fixed-width Big5 records separated by CRLF, including a final CRLF.
-- Keeps uploaded and generated data in browser memory only. The current converter
+- Keeps selected and generated data in browser memory only. The current converter
   settings are transparently auto-saved to browser storage and restored on the
   next visit; the last complete valid settings also remain available in memory
   for recovery or download while an edit is invalid. Explicit settings-file
@@ -43,11 +39,17 @@ is not uploaded to a server.
   internet connection. Browser refresh controls retain their normal behavior and
   show the browser's standard leave-page warning only when a source file is held
   in memory. Updates are downloaded quietly into a complete versioned cache and
-  take effect after tabs using the previous version have closed. The preview font
-  is prepared separately while the browser is idle and reused across app updates.
+  take effect after tabs using the previous version have closed. Excel parsing
+  code and the preview font are prepared after the base interface: CSV use
+  promotes the font, Excel use loads its parser before the font, and unattended
+  idle preparation keeps the deterministic Excel-then-font order. Optional
+  resources are reused across later visits. Vite's generated manifest is the
+  canonical resource graph for these cache groups and application versions.
 - Refuses to initialize inside an iframe and instead offers a direct-open link.
   This runtime guard mitigates clickjacking on GitHub Pages, which cannot emit a
   header-delivered `frame-ancestors` policy.
+- Exposes semantic 0–4 workflow navigation, concise live statuses, table
+  captions, connected control help, and crawler/agent discovery metadata.
 
 The complete requirements, architecture, conversion rules, test strategy, and
 acceptance criteria are maintained in the
@@ -82,6 +84,8 @@ npm run preview
 The production files are written to `dist/`. Use `npm install` only when
 intentionally adding or updating dependencies, and commit changes to both
 `package.json` and `package-lock.json`.
+The build verifier checks that the service worker's base, Excel, and font groups
+exactly match `dist/.vite/manifest.json`.
 
 This repository disables dependency lifecycle scripts by default in `.npmrc`.
 Only override that setting for a reviewed dependency that explicitly requires an
@@ -112,6 +116,7 @@ The deployed site is available at <https://sleek874.github.io/csv2txt/>.
 - [Design specification](docs/DESIGN.md)
 - [Contributing guide](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
+- [Agent-readable overview](public/llms.txt)
 - [Synthetic fixture guide](tests/fixtures/README.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 
