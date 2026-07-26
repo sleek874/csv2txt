@@ -32,8 +32,12 @@ is not uploaded to a server.
 - Produces fixed-width Big5 records separated by CRLF, including a final CRLF.
 - Keeps uploaded and generated data in browser memory only. The current converter
   settings are transparently auto-saved to browser storage and restored on the
-  next visit; explicit settings-file upload/download provides a portable JSON backup. Source data,
-  previews, and generated output are never included in either settings store.
+  next visit; the last complete valid settings also remain available in memory
+  for recovery or download while an edit is invalid. Explicit settings-file
+  upload/download provides a portable JSON backup, and invalid settings files are
+  rejected with a specific dialog before they can replace active settings.
+  Source data, previews, and generated output are never included in either
+  settings store.
 - Precaches the production application after the first online load. Once the
   header reports `已可離線使用`, conversion and later reloads work without an
   internet connection. Browser refresh controls retain their normal behavior and

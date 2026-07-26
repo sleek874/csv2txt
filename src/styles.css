@@ -489,6 +489,11 @@ h3 {
   background: var(--color-accent);
 }
 
+.profile-status-copy {
+  flex: 1;
+  min-width: 0;
+}
+
 .profile-status strong {
   color: var(--color-text);
   font-size: 0.88rem;
@@ -501,26 +506,42 @@ h3 {
   line-height: 1.45;
 }
 
-.profile-status-dirty {
+.profile-status-custom {
   border-color: var(--color-border);
   background: var(--color-surface-muted);
 }
 
-.profile-status-dirty .status-dot {
+.profile-status-custom .status-dot {
   background: var(--color-warning-text);
 }
 
-.profile-status-dirty strong {
+.profile-status-custom strong {
   color: var(--color-text);
 }
 
-.profile-status-autosaved {
+.profile-status-synced {
   border-color: var(--color-border);
   background: var(--color-surface-soft);
 }
 
-.profile-status-autosaved .status-dot {
+.profile-status-synced .status-dot {
   background: var(--color-accent);
+}
+
+.profile-status-invalid {
+  border-color: var(--color-error);
+  background: var(--color-error-bg);
+}
+
+.profile-status-invalid .status-dot {
+  background: var(--color-error-text);
+}
+
+.profile-status-action {
+  flex: none;
+  min-height: 2.25rem;
+  margin-left: auto;
+  padding-block: 0.4rem;
 }
 
 .file-picker {
@@ -1181,7 +1202,8 @@ button:disabled {
   }
 
   .file-picker,
-  .section-heading-row {
+  .section-heading-row,
+  .profile-status {
     align-items: stretch;
     flex-direction: column;
   }
@@ -1208,8 +1230,10 @@ button:disabled {
   }
 
   .file-picker-actions button,
-  .download-bar button {
+  .download-bar button,
+  .profile-status-action {
     width: 100%;
+    margin-left: 0;
     justify-content: center;
   }
 

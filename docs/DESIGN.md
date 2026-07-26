@@ -172,14 +172,16 @@ candidates rather than certified replacements for the Office workflow.
 
 ## User experience
 
-The application is a configuration-first single-page workflow with stages 0–4.
+The application is a settings-first single-page workflow with stages 0–4.
 
 ### 0. Settings file
 
 - Clearly distinguish settings JSON from CSV/XLS/XLSX source data and Big5 TXT
   output.
 - `上傳設定檔` selects and validates a local JSON settings file before applying it.
-- `下載設定檔` downloads the current field and global settings as JSON.
+- `下載設定檔` downloads the last valid field and global settings as JSON. When
+  the screen contains invalid edits, the button and status text explicitly say
+  that the last valid settings will be downloaded.
 - `載入預設設定` applies the built-in 15-field profile.
 - Restore the last valid browser-autosaved settings on startup, falling back to
   the built-in profile when none are usable.
@@ -188,6 +190,8 @@ The application is a configuration-first single-page workflow with stages 0–4.
   content in a settings file.
 - Auto-save only valid converter settings; invalid edits must not overwrite the
   last valid browser copy.
+- Keep the last valid settings in memory for the whole page session and show
+  `復原上次有效設定` beside the status while the screen contains invalid edits.
 
 ### 1. Configure fields
 
@@ -355,6 +359,9 @@ default, and byte-width behavior immediately above the table.
 - **FR-044:** Validate loaded settings before applying them.
 - **FR-045:** Never include uploaded filenames, previews, rows, or output content
   in settings JSON or browser storage.
+- **FR-046:** When an uploaded settings file is invalid, leave the active
+  settings and status areas unchanged, and show an immediate dialog with the
+  specific validation failure.
 
 ## Default 15-column profile
 
@@ -393,24 +400,18 @@ an approved CSV and Access-generated TXT fixture.
 type SourceEncoding = "auto" | "utf-8" | "utf-16" | "big5";
 type Alignment = "left" | "right";
 
-interface ColumnConfig {
-  id: string;
-  position: number;       // 1 through 15
-  widthBytes: number;
+interface ColumnSetting {
   required: boolean;
   defaultValue: string;
+  widthBytes: number;
 }
 
-interface SettingsV2 {
+interface ConverterSettings {
   version: 2;
   sourceEncoding: SourceEncoding;
   alignment: Alignment;
   expectedRows: number;
-  columns: [
-    ColumnConfig, ColumnConfig, ColumnConfig, ColumnConfig, ColumnConfig,
-    ColumnConfig, ColumnConfig, ColumnConfig, ColumnConfig, ColumnConfig,
-    ColumnConfig, ColumnConfig, ColumnConfig, ColumnConfig, ColumnConfig,
-  ];
+  columns: ColumnSetting[];
 }
 
 type ValidationSeverity = "error" | "warning";
@@ -589,8 +590,14 @@ Example Traditional Chinese validation messages:
 
 Valid converter settings are automatically persisted under the versioned key
 `csv2txt.settings.v2`. On startup, the app restores this value before falling
-back to the built-in profile. `下載設定檔` also downloads a portable versioned JSON
-document containing:
+back to the built-in profile. The app always retains the last complete valid
+settings snapshot in memory. Valid edits update that snapshot immediately and
+schedule a debounced browser write; invalid edits remain visible but do not
+replace either the in-memory snapshot or the last browser copy.
+
+`下載設定檔` always downloads the in-memory valid snapshot as a portable versioned
+JSON document. When the screen contains invalid edits, the UI labels this action
+`下載上次有效設定` and offers `復原上次有效設定`. The downloaded file contains:
 
 - Field widths
 - Required flags
@@ -606,14 +613,16 @@ document containing:
 - Validation values
 - Uploaded filenames or local paths
 
-The settings status banner discloses successful restore/autosave and storage
-failures. Source filenames, bytes, parsed rows, previews, validation results,
-and generated output are never written to browser storage. JSON settings
-load/save provides portability and recovery. Loaded JSON must have a supported
-version, at least one column,
-positive integer widths, known enum values, and no executable content. The
-current fixed field editor also requires the loaded profile to match its visible
-field count; variable-length editing is a separate future change.
+The settings status banner classifies the screen as built-in defaults, custom
+settings, or `無效設定`, and separately discloses pending browser writes,
+successful synchronization, and storage failures. Source filenames, bytes,
+parsed rows, previews, validation results, and generated output are never
+written to browser storage. JSON settings-file upload/download provides
+portability and recovery. Loaded JSON must have a supported version, at least
+one column, positive integer widths, known enum values, and no executable
+content. The current fixed field editor also requires the loaded settings to
+match its visible field count; variable-length editing is a separate future
+change.
 
 ## Architecture
 
@@ -641,7 +650,7 @@ Recommended source boundaries:
 ```text
 src/
   app/                 UI orchestration and state
-  config/              Built-in 15-column profile
+  settings/            Built-in profile and settings-state helpers
   core/
     encoding.ts        Detection, decoding, and Big5 encoding adapter
     csv.ts             Papa Parse adapter
@@ -672,7 +681,7 @@ possible to unit-test the most safety-critical behavior.
 - The application has no upload endpoint.
 - Production assets are bundled; runtime CDNs are forbidden.
 - Analytics, trackers, error-reporting SDKs, and remote fonts are forbidden.
-- Settings contain configuration only.
+- Settings contain converter settings only.
 
 ### Content Security Policy target
 

@@ -3,7 +3,14 @@ import {
   MAX_FILE_BYTES,
   PRESET_WIDTHS,
   createDefaultSettings,
-} from "./config/profile";
+} from "./settings/profile";
+import {
+  determineSettingsKind,
+  settingsEqual,
+  type SettingsKind,
+  type SettingsPersistenceState,
+} from "./settings/state";
+import { validateConverterSettings } from "./settings/validation";
 import { parseCsv } from "./core/csv";
 import { decodeSource } from "./core/encoding";
 import { convertRows } from "./core/fixed-width";
@@ -30,8 +37,6 @@ const ISSUE_DISPLAY_LIMIT = 200;
 const MAX_SETTINGS_FILE_BYTES = 1024 * 1024;
 
 type Theme = "light" | "dark";
-type SettingsAutoSaveState = "idle" | "pending" | "saved" | "invalid" | "unavailable";
-
 const systemDarkTheme = window.matchMedia("(prefers-color-scheme: dark)");
 let manualTheme: Theme | null = null;
 
@@ -135,7 +140,7 @@ app.innerHTML = `
           <div>
             <h2 id="profile-heading">設定檔</h2>
             <p class="help-text">
-              <span class="help-line">設定會自動儲存在這個瀏覽器，也可上傳、下載或恢復預設設定檔。</span>
+              <span class="help-line">設定會自動儲存在這個瀏覽器，也可上傳或下載設定檔，或載入預設設定。</span>
               <span class="help-line">套用設定後，已選的來源檔案會自動重新驗證；設定檔不包含來源資料。</span>
             </p>
           </div>
@@ -149,7 +154,7 @@ app.innerHTML = `
           </div>
           <div class="action-explainer compact-card">
             <button id="save-settings-button" class="secondary-button" type="button">下載設定檔</button>
-            <span>將目前的欄位與全域設定下載為 JSON 備份。</span>
+            <span id="save-settings-help">將目前的欄位與全域設定下載為 JSON 備份。</span>
           </div>
           <div class="action-explainer compact-card">
             <button id="load-default-button" class="secondary-button" type="button">載入預設設定</button>
@@ -159,7 +164,13 @@ app.innerHTML = `
 
         <div id="settings-status" class="profile-status" role="status" aria-live="polite">
           <span class="status-dot" aria-hidden="true"></span>
-          <div><strong>目前設定：內建預設設定</strong><span>${DEFAULT_COLUMN_COUNT} 欄；修改後會自動儲存。</span></div>
+          <div class="profile-status-copy">
+            <strong id="settings-status-title">目前設定：內建預設設定</strong>
+            <span id="settings-status-detail">${DEFAULT_COLUMN_COUNT} 欄；修改後會自動儲存。</span>
+          </div>
+          <button id="revert-valid-settings-button" class="secondary-button profile-status-action" type="button" hidden>
+            復原上次有效設定
+          </button>
         </div>
       </section>
 
@@ -349,8 +360,13 @@ const expectedColumnSummary = requireElement<HTMLElement>("#expected-column-summ
 const sourceContractCount = requireElement<HTMLElement>("#source-contract-count");
 const appStatus = requireElement<HTMLElement>("#app-status");
 const settingsStatus = requireElement<HTMLElement>("#settings-status");
+const settingsStatusTitle = requireElement<HTMLElement>("#settings-status-title");
+const settingsStatusDetail = requireElement<HTMLElement>("#settings-status-detail");
 const settingsFileInput = requireElement<HTMLInputElement>("#settings-file");
 const loadSettingsButton = requireElement<HTMLButtonElement>("#load-settings-button");
+const saveSettingsButton = requireElement<HTMLButtonElement>("#save-settings-button");
+const saveSettingsHelp = requireElement<HTMLElement>("#save-settings-help");
+const revertValidSettingsButton = requireElement<HTMLButtonElement>("#revert-valid-settings-button");
 const fileInput = requireElement<HTMLInputElement>("#source-file");
 const selectSourceButton = requireElement<HTMLButtonElement>("#select-source-button");
 const fileStatus = requireElement<HTMLElement>("#file-status");
@@ -389,11 +405,14 @@ let parsedRows: string[][] | null = null;
 let parseErrorMessages: string[] = [];
 let lastResult: ConversionResult | null = null;
 let fileReadSequence = 0;
-let settingsDisplayName = "內建預設設定";
+const builtInDefaultSettings = createDefaultSettings();
+let settingsKind: SettingsKind = "default";
+let settingsPersistenceState: SettingsPersistenceState = "pending";
+let lastValidSettings: ConverterSettings = builtInDefaultSettings;
+let lastPersistedSettings: ConverterSettings | null = null;
 let settingsDownloadName = "csv2txt-settings.json";
-let settingsAreDirty = false;
-let settingsAutoSaveState: SettingsAutoSaveState = "idle";
 let settingsAutoSaveTimer: number | null = null;
+
 function renderOfflineStatus(state: OfflineCacheState): void {
   const messages: Record<OfflineCacheState, string> = {
     development: "開發模式",
@@ -424,30 +443,50 @@ function widthInputs(): HTMLInputElement[] {
 }
 
 function renderSettingsStatus(detail?: string): void {
-  settingsStatus.classList.toggle("profile-status-dirty", settingsAreDirty);
-  settingsStatus.classList.toggle("profile-status-autosaved", settingsAreDirty && settingsAutoSaveState === "saved");
-  const dot = document.createElement("span");
-  dot.className = "status-dot";
-  dot.setAttribute("aria-hidden", "true");
-  const copy = document.createElement("div");
-  const title = document.createElement("strong");
-  const stateLabels: Record<SettingsAutoSaveState, string> = {
-    idle: "",
-    pending: " · 正在儲存…",
-    saved: " · 已儲存於此瀏覽器",
-    invalid: " · 尚未儲存",
+  settingsStatus.classList.toggle("profile-status-custom", settingsKind === "custom");
+  settingsStatus.classList.toggle("profile-status-invalid", settingsKind === "invalid");
+  settingsStatus.classList.toggle(
+    "profile-status-synced",
+    settingsKind !== "invalid" && settingsPersistenceState === "synced",
+  );
+
+  const kindLabels: Record<SettingsKind, string> = {
+    default: "內建預設設定",
+    custom: "自訂設定",
+    invalid: "無效設定",
+  };
+  const persistenceLabels: Record<SettingsPersistenceState, string> = {
+    synced: " · 已儲存於此瀏覽器",
+    pending: " · 等待自動儲存…",
     unavailable: " · 無法自動儲存",
   };
-  const stateLabel = settingsAreDirty ? stateLabels[settingsAutoSaveState] : "";
-  title.textContent = `目前設定：${settingsDisplayName}${stateLabel}`;
-  const description = document.createElement("span");
-  description.textContent = detail ?? (settingsAreDirty
-    ? settingsAutoSaveState === "saved"
-      ? "變更已自動儲存；需要備份時可下載設定檔。"
-      : "正在自動儲存變更。"
-    : `${widthInputs().length} 欄；修改後會自動儲存。`);
-  copy.append(title, description);
-  settingsStatus.replaceChildren(dot, copy);
+  const persistenceLabel = settingsKind === "invalid"
+    ? ""
+    : persistenceLabels[settingsPersistenceState];
+  settingsStatusTitle.textContent = `目前設定：${kindLabels[settingsKind]}${persistenceLabel}`;
+
+  if (detail) {
+    settingsStatusDetail.textContent = detail;
+  } else if (settingsKind === "invalid") {
+    settingsStatusDetail.textContent = settingsPersistenceState === "unavailable"
+      ? "畫面上的修改未納入有效設定；上次有效設定只保留於本次頁面。下載將使用上次有效設定。"
+      : "畫面上的修改未納入有效設定；已保留上次有效設定。下載將使用上次有效設定。";
+  } else if (settingsPersistenceState === "pending") {
+    settingsStatusDetail.textContent = "有效設定正在等待自動儲存。";
+  } else if (settingsPersistenceState === "unavailable") {
+    settingsStatusDetail.textContent = "有效設定只會保留到關閉頁面，建議下載設定檔備份。";
+  } else if (settingsKind === "default") {
+    settingsStatusDetail.textContent = `${widthInputs().length} 欄；目前與內建預設設定相同。`;
+  } else {
+    settingsStatusDetail.textContent = "有效設定已自動儲存；需要備份時可下載設定檔。";
+  }
+
+  const settingsAreInvalid = settingsKind === "invalid";
+  revertValidSettingsButton.hidden = !settingsAreInvalid;
+  saveSettingsButton.textContent = settingsAreInvalid ? "下載上次有效設定" : "下載設定檔";
+  saveSettingsHelp.textContent = settingsAreInvalid
+    ? "目前畫面含有無效設定；下載將使用上次有效的欄位與全域設定。"
+    : "將目前的欄位與全域設定下載為 JSON 備份。";
 }
 
 function persistSettingsToBrowser(settings: ConverterSettings): boolean {
@@ -463,30 +502,43 @@ function scheduleSettingsAutoSave(): void {
   if (settingsAutoSaveTimer !== null) {
     window.clearTimeout(settingsAutoSaveTimer);
   }
+  settingsPersistenceState = "pending";
   settingsAutoSaveTimer = window.setTimeout(() => {
     settingsAutoSaveTimer = null;
-    const settings = collectSettings();
-    if (!settings) {
-      settingsAutoSaveState = "invalid";
-      renderSettingsStatus("欄寬或預期筆數無效；保留上次的有效設定。");
-      return;
+    const settingsToPersist = lastValidSettings;
+    const saved = persistSettingsToBrowser(settingsToPersist);
+    settingsPersistenceState = saved ? "synced" : "unavailable";
+    if (saved) {
+      lastPersistedSettings = settingsToPersist;
     }
-    const saved = persistSettingsToBrowser(settings);
-    settingsAutoSaveState = saved ? "saved" : "unavailable";
-    renderSettingsStatus(saved
-      ? "變更已自動儲存於此瀏覽器。"
-      : "瀏覽器不允許自動儲存；設定只會保留到關閉頁面，建議下載設定檔備份。");
+    renderSettingsStatus();
   }, 250);
 }
 
-function markSettingsDirty(): void {
-  if (!settingsAreDirty) {
-    settingsDisplayName = "自訂設定";
+function updateSettingsStateFromScreen(): ConverterSettings | null {
+  const currentSettings = collectSettings();
+  settingsKind = determineSettingsKind(currentSettings, builtInDefaultSettings);
+  if (currentSettings === null) {
+    renderSettingsStatus();
+    return null;
   }
-  settingsAutoSaveState = "pending";
-  settingsAreDirty = true;
+
+  lastValidSettings = currentSettings;
+  if (
+    settingsPersistenceState !== "unavailable"
+    && lastPersistedSettings !== null
+    && settingsEqual(currentSettings, lastPersistedSettings)
+  ) {
+    if (settingsAutoSaveTimer !== null) {
+      window.clearTimeout(settingsAutoSaveTimer);
+      settingsAutoSaveTimer = null;
+    }
+    settingsPersistenceState = "synced";
+  } else {
+    scheduleSettingsAutoSave();
+  }
   renderSettingsStatus();
-  scheduleSettingsAutoSave();
+  return currentSettings;
 }
 
 function downloadBlob(blob: Blob, filename: string): void {
@@ -584,44 +636,6 @@ function collectSettings(): ConverterSettings | null {
   };
 }
 
-function isSavedSettings(value: unknown): value is ConverterSettings {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-
-  const candidate = value as Partial<ConverterSettings>;
-  return candidate.version === 2
-    && SOURCE_ENCODINGS.includes(candidate.sourceEncoding as SourceEncodingPreference)
-    && ALIGNMENTS.includes(candidate.alignment as Alignment)
-    && Number.isInteger(candidate.expectedRows)
-    && (candidate.expectedRows ?? 0) > 0
-    && Array.isArray(candidate.columns)
-    && candidate.columns.length > 0
-    && candidate.columns.every((column) => (
-      typeof column === "object"
-      && column !== null
-      && typeof column.required === "boolean"
-      && typeof column.defaultValue === "string"
-      && Number.isInteger(column.widthBytes)
-      && column.widthBytes > 0
-    ));
-}
-
-function matchesBuiltInDefaults(settings: Readonly<ConverterSettings>): boolean {
-  const defaults = createDefaultSettings();
-  return settings.sourceEncoding === defaults.sourceEncoding
-    && settings.alignment === defaults.alignment
-    && settings.expectedRows === defaults.expectedRows
-    && settings.columns.length === defaults.columns.length
-    && settings.columns.every((column, index) => {
-      const defaultColumn = defaults.columns[index];
-      return defaultColumn !== undefined
-        && column.required === defaultColumn.required
-        && column.defaultValue === defaultColumn.defaultValue
-        && column.widthBytes === defaultColumn.widthBytes;
-    });
-}
-
 function applySettings(settings: ConverterSettings): void {
   encodingSelect.value = settings.sourceEncoding;
   alignmentSelect.value = settings.alignment;
@@ -636,6 +650,26 @@ function applySettings(settings: ConverterSettings): void {
 
   updateCumulativeWidths();
   validateExpectedRows();
+}
+
+function clearSettingsAutoSaveTimer(): void {
+  if (settingsAutoSaveTimer !== null) {
+    window.clearTimeout(settingsAutoSaveTimer);
+    settingsAutoSaveTimer = null;
+  }
+}
+
+function applyAndPersistValidSettings(settings: ConverterSettings): boolean {
+  clearSettingsAutoSaveTimer();
+  applySettings(settings);
+  lastValidSettings = settings;
+  settingsKind = determineSettingsKind(settings, builtInDefaultSettings);
+  const saved = persistSettingsToBrowser(settings);
+  settingsPersistenceState = saved ? "synced" : "unavailable";
+  if (saved) {
+    lastPersistedSettings = settings;
+  }
+  return saved;
 }
 
 function appendPreviewValue(container: HTMLElement, value: string): void {
@@ -957,20 +991,22 @@ function clearFileState(): void {
 }
 
 function loadDefaultSettings(): void {
-  if (settingsAreDirty && !window.confirm("載入預設設定會取代目前設定。確定要繼續嗎？")) {
+  updateSettingsStateFromScreen();
+  if (
+    settingsKind === "custom"
+    && !window.confirm("載入預設設定會取代目前的自訂設定。確定要繼續嗎？")
+  ) {
     return;
   }
-  if (settingsAutoSaveTimer !== null) {
-    window.clearTimeout(settingsAutoSaveTimer);
-    settingsAutoSaveTimer = null;
+  if (
+    settingsKind === "invalid"
+    && !window.confirm("目前有無效設定；載入預設設定會捨棄畫面上的修改。確定要繼續嗎？")
+  ) {
+    return;
   }
-  const defaults = createDefaultSettings();
-  applySettings(defaults);
-  settingsDisplayName = "內建預設設定";
+
+  const saved = applyAndPersistValidSettings(builtInDefaultSettings);
   settingsDownloadName = "csv2txt-settings.json";
-  settingsAreDirty = false;
-  const saved = persistSettingsToBrowser(defaults);
-  settingsAutoSaveState = saved ? "saved" : "unavailable";
   renderSettingsStatus(saved
     ? `已套用內建 ${widthInputs().length} 欄預設，並儲存於此瀏覽器。`
     : `已套用內建 ${widthInputs().length} 欄預設；瀏覽器不允許自動儲存。`);
@@ -998,29 +1034,36 @@ settingsFileInput.addEventListener("change", async () => {
     }
 
     const parsed: unknown = JSON.parse(await file.text());
-    if (!isSavedSettings(parsed)) {
-      throw new Error("設定檔格式不正確或版本不受支援；目前設定未變更。");
+    const validation = validateConverterSettings(parsed);
+    if (!validation.valid) {
+      throw new Error(`上傳的設定檔無效：${validation.reason}目前設定未變更。`);
     }
-    if (parsed.columns.length !== widthInputs().length) {
-      throw new Error(`這份設定有 ${parsed.columns.length} 欄，目前欄位編輯器為 ${widthInputs().length} 欄；目前設定未變更。`);
+    const uploadedSettings = validation.settings;
+    if (uploadedSettings.columns.length !== widthInputs().length) {
+      throw new Error(`上傳的設定檔無效：共有 ${uploadedSettings.columns.length} 欄，目前欄位編輯器為 ${widthInputs().length} 欄；目前設定未變更。`);
     }
-    if (settingsAreDirty && !window.confirm("套用這份設定檔會取代目前設定。確定要繼續嗎？")) {
+
+    const currentSettings = updateSettingsStateFromScreen();
+    if (
+      settingsKind === "custom"
+      && currentSettings !== null
+      && !settingsEqual(currentSettings, uploadedSettings)
+      && !window.confirm("套用這份設定檔會取代目前的自訂設定。確定要繼續嗎？")
+    ) {
+      return;
+    }
+    if (
+      settingsKind === "invalid"
+      && !window.confirm("目前有無效設定；套用這份設定檔會捨棄畫面上的修改。確定要繼續嗎？")
+    ) {
       return;
     }
 
-    if (settingsAutoSaveTimer !== null) {
-      window.clearTimeout(settingsAutoSaveTimer);
-      settingsAutoSaveTimer = null;
-    }
-    applySettings(parsed);
-    settingsDisplayName = file.name;
+    const saved = applyAndPersistValidSettings(uploadedSettings);
     settingsDownloadName = file.name;
-    settingsAreDirty = false;
-    const saved = persistSettingsToBrowser(parsed);
-    settingsAutoSaveState = saved ? "saved" : "unavailable";
     renderSettingsStatus(saved
-      ? `已套用 ${parsed.columns.length} 欄設定，並儲存於此瀏覽器。`
-      : `已套用 ${parsed.columns.length} 欄設定；瀏覽器不允許自動儲存。`);
+      ? `已套用 ${uploadedSettings.columns.length} 欄設定，並儲存於此瀏覽器。`
+      : `已套用 ${uploadedSettings.columns.length} 欄設定；瀏覽器不允許自動儲存。`);
     if (sourceBytes) {
       parseAndValidate();
     }
@@ -1029,10 +1072,9 @@ settingsFileInput.addEventListener("change", async () => {
       : `已套用 ${file.name}；請確認設定後選擇來源檔案。`;
   } catch (error) {
     const message = error instanceof SyntaxError
-      ? "設定檔不是有效的 JSON；目前設定未變更。"
+      ? "上傳的設定檔不是有效的 JSON；目前設定未變更。"
       : error instanceof Error ? error.message : "無法讀取設定檔；目前設定未變更。";
-    renderSettingsStatus(message);
-    appStatus.textContent = message;
+    window.alert(`無法套用設定檔\n\n${message}`);
   } finally {
     settingsFileInput.value = "";
   }
@@ -1090,15 +1132,15 @@ fileInput.addEventListener("change", async () => {
 });
 
 encodingSelect.addEventListener("change", () => {
-  markSettingsDirty();
+  updateSettingsStateFromScreen();
   parseAndValidate();
 });
 alignmentSelect.addEventListener("change", () => {
-  markSettingsDirty();
+  updateSettingsStateFromScreen();
   validateAndRender();
 });
 expectedRowsInput.addEventListener("input", () => {
-  markSettingsDirty();
+  updateSettingsStateFromScreen();
   validateAndRender();
 });
 showWhitespaceInput.addEventListener("change", () => {
@@ -1113,53 +1155,50 @@ previewRowLimitSelect.addEventListener("change", () => {
 });
 
 window.addEventListener("pagehide", () => {
-  if (settingsAutoSaveTimer !== null) {
-    window.clearTimeout(settingsAutoSaveTimer);
-    settingsAutoSaveTimer = null;
-  }
-  const settings = collectSettings();
-  if (settings) {
-    persistSettingsToBrowser(settings);
-  }
+  clearSettingsAutoSaveTimer();
+  persistSettingsToBrowser(lastValidSettings);
 });
 
 widthInputs().forEach((input) => input.addEventListener("input", () => {
-  markSettingsDirty();
+  updateSettingsStateFromScreen();
   validateAndRender();
 }));
 document.querySelectorAll<HTMLInputElement>(".required-input").forEach((input, index) => {
   input.addEventListener("change", () => {
     syncDefaultInput(index);
-    markSettingsDirty();
+    updateSettingsStateFromScreen();
     validateAndRender();
   });
 });
 document.querySelectorAll<HTMLInputElement>(".default-input").forEach((input) => {
   input.addEventListener("input", () => {
-    markSettingsDirty();
+    updateSettingsStateFromScreen();
     validateAndRender();
   });
 });
 
-requireElement<HTMLButtonElement>("#save-settings-button").addEventListener("click", () => {
-  const settings = collectSettings();
-  if (!settings) {
-    const message = "無法下載設定檔：請將預期筆數與所有欄寬設為大於 0 的整數。";
-    renderSettingsStatus(message);
-    appStatus.textContent = message;
-    return;
-  }
-
-  const json = `${JSON.stringify(settings, null, 2)}\n`;
+saveSettingsButton.addEventListener("click", () => {
+  const downloadedLastValidSettings = settingsKind === "invalid";
+  const json = `${JSON.stringify(lastValidSettings, null, 2)}\n`;
   downloadBlob(new Blob([json], { type: "application/json;charset=utf-8" }), settingsDownloadName);
-  const browserSaved = persistSettingsToBrowser(settings);
-  settingsDisplayName = settingsDownloadName;
-  settingsAreDirty = false;
-  settingsAutoSaveState = browserSaved ? "saved" : "unavailable";
-  renderSettingsStatus(browserSaved
-    ? "已下載設定檔；目前設定也已儲存於此瀏覽器。"
-    : "已下載設定檔；瀏覽器不允許自動儲存。JSON 備份仍可正常使用。");
-  appStatus.textContent = `已下載 ${settingsDownloadName}。`;
+  if (downloadedLastValidSettings) {
+    renderSettingsStatus("目前畫面含有無效設定；已下載上次有效設定，未包含畫面上的修改。");
+    appStatus.textContent = `已下載上次有效設定 ${settingsDownloadName}。`;
+  } else {
+    renderSettingsStatus("已下載目前的有效設定；下載不會變更瀏覽器自動儲存狀態。");
+    appStatus.textContent = `已下載 ${settingsDownloadName}。`;
+  }
+});
+
+revertValidSettingsButton.addEventListener("click", () => {
+  applySettings(lastValidSettings);
+  settingsKind = determineSettingsKind(lastValidSettings, builtInDefaultSettings);
+  renderSettingsStatus("已復原上次有效設定。");
+  if (sourceBytes) {
+    parseAndValidate();
+  } else {
+    appStatus.textContent = "已復原上次有效設定。";
+  }
 });
 
 requireElement<HTMLButtonElement>("#load-default-button").addEventListener("click", loadDefaultSettings);
@@ -1182,7 +1221,11 @@ function restoreSettingsAtStartup(): void {
   try {
     storedValue = localStorage.getItem(SETTINGS_STORAGE_KEY);
   } catch {
-    applySettings(createDefaultSettings());
+    applySettings(builtInDefaultSettings);
+    lastValidSettings = builtInDefaultSettings;
+    lastPersistedSettings = null;
+    settingsKind = "default";
+    settingsPersistenceState = "unavailable";
     renderSettingsStatus("目前使用內建預設設定；瀏覽器不允許自動儲存，建議下載設定檔備份。");
     return;
   }
@@ -1190,16 +1233,18 @@ function restoreSettingsAtStartup(): void {
   if (storedValue) {
     try {
       const parsed: unknown = JSON.parse(storedValue);
-      if (isSavedSettings(parsed) && parsed.columns.length === widthInputs().length) {
-        applySettings(parsed);
-        const restoredDefaults = matchesBuiltInDefaults(parsed);
-        settingsDisplayName = restoredDefaults ? "內建預設設定" : "上次的自訂設定";
-        settingsAreDirty = false;
-        settingsAutoSaveState = "saved";
-        renderSettingsStatus(restoredDefaults
-          ? `目前使用內建 ${parsed.columns.length} 欄預設。`
-          : `已復原此瀏覽器中的 ${parsed.columns.length} 欄自訂設定。`);
-        appStatus.textContent = restoredDefaults
+      const validation = validateConverterSettings(parsed);
+      if (validation.valid && validation.settings.columns.length === widthInputs().length) {
+        const storedSettings = validation.settings;
+        applySettings(storedSettings);
+        lastValidSettings = storedSettings;
+        lastPersistedSettings = storedSettings;
+        settingsKind = determineSettingsKind(storedSettings, builtInDefaultSettings);
+        settingsPersistenceState = "synced";
+        renderSettingsStatus(settingsKind === "default"
+          ? `目前使用內建 ${storedSettings.columns.length} 欄預設。`
+          : `已復原此瀏覽器中的 ${storedSettings.columns.length} 欄自訂設定。`);
+        appStatus.textContent = settingsKind === "default"
           ? "目前使用內建預設設定；請選擇來源檔案。"
           : "已復原你上次的自訂設定；請確認後選擇來源檔案。";
         return;
@@ -1209,12 +1254,9 @@ function restoreSettingsAtStartup(): void {
     }
   }
 
-  const defaults = createDefaultSettings();
-  applySettings(defaults);
-  const saved = persistSettingsToBrowser(defaults);
-  settingsAutoSaveState = saved ? "saved" : "unavailable";
+  const saved = applyAndPersistValidSettings(builtInDefaultSettings);
   renderSettingsStatus(saved
-    ? `目前使用內建 ${defaults.columns.length} 欄預設；後續變更會自動儲存。`
+    ? `目前使用內建 ${builtInDefaultSettings.columns.length} 欄預設；後續變更會自動儲存。`
     : "目前使用內建預設設定；瀏覽器不允許自動儲存，建議下載設定檔備份。");
 }
 
