@@ -9,8 +9,8 @@ export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 
 export function createDefaultSettings(): ConverterSettings {
   return {
-    version: 2,
-    sourceEncoding: "auto",
+    version: 3,
+    removeWhitespace: true,
     alignment: "left",
     expectedRows: PRESET_EXPECTED_ROWS,
     columns: PRESET_WIDTHS.map((widthBytes) => ({

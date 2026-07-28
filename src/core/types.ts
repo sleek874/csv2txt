@@ -12,8 +12,8 @@ export interface ColumnSetting {
 }
 
 export interface ConverterSettings {
-  version: 2;
-  sourceEncoding: SourceEncodingPreference;
+  version: 3;
+  removeWhitespace: boolean;
   alignment: Alignment;
   expectedRows: number;
   columns: ColumnSetting[];
@@ -33,9 +33,7 @@ export type ValidationCode =
   | "NON_ASCII_WHITESPACE"
   | "UNSUPPORTED_CONTROL_CHARACTER"
   | "UNENCODABLE_BIG5"
-  | "WIDTH_OVERFLOW"
-  | "MALFORMED_CSV"
-  | "MALFORMED_SPREADSHEET";
+  | "WIDTH_OVERFLOW";
 
 export interface ValidationIssue {
   severity: ValidationSeverity;

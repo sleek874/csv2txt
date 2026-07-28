@@ -21,19 +21,21 @@ is not uploaded to a server.
 - Uses saved formula results; formulas without a cached result block conversion.
 - Currently treats the source as the default 15 positional fields with no header
   row; a variable-length field editor is planned separately.
+- Applies the selected source-whitespace policy before defaults and required
+  checks. Whitespace is removed by default; preserved whitespace is marked in
+  preview.
 - Applies configurable defaults, required rules, alignment, and Big5 byte widths.
-- Preserves source text and visibly flags suspicious whitespace.
 - Rejects malformed CSV, wrong record/column counts, overflow, control characters,
   and text that cannot round-trip safely through Big5.
 - Produces fixed-width Big5 records separated by CRLF, including a final CRLF.
 - Keeps selected and generated data in browser memory only. The current converter
-  settings are transparently auto-saved to browser storage and restored on the
-  next visit; the last complete valid settings also remain available in memory
-  for recovery or download while an edit is invalid. Explicit settings-file
+  version 3 settings are transparently auto-saved to browser storage and restored
+  on the next visit; the last complete valid settings also remain available in
+  memory for recovery or download while an edit is invalid. Explicit settings-file
   upload/download provides a portable JSON backup, and invalid settings files are
-  rejected with a specific dialog before they can replace active settings.
-  Source data, previews, and generated output are never included in either
-  settings store.
+  rejected with a specific dialog before they can replace active settings. Source
+  data, previews, generated output, and the per-file CSV encoding choice are never
+  included in either settings store.
 - Precaches the production application after the first online load. Once the
   header reports `已可離線使用`, conversion and later reloads work without an
   internet connection. Browser refresh controls retain their normal behavior and
@@ -48,7 +50,7 @@ is not uploaded to a server.
 - Refuses to initialize inside an iframe and instead offers a direct-open link.
   This runtime guard mitigates clickjacking on GitHub Pages, which cannot emit a
   header-delivered `frame-ancestors` policy.
-- Exposes semantic 0–4 workflow navigation, concise live statuses, table
+- Exposes semantic 0–4 workflow sections, concise live statuses, table
   captions, connected control help, and crawler/agent discovery metadata.
 
 The complete requirements, architecture, conversion rules, test strategy, and

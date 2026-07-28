@@ -1,0 +1,109 @@
+.no-js #app-content,
+.no-js .header-badges,
+.no-js .header-meta__separator,
+.no-js .readiness-status {
+  display: none;
+}
+
+#app-content[inert] {
+  cursor: progress;
+}
+
+#app-content[inert] :is(a, button, input, select, .table-scroll) {
+  cursor: progress;
+}
+
+.readiness-status {
+  display: flex;
+  flex: none;
+  width: 7.75rem;
+  height: 1.5rem;
+  align-items: center;
+  padding: 0 0.45rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  background: var(--color-surface-soft);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1rem;
+}
+
+.readiness-status__text {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.readiness-status:is(
+  [data-state="components"],
+  [data-state="offline"]
+) .readiness-status__text {
+  color: var(--color-accent-text);
+  animation: readiness-loading-glow 1.4s ease-in-out infinite;
+}
+
+.readiness-status[data-state="ready"] {
+  color: var(--color-success-text);
+}
+
+.readiness-status[data-state="limited"] {
+  color: var(--color-warning-text);
+}
+
+.readiness-status[data-state="error"] {
+  color: var(--color-error-text);
+}
+
+@keyframes readiness-loading-glow {
+  0%,
+  100% {
+    text-shadow: 0 0 0 transparent;
+  }
+
+  50% {
+    text-shadow: 0 0 0.55rem currentcolor;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .readiness-status:is(
+    [data-state="components"],
+    [data-state="offline"]
+  ) .readiness-status__text {
+    animation: none;
+    text-shadow: none;
+  }
+}
+
+.embed-blocked {
+  width: min(36rem, calc(100% - 2rem));
+  margin: 10vh auto 2rem;
+  padding: clamp(1.5rem, 5vw, 2.5rem);
+  border: 1px solid var(--color-border);
+  border-left: 5px solid var(--color-accent);
+  border-radius: 0.8rem;
+  color: var(--color-text);
+  background: var(--color-surface);
+  box-shadow: 0 10px 30px var(--color-shadow);
+}
+
+.embed-blocked h1 {
+  font-size: clamp(1.5rem, 5vw, 2rem);
+}
+
+.embed-blocked > p:not(.eyebrow) {
+  margin-bottom: 1.25rem;
+  color: var(--color-text-muted);
+  line-height: 1.7;
+}
+
+.embed-open-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}

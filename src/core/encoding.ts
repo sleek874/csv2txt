@@ -173,7 +173,7 @@ export function decodeSource(
     return {
       text: decodeDetected(bytes, hintedUtf16),
       encoding: hintedUtf16,
-      label: `${hintedUtf16 === "utf-16le" ? "UTF-16LE" : "UTF-16BE"}（推測，請確認預覽）`,
+      label: `${hintedUtf16 === "utf-16le" ? "UTF-16LE" : "UTF-16BE"}（推測）`,
       ambiguous: true,
     };
   }

@@ -6,6 +6,7 @@ import { gzipSync } from "node:zlib";
 const distUrl = new URL("../dist/", import.meta.url);
 const serviceWorker = readFileSync(new URL("sw.js", distUrl), "utf8");
 const indexHtml = readFileSync(new URL("index.html", distUrl), "utf8");
+const bootSource = readFileSync(new URL("boot.js", distUrl), "utf8");
 const manifestSource = readFileSync(new URL(".vite/manifest.json", distUrl), "utf8");
 const manifest = JSON.parse(manifestSource);
 
@@ -49,13 +50,25 @@ function verifyHtmlReferences(html) {
     "Generated HTML must not contain duplicate IDs.",
   );
   const knownIds = new Set(ids);
+  const ariaReferenceGroups = Array.from(
+    html.matchAll(/\s(?:aria-describedby|aria-labelledby)="([^"]+)"/gu),
+    (match) => match[1].split(/\s+/u),
+  );
+  ariaReferenceGroups.forEach((group) => {
+    assert.equal(
+      new Set(group).size,
+      group.length,
+      "An ARIA reference list must not repeat the same ID.",
+    );
+  });
   const references = [
-    ...Array.from(
-      html.matchAll(/\s(?:aria-describedby|aria-labelledby)="([^"]+)"/gu),
-      (match) => match[1].split(/\s+/u),
-    ).flat(),
+    ...ariaReferenceGroups.flat(),
     ...Array.from(
       html.matchAll(/\shref="#([^"]+)"/gu),
+      (match) => match[1],
+    ),
+    ...Array.from(
+      html.matchAll(/<label[^>]*\sfor="([^"]+)"/gu),
       (match) => match[1],
     ),
   ];
@@ -84,7 +97,7 @@ expectedFontFiles.forEach((file) => {
 
 assert.deepEqual(
   precachePaths,
-  ["./", ...relativePaths(expectedBaseFiles)],
+  ["./", "./boot.js", ...relativePaths(expectedBaseFiles)],
   "Base resources must match the Vite manifest graph.",
 );
 assert.deepEqual(
@@ -102,6 +115,8 @@ const expectedBuildId = createHash("sha256")
   .update(manifestSource)
   .update("\n")
   .update(indexHtml)
+  .update("\n")
+  .update(bootSource)
   .digest("hex")
   .slice(0, 16);
 assert.match(
@@ -144,30 +159,104 @@ assert.doesNotMatch(serviceWorker, /PREPARE_(?:FONT|OPTIONAL_RESOURCES)|fonts-v1
 verifyHtmlReferences(indexHtml);
 assert.match(indexHtml, /<h1>CSV \/ Excel 轉 Big5 定長文字檔<\/h1>/u);
 assert.match(indexHtml, /id="noscript-heading"/u);
-assert.match(indexHtml, /id="settings-file"[\s\S]*?aria-label=/u);
-assert.match(indexHtml, /id="source-file"[\s\S]*?aria-label=/u);
+assert.match(indexHtml, /<script[^>]*src="\.\/boot\.js"[^>]*><\/script>/u);
+assert.match(indexHtml, /id="settings-file"[^>]*\shidden(?:\s|>)/u);
+assert.match(indexHtml, /id="source-file"[^>]*\shidden(?:\s|>)/u);
 assert.doesNotMatch(indexHtml, /id="app"[^>]*\shidden(?:\s|>)/u);
 assert.match(indexHtml, /<html[^>]*class="no-js"/u);
 assert.doesNotMatch(indexHtml, /noscript\.css/u);
-assert.match(
+assert.doesNotMatch(
   indexHtml,
   /<main id="app-content"[^>]*\sinert>/u,
-  "The painted workflow must remain inert while the main app loads.",
+  "The no-script document must not be permanently inert.",
 );
-assert.match(indexHtml, /<nav class="workflow-nav" aria-label="轉換步驟">/u);
+assert.doesNotMatch(indexHtml, /workflow-nav/u);
+for (const sectionId of [
+  "profile-step",
+  "columns-step",
+  "global-step",
+  "source-step",
+  "results-step",
+]) {
+  assert.match(indexHtml, new RegExp(`<section id="${sectionId}"`, "u"));
+}
 assert.match(
   indexHtml,
   /<link rel="canonical" href="https:\/\/sleek874\.github\.io\/csv2txt\/"\s*\/?>/u,
 );
-assert.match(indexHtml, /id="settings-file"[\s\S]*?tabindex="-1"/u);
-assert.match(indexHtml, /id="source-file"[\s\S]*?tabindex="-1"/u);
+assert.doesNotMatch(indexHtml, /id="settings-file"[^>]*aria-label=/u);
+assert.doesNotMatch(indexHtml, /id="source-file"[^>]*aria-label=/u);
+assert.match(
+  indexHtml,
+  /id="load-settings-button"[^>]*>上傳設定檔<\/button>/u,
+);
+assert.match(
+  indexHtml,
+  /id="save-settings-button"[^>]*>下載設定檔<\/button>/u,
+);
+assert.match(
+  indexHtml,
+  /id="load-default-button"[^>]*>使用預設設定<\/button>/u,
+);
+assert.match(indexHtml, /<label for="source-encoding">CSV 來源編碼<\/label>/u);
+assert.match(indexHtml, /<label for="expected-rows">預期資料筆數<\/label>/u);
+assert.match(indexHtml, /<label for="alignment">輸出對齊方式<\/label>/u);
+assert.match(indexHtml, /<option value="left">靠左<\/option>/u);
+assert.match(indexHtml, /<option value="right">靠右<\/option>/u);
+assert.match(
+  indexHtml,
+  /<label for="remove-whitespace">來源空白字元處理<\/label>/u,
+);
+assert.match(
+  indexHtml,
+  /<option value="remove" selected>移除<\/option>/u,
+);
+assert.match(indexHtml, /<option value="preserve">保留<\/option>/u);
+assert.match(indexHtml, /來源值經空白處理後為空時套用。/u);
+assert.match(
+  indexHtml,
+  /id="remove-whitespace-help">套用空值預設與驗證前處理；保留時會在預覽標示。/u,
+);
+assert.doesNotMatch(indexHtml, /id="show-whitespace"/u);
+assert.doesNotMatch(indexHtml, /id="settings-status"[^>]*aria-label=/u);
+assert.doesNotMatch(
+  indexHtml,
+  /id="settings-status"[^>]*(?:role|aria-live)=/u,
+  "Autosave progress must not be announced after every edit.",
+);
+assert.doesNotMatch(indexHtml, /id="source-file-picker"[^>]*aria-describedby=/u);
 assert.doesNotMatch(
   indexHtml,
   /id="preview-results"[^>]*aria-live/u,
   "Large preview updates must not be exposed as a live region.",
 );
-assert.match(indexHtml, /id="app-loading"[\s\S]*?class="busy-spinner"/u);
+assert.match(
+  indexHtml,
+  /class="header-meta"[\s\S]*?<p class="eyebrow">瀏覽器本機處理<\/p>[\s\S]*?class="header-meta__separator"[^>]*>·<\/span>[\s\S]*?id="readiness-status"[^>]*data-state="components"[\s\S]*?>載入必要元件<\/span>/u,
+);
+assert.doesNotMatch(
+  indexHtml,
+  /id="readiness-status"[^>]*(?:role|aria-live)=/u,
+  "Background readiness progress must not behave as a live region.",
+);
+assert.doesNotMatch(indexHtml, /readiness-status__indicator/u);
+assert.doesNotMatch(indexHtml, /id="app-loading"/u);
+assert.equal(
+  Array.from(indexHtml.matchAll(/id="width-\d+"/gu)).length,
+  15,
+  "The initial HTML must reserve all 15 column-editor rows.",
+);
+assert.match(indexHtml, /id="app-status" class="visually-hidden"/u);
+assert.match(
+  indexHtml,
+  /id="app-status"[^>]*role="status"[^>]*aria-live="polite"/u,
+);
 assert.match(indexHtml, /id="file-processing-indicator"[\s\S]*?\shidden/u);
+assert.match(
+  indexHtml,
+  /id="source-file-error"[^>]*role="alert"[^>]*hidden/u,
+);
+assert.doesNotMatch(indexHtml, /id="source-file-error"[^>]*tabindex=/u);
 const baseCss = precachePaths
   .filter((path) => path.endsWith(".css"))
   .map((path) => readFileSync(
@@ -175,10 +264,62 @@ const baseCss = precachePaths
     "utf8",
   ))
   .join("\n");
+assert.doesNotMatch(
+  baseCss,
+  /!important/u,
+  "Application styles must not rely on important overrides.",
+);
 assert.match(
   baseCss,
-  /\.no-js #app-loading[\s\S]*?display:none/u,
+  /\.header-badges\{[^}]*width:9\.5rem/u,
+  "The theme control must keep its reserved width.",
+);
+assert.match(
+  baseCss,
+  /\.theme-toggle\{[^}]*width:100%[^}]*height:2\.25rem/u,
+  "The theme capsule must fill the reserved header width.",
+);
+assert.match(
+  baseCss,
+  /\.header-meta\{[^}]*display:flex[^}]*min-height:1\.5rem/u,
+  "The eyebrow and readiness status must share one stable line.",
+);
+assert.match(
+  baseCss,
+  /\.readiness-status\{[^}]*width:7\.75rem[^}]*height:1\.5rem[^}]*background:var\(--color-surface-soft\)/u,
+  "The readiness status must reserve a stable background capsule.",
+);
+const readinessStatusRule = baseCss.match(/\.readiness-status\{[^}]*\}/u)?.[0];
+assert.ok(readinessStatusRule, "The readiness status rule must exist.");
+assert.doesNotMatch(
+  readinessStatusRule,
+  /animation:/u,
+  "The readiness status background must remain static.",
+);
+const readinessGlow = baseCss.match(
+  /@keyframes readiness-loading-glow\{[\s\S]*?\}\}/u,
+)?.[0];
+assert.ok(readinessGlow, "Loading readiness states must use a text glow animation.");
+assert.match(readinessGlow, /text-shadow:/u);
+assert.doesNotMatch(
+  readinessGlow,
+  /(?:background|box-shadow|filter|opacity):/u,
+  "The loading animation must affect only the text shadow.",
+);
+assert.doesNotMatch(
+  baseCss,
+  /readiness-status--(?:settled|ready|error)/u,
+  "Readiness states must share one stable layout.",
+);
+assert.match(
+  baseCss,
+  /\.no-js #app-content[\s\S]*?display:none/u,
   "No-script visibility rules must remain in manifest-managed base CSS.",
+);
+assert.match(
+  baseCss,
+  /\.no-js \.readiness-status\{display:none/u,
+  "The loading status must stay hidden when JavaScript is unavailable.",
 );
 
 const baseJavaScript = precachePaths.filter((path) => path.endsWith(".js"));

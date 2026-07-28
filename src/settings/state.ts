@@ -8,7 +8,7 @@ export function settingsEqual(
   right: Readonly<ConverterSettings>,
 ): boolean {
   return left.version === right.version
-    && left.sourceEncoding === right.sourceEncoding
+    && left.removeWhitespace === right.removeWhitespace
     && left.alignment === right.alignment
     && left.expectedRows === right.expectedRows
     && left.columns.length === right.columns.length

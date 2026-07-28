@@ -32,11 +32,8 @@ export function installTheme(): void {
 
     const source = manualTheme ? "自訂" : "系統";
     toggle.setAttribute("aria-checked", String(theme === "dark"));
-    toggle.setAttribute(
-      "aria-label",
-      `深色模式 ${source}，目前${theme === "dark" ? "開啟" : "關閉"}`,
-    );
-    toggle.title = `目前為${theme === "dark" ? "深色" : "淺色"}模式（${source}設定）`;
+    toggle.setAttribute("aria-label", `深色模式（${source}）`);
+    toggle.title = `${theme === "dark" ? "深色" : "淺色"}模式（${source}）`;
     const mode = toggle.querySelector<HTMLElement>(".theme-toggle-mode");
     if (mode) {
       mode.textContent = source;

@@ -1,24 +1,24 @@
 import { installTheme } from "./browser/theme";
 
-document.documentElement.classList.remove("no-js");
-
 function revealApplication(): void {
   const app = document.querySelector<HTMLElement>("#app");
   if (app) {
     app.removeAttribute("aria-busy");
   }
   document.querySelector<HTMLElement>("#app-content")?.removeAttribute("inert");
-  document.querySelector("#app-loading")?.remove();
+  document.documentElement.classList.remove("js-booting");
 }
 
 function renderLoadingError(): void {
-  const loading = document.querySelector<HTMLElement>("#app-loading");
-  const message = loading?.querySelector<HTMLElement>(".app-loading__text");
-  loading?.classList.add("app-loading--error");
-  loading?.setAttribute("role", "alert");
-  loading?.setAttribute("aria-live", "assertive");
+  const status = document.querySelector<HTMLElement>("#readiness-status");
+  const message = status?.querySelector<HTMLElement>(".readiness-status__text");
+  if (status) {
+    status.dataset.state = "error";
+  }
+  status?.setAttribute("role", "alert");
+  status?.setAttribute("aria-live", "assertive");
   if (message) {
-    message.textContent = "載入失敗，請重新整理後再試。";
+    message.textContent = "工具載入失敗";
   }
 }
 
@@ -41,14 +41,14 @@ function renderEmbeddedPage(): void {
   heading.textContent = "請直接開啟轉換工具";
 
   const detail = document.createElement("p");
-  detail.textContent = "為避免檔案選擇畫面遭其他網站覆蓋或誤導，本工具不會在內嵌框架中執行。";
+  detail.textContent = "此工具無法在內嵌頁面中使用。";
 
   const link = document.createElement("a");
   link.className = "primary-button embed-open-link";
   link.href = window.location.href;
   link.target = "_top";
   link.rel = "noopener noreferrer";
-  link.textContent = "直接開啟此工具";
+  link.textContent = "直接開啟";
 
   notice.append(eyebrow, heading, detail, link);
   app.replaceChildren(notice);

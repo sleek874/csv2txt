@@ -5,30 +5,26 @@ import type {
 } from "../core/types";
 
 const ISSUE_DISPLAY_LIMIT = 200;
+const WHITESPACE_MARKERS: Readonly<
+  Record<string, { symbol: string; label: string; wide?: boolean }>
+> = {
+  " ": { symbol: "·", label: "半形空格" },
+  "　": { symbol: "□", label: "全形空格", wide: true },
+  "\t": { symbol: "→", label: "定位字元" },
+  "\r": { symbol: "↵", label: "換行字元" },
+  "\n": { symbol: "↵", label: "換行字元" },
+  "\u00a0": { symbol: "⍽", label: "不換行空格" },
+};
 
 interface ResultsViewOptions {
   alignment: () => Alignment;
   issueTableBody: HTMLTableSectionElement;
   previewResults: HTMLElement;
   previewRowLimitSelect: HTMLSelectElement;
-  showWhitespaceInput: HTMLInputElement;
 }
 
 export function createResultsView(options: ResultsViewOptions) {
   function appendPreviewValue(container: HTMLElement, value: string): void {
-    if (!options.showWhitespaceInput.checked) {
-      container.textContent = value;
-      return;
-    }
-
-    const markers: Record<string, { symbol: string; label: string; wide?: boolean }> = {
-      " ": { symbol: "·", label: "來源半形空格" },
-      "　": { symbol: "□", label: "來源全形空格", wide: true },
-      "\t": { symbol: "→", label: "來源定位字元" },
-      "\r": { symbol: "↵", label: "來源換行字元" },
-      "\n": { symbol: "↵", label: "來源換行字元" },
-      "\u00a0": { symbol: "⍽", label: "來源不換行空格" },
-    };
     let plainText = "";
 
     const flushPlainText = (): void => {
@@ -44,7 +40,7 @@ export function createResultsView(options: ResultsViewOptions) {
         character = "\r";
         index += 1;
       }
-      const markerDefinition = markers[character];
+      const markerDefinition = WHITESPACE_MARKERS[character];
       if (!markerDefinition) {
         plainText += character;
         continue;
@@ -53,10 +49,9 @@ export function createResultsView(options: ResultsViewOptions) {
       flushPlainText();
       const marker = document.createElement("span");
       marker.className = markerDefinition.wide
-        ? "source-whitespace-marker source-whitespace-marker-wide"
-        : "source-whitespace-marker";
+        ? "content-whitespace-marker content-whitespace-marker-wide"
+        : "content-whitespace-marker";
       marker.textContent = markerDefinition.symbol;
-      marker.title = markerDefinition.label;
       marker.setAttribute("aria-label", markerDefinition.label);
       container.append(marker);
     }
@@ -78,9 +73,9 @@ export function createResultsView(options: ResultsViewOptions) {
       const notice = document.createElement("div");
       notice.className = "notice error-notice";
       const strong = document.createElement("strong");
-      strong.textContent = "沒有可預覽的正確資料列";
+      strong.textContent = "沒有可預覽的資料";
       const detail = document.createElement("span");
-      detail.textContent = "請依下方問題修正來源檔案或設定。";
+      detail.textContent = "請查看問題清單。";
       notice.append(strong, detail);
       options.previewResults.append(notice);
       return;
@@ -114,7 +109,6 @@ export function createResultsView(options: ResultsViewOptions) {
       const guideField = document.createElement("span");
       guideField.className = "column-guide-fragment";
       guideField.style.width = `${widthBytes}ch`;
-      guideField.title = `欄位${field.fieldIndex}：欄寬 ${widthBytes} 位元組`;
       guideField.setAttribute(
         "aria-label",
         `欄位${field.fieldIndex}：欄寬 ${widthBytes} 位元組`,
@@ -156,15 +150,18 @@ export function createResultsView(options: ResultsViewOptions) {
         const padding = document.createElement("span");
         padding.className = "padding-fragment";
         padding.style.width = `${field.paddingBytes}ch`;
-        padding.title = `欄位${field.fieldIndex}：補 ${field.paddingBytes} 個空格`;
-        padding.setAttribute(
-          "aria-label",
-          `欄位${field.fieldIndex}：補 ${field.paddingBytes} 個空格`,
-        );
         const paddingDots = document.createElement("span");
         paddingDots.setAttribute("aria-hidden", "true");
         paddingDots.textContent = "·".repeat(field.paddingBytes);
         padding.append(paddingDots);
+        if (field.paddingBytes > 0) {
+          padding.setAttribute(
+            "aria-label",
+            `欄位${field.fieldIndex}：補 ${field.paddingBytes} 個空格`,
+          );
+        } else {
+          padding.setAttribute("aria-hidden", "true");
+        }
 
         if (options.alignment() === "right") {
           fieldFragment.append(padding, source);
@@ -191,7 +188,7 @@ export function createResultsView(options: ResultsViewOptions) {
       const cell = row.insertCell();
       cell.colSpan = 4;
       cell.className = "empty-table-message success-message";
-      cell.textContent = "沒有發現問題，可以下載。";
+      cell.textContent = "驗證通過，可以下載。";
       return;
     }
 

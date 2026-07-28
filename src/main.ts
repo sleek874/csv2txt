@@ -1,8 +1,9 @@
-import { renderColumnEditor } from "./app/column-editor";
+import { createColumnEditor } from "./app/column-editor";
 import { prioritizeSourceResources } from "./app/resource-priority";
 import { createResultsView } from "./app/results-view";
 import { createSettingsController } from "./app/settings-controller";
 import { createSpreadsheetParser } from "./app/spreadsheet-loader";
+import { downloadBlob, requireElement } from "./browser/dom";
 import {
   createOfflineCache,
   type OfflineCacheState,
@@ -14,38 +15,21 @@ import { convertRows } from "./core/fixed-width";
 import { detectSourceFileType, type SourceFileType } from "./core/source";
 import type {
   ConversionResult,
-  ValidationIssue,
+  SourceEncodingPreference,
 } from "./core/types";
+import { SOURCE_ENCODINGS } from "./core/types";
 import {
   MAX_FILE_BYTES,
   PRESET_WIDTHS,
 } from "./settings/profile";
 
-function requireElement<T extends Element>(selector: string): T {
-  const element = document.querySelector<T>(selector);
-  if (!element) {
-    throw new Error(`找不到必要的畫面元件：${selector}`);
-  }
-  return element;
-}
-
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
-}
-
 function renderNotice(
   container: HTMLElement,
   title: string,
   detail: string,
-  error = false,
 ): void {
   const notice = document.createElement("div");
-  notice.className = error ? "notice error-notice" : "notice neutral-notice";
+  notice.className = "notice";
   const strong = document.createElement("strong");
   strong.textContent = title;
   const description = document.createElement("span");
@@ -54,7 +38,7 @@ function renderNotice(
   container.replaceChildren(notice);
 }
 
-renderColumnEditor(
+const columnEditor = createColumnEditor(
   requireElement<HTMLTableSectionElement>("#column-settings-body"),
   PRESET_WIDTHS,
 );
@@ -70,39 +54,40 @@ const sourceFilePicker = requireElement<HTMLElement>("#source-file-picker");
 const fileProcessingIndicator =
   requireElement<HTMLElement>("#file-processing-indicator");
 const fileStatus = requireElement<HTMLElement>("#file-status");
+const sourceEncodingSelect = requireElement<HTMLSelectElement>("#source-encoding");
 const encodingStatus = requireElement<HTMLElement>("#encoding-status");
+const sourceFileError = requireElement<HTMLElement>("#source-file-error");
 const previewResults = requireElement<HTMLElement>("#preview-results");
-const issueResults = requireElement<HTMLElement>("#issue-results");
 const issueTableBody = requireElement<HTMLTableSectionElement>("#issue-table-body");
 const convertButton = requireElement<HTMLButtonElement>("#convert-button");
 const startOverButton = requireElement<HTMLButtonElement>("#start-over-button");
-const showWhitespaceInput = requireElement<HTMLInputElement>("#show-whitespace");
 const previewRowLimitSelect = requireElement<HTMLSelectElement>("#preview-row-limit");
 const alignmentSelect = requireElement<HTMLSelectElement>("#alignment");
-const offlineStatus = requireElement<HTMLElement>("#offline-status");
+const readinessStatus = requireElement<HTMLElement>("#readiness-status");
+const readinessText =
+  requireElement<HTMLElement>("#readiness-status .readiness-status__text");
 
 const { renderIssues, renderPreview } = createResultsView({
   alignment: () => alignmentSelect.value === "right" ? "right" : "left",
   issueTableBody,
   previewResults,
   previewRowLimitSelect,
-  showWhitespaceInput,
 });
 
 function renderOfflineStatus(state: OfflineCacheState): void {
-  const messages: Record<OfflineCacheState, string> = {
-    development: "開發模式",
-    unsupported: "無法建立離線版本",
-    preparing: "正在準備離線使用…",
-    ready: "已可離線使用",
-    error: "無法完成離線準備",
+  const presentations: Record<
+    OfflineCacheState,
+    { state: string; text: string }
+  > = {
+    development: { state: "development", text: "開發模式" },
+    unsupported: { state: "limited", text: "需連線使用" },
+    preparing: { state: "offline", text: "準備離線使用" },
+    ready: { state: "ready", text: "已可離線使用" },
+    error: { state: "limited", text: "需連線使用" },
   };
-  offlineStatus.textContent = messages[state];
-  offlineStatus.classList.toggle("offline-status-ready", state === "ready");
-  offlineStatus.classList.toggle(
-    "offline-status-error",
-    state === "error" || state === "unsupported",
-  );
+  const presentation = presentations[state];
+  readinessStatus.dataset.state = presentation.state;
+  readinessText.textContent = presentation.text;
 }
 
 const offlineCache = createOfflineCache({
@@ -137,48 +122,83 @@ function yieldToBrowser(): Promise<void> {
 
 const settingsController = createSettingsController({
   appStatus,
+  columnEditor,
   hasSource: () => sourceBytes !== null,
-  onReparse: () => void parseAndValidate(),
   onRevalidate: validateAndRender,
 });
 
-function renderParseErrors(rows: readonly string[][], errors: readonly string[]): void {
-  const formatLabel = sourceFileType === "csv" ? "CSV" : "Excel";
+function sourceEncoding(): SourceEncodingPreference {
+  return SOURCE_ENCODINGS.includes(sourceEncodingSelect.value as SourceEncodingPreference)
+    ? sourceEncodingSelect.value as SourceEncodingPreference
+    : "auto";
+}
+
+function clearSourceError(): void {
+  sourceFileError.hidden = true;
+  sourceFileError.replaceChildren();
+}
+
+function renderSourceError(title: string, details: string | readonly string[]): void {
+  const strong = document.createElement("strong");
+  strong.textContent = title;
+  const messages = typeof details === "string" ? [details] : details;
+
+  if (messages.length === 1) {
+    const description = document.createElement("span");
+    description.textContent = messages[0] ?? "";
+    sourceFileError.replaceChildren(strong, description);
+  } else {
+    const list = document.createElement("ul");
+    messages.forEach((message) => {
+      const item = document.createElement("li");
+      item.textContent = message;
+      list.append(item);
+    });
+    sourceFileError.replaceChildren(strong, list);
+  }
+
+  sourceFileError.hidden = false;
+  appStatus.textContent = "";
+}
+
+function resetValidationView(detail: string): void {
   lastResult = null;
   convertButton.disabled = true;
-  actualRowSummary.textContent = String(rows.length);
+  actualRowSummary.textContent = "—";
   validRowSummary.textContent = "—";
   invalidRowSummary.textContent = "—";
   warningSummary.textContent = "—";
-
-  const issues: ValidationIssue[] = errors.map((message) => ({
-    severity: "error",
-    code: sourceFileType === "csv" ? "MALFORMED_CSV" : "MALFORMED_SPREADSHEET",
-    message,
-  }));
-  renderIssues(issues);
-  renderNotice(
-    previewResults,
-    `${formatLabel} 格式無法解析`,
-    "請修正下方問題後重新選擇檔案。",
-    true,
-  );
-  appStatus.textContent = `驗證失敗：找到 ${errors.length} 項 ${formatLabel} 格式錯誤。`;
+  renderNotice(previewResults, "尚未驗證", detail);
+  const row = document.createElement("tr");
+  const cell = document.createElement("td");
+  cell.colSpan = 4;
+  cell.className = "empty-table-message";
+  cell.textContent = "尚未驗證";
+  row.append(cell);
+  issueTableBody.replaceChildren(row);
 }
 
-function validateAndRender(): void {
+function renderParseErrors(errors: readonly string[]): void {
+  const formatLabel = sourceFileType === "csv" ? "CSV" : "Excel";
+  resetValidationView("成功讀取來源檔案後顯示。");
+  renderSourceError(`${formatLabel} 格式錯誤`, errors);
+}
+
+function validateAndRender(announce = true): void {
+  appStatus.textContent = "";
   const settings = settingsController.collect();
   if (!parsedRows) {
     return;
   }
   if (parseErrorMessages.length > 0) {
-    renderParseErrors(parsedRows, parseErrorMessages);
     return;
   }
   if (!settings) {
     lastResult = null;
     convertButton.disabled = true;
-    appStatus.textContent = "請將預期筆數與所有欄寬設為大於 0 的整數。";
+    if (announce) {
+      appStatus.textContent = "請修正標示的預期筆數或欄寬。";
+    }
     return;
   }
 
@@ -193,25 +213,27 @@ function validateAndRender(): void {
   renderIssues(result.issues);
 
   const errorCount = result.issues.filter((issue) => issue.severity === "error").length;
-  appStatus.textContent = result.outputBytes
-    ? `驗證完成：${result.validRows} 筆資料可轉換，輸出大小 ${result.outputBytes.length.toLocaleString("zh-Hant-TW")} 位元組。`
-    : `目前無法下載：找到 ${errorCount} 項錯誤與 ${result.warningCount} 項空白提醒。`;
+  if (announce) {
+    appStatus.textContent = result.outputBytes
+      ? "驗證完成，可以下載。"
+      : `驗證未通過，共 ${errorCount} 項錯誤。`;
+  }
 }
 
-async function parseAndValidate(focusErrors = false): Promise<void> {
-  const settings = settingsController.collect();
+async function parseAndValidate(): Promise<void> {
   const bytes = sourceBytes;
   const fileType = sourceFileType;
   const sequence = ++parseSequence;
-  if (!bytes || !fileType || !settings) {
+  if (!bytes || !fileType) {
     setSourceProcessing(false);
     return;
   }
 
+  clearSourceError();
   setSourceProcessing(true);
   if (fileType !== "csv") {
-    encodingStatus.textContent = "正在載入 Excel 解析元件…";
-    appStatus.textContent = "正在載入 Excel 解析元件並準備驗證…";
+    encodingStatus.textContent = "正在載入 Excel…";
+    appStatus.textContent = "正在載入 Excel…";
   }
 
   try {
@@ -232,19 +254,24 @@ async function parseAndValidate(focusErrors = false): Promise<void> {
 
     let parsed: { rows: string[][]; errors: string[] };
     if (fileType === "csv") {
-      const decoded = decodeSource(bytes, settings.sourceEncoding);
+      const decoded = decodeSource(bytes, sourceEncoding());
       parsed = parseCsv(decoded.text);
-      encodingStatus.textContent =
-        `來源編碼：${decoded.label}${decoded.ambiguous ? "。請確認預覽內容是否正確。" : "。"}`;
+      encodingStatus.textContent = decoded.ambiguous
+        ? `${decoded.label} · 請確認預覽`
+        : decoded.label;
     } else {
-      const spreadsheet = await spreadsheetParser.parse(bytes, settings.columns.length);
+      const spreadsheet = await spreadsheetParser.parse(
+        bytes,
+        columnEditor.columnCount,
+      );
       if (sequence !== parseSequence) {
         return;
       }
       parsed = spreadsheet;
       encodingStatus.textContent =
-        `來源格式：${fileType.toUpperCase()}；使用第一個工作表「${spreadsheet.sheetName}」的格式化顯示值。`;
+        `${fileType.toUpperCase()} · 工作表「${spreadsheet.sheetName}」`;
     }
+    encodingStatus.title = encodingStatus.textContent;
     if (sequence !== parseSequence) {
       return;
     }
@@ -252,15 +279,9 @@ async function parseAndValidate(focusErrors = false): Promise<void> {
     parsedRows = parsed.rows;
     parseErrorMessages = parsed.errors;
     if (parsed.errors.length > 0) {
-      renderParseErrors(parsed.rows, parsed.errors);
-      if (focusErrors) {
-        issueResults.focus();
-      }
+      renderParseErrors(parsed.errors);
     } else {
       validateAndRender();
-      if (focusErrors && !lastResult?.outputBytes) {
-        issueResults.focus();
-      }
     }
   } catch (error) {
     if (sequence !== parseSequence) {
@@ -268,31 +289,15 @@ async function parseAndValidate(focusErrors = false): Promise<void> {
     }
     parsedRows = null;
     parseErrorMessages = [];
-    lastResult = null;
-    convertButton.disabled = true;
-    actualRowSummary.textContent = "—";
-    validRowSummary.textContent = "—";
-    invalidRowSummary.textContent = "—";
-    warningSummary.textContent = "—";
     const message = error instanceof Error ? error.message : "無法讀取來源檔案。";
-    encodingStatus.textContent = message;
-    renderIssues([{
-      severity: "error",
-      code: fileType === "csv" ? "MALFORMED_CSV" : "MALFORMED_SPREADSHEET",
-      message,
-    }]);
-    renderNotice(
-      previewResults,
-      "檔案無法讀取",
+    encodingStatus.textContent = "無法判斷";
+    resetValidationView("成功讀取來源檔案後顯示。");
+    renderSourceError(
+      "無法處理檔案",
       fileType === "csv"
-        ? "請指定正確的來源編碼，或改選其他檔案。"
-        : "請確認檔案可正常開啟且未受密碼保護，或改選其他檔案。",
-      true,
+        ? `${message} 請確認來源編碼或改選檔案。`
+        : `${message} 請確認檔案未損毀或加密。`,
     );
-    appStatus.textContent = message;
-    if (focusErrors) {
-      issueResults.focus();
-    }
   } finally {
     if (sequence === parseSequence) {
       setSourceProcessing(false);
@@ -308,32 +313,18 @@ function clearFileState(): void {
   sourceBytes = null;
   parsedRows = null;
   parseErrorMessages = [];
-  lastResult = null;
   setSourceProcessing(false);
   unloadGuard.setPendingFile(false);
   fileInput.value = "";
-  settingsController.encodingSelect.disabled = false;
+  sourceEncodingSelect.disabled = true;
   fileStatus.textContent = "尚未選擇檔案";
-  encodingStatus.textContent = "尚未判斷來源格式。";
-  actualRowSummary.textContent = "—";
-  validRowSummary.textContent = "—";
-  invalidRowSummary.textContent = "—";
-  warningSummary.textContent = "—";
-  convertButton.disabled = true;
+  fileStatus.removeAttribute("title");
+  encodingStatus.textContent = "尚未判斷";
+  encodingStatus.removeAttribute("title");
   startOverButton.disabled = true;
-  renderNotice(
-    previewResults,
-    "尚未驗證",
-    "選擇 CSV 或 Excel 檔案後，這裡會顯示可輸出的資料列。",
-  );
-  const row = document.createElement("tr");
-  const cell = document.createElement("td");
-  cell.colSpan = 4;
-  cell.className = "empty-table-message";
-  cell.textContent = "選擇檔案後顯示驗證結果";
-  row.append(cell);
-  issueTableBody.replaceChildren(row);
-  appStatus.textContent = "尚未選擇來源檔案。";
+  clearSourceError();
+  resetValidationView("選擇來源檔案。");
+  appStatus.textContent = "";
 }
 
 async function handleSourceFileSelection(): Promise<void> {
@@ -347,25 +338,32 @@ async function handleSourceFileSelection(): Promise<void> {
   const fileType = detectSourceFileType(file.name);
   if (!fileType) {
     clearFileState();
-    fileStatus.textContent = "不支援這個檔案類型；請選擇 .csv、.xls 或 .xlsx 檔案。";
-    appStatus.textContent = fileStatus.textContent;
+    renderSourceError(
+      "不支援此檔案類型",
+      "請選擇副檔名為 .csv、.xls 或 .xlsx 的檔案。",
+    );
     return;
   }
   if (file.size === 0 || file.size > MAX_FILE_BYTES) {
     clearFileState();
-    fileStatus.textContent = file.size === 0 ? "無法使用空檔案。" : "檔案超過 25 MiB 上限。";
-    appStatus.textContent = fileStatus.textContent;
+    if (file.size === 0) {
+      renderSourceError("檔案沒有內容", "請選擇含有資料的檔案。");
+    } else {
+      renderSourceError("檔案超過大小上限", "請選擇 25 MiB 以下的檔案。");
+    }
     return;
   }
 
+  clearSourceError();
   sourceFile = file;
   sourceFileType = fileType;
   unloadGuard.setPendingFile(true);
-  settingsController.encodingSelect.disabled = fileType !== "csv";
+  sourceEncodingSelect.disabled = fileType !== "csv";
   startOverButton.disabled = false;
   setSourceProcessing(true);
-  fileStatus.textContent = `正在讀取 ${file.name}…`;
-  appStatus.textContent = "正在讀取並驗證檔案…";
+  fileStatus.textContent = "正在讀取檔案…";
+  fileStatus.title = file.name;
+  appStatus.textContent = "正在驗證檔案…";
 
   try {
     const buffer = await file.arrayBuffer();
@@ -375,12 +373,12 @@ async function handleSourceFileSelection(): Promise<void> {
     sourceBytes = new Uint8Array(buffer);
     fileStatus.textContent =
       `${file.name} · ${file.size.toLocaleString("zh-Hant-TW")} 位元組`;
-    await parseAndValidate(true);
+    fileStatus.title = fileStatus.textContent;
+    await parseAndValidate();
   } catch {
     if (sequence === fileReadSequence) {
       clearFileState();
-      fileStatus.textContent = "瀏覽器無法讀取這個檔案。";
-      appStatus.textContent = fileStatus.textContent;
+      renderSourceError("無法存取檔案", "請確認檔案仍可使用，或改選其他檔案。");
     }
   }
 }
@@ -388,9 +386,9 @@ async function handleSourceFileSelection(): Promise<void> {
 fileInput.addEventListener("change", () => void handleSourceFileSelection());
 selectSourceButton.addEventListener("click", () => fileInput.click());
 
-showWhitespaceInput.addEventListener("change", () => {
-  if (lastResult) {
-    renderPreview(lastResult);
+sourceEncodingSelect.addEventListener("change", () => {
+  if (sourceFileType === "csv") {
+    void parseAndValidate();
   }
 });
 previewRowLimitSelect.addEventListener("change", () => {
@@ -408,8 +406,7 @@ convertButton.addEventListener("click", () => {
   const bytes = lastResult.outputBytes;
   const filename = sourceFile.name.replace(/\.(?:csv|xlsx?)$/iu, "") + ".txt";
   downloadBlob(new Blob([bytes.slice().buffer], { type: "text/plain" }), filename);
-  appStatus.textContent =
-    `已產生 ${filename}（Big5、${bytes.length.toLocaleString("zh-Hant-TW")} 位元組）。`;
+  appStatus.textContent = "已建立下載。";
 });
 
 settingsController.bind();

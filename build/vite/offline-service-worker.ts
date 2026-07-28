@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import type { OutputAsset } from "rollup";
 import type { Manifest, Plugin } from "vite";
 
 const MANIFEST_FILE_NAME = ".vite/manifest.json";
+const BOOT_FILE_NAME = "boot.js";
 const BASE_MANIFEST_ROOTS = ["index.html", "src/main.ts"];
 const EXCEL_MANIFEST_ROOTS = ["src/core/spreadsheet.ts"];
 const FONT_MANIFEST_ROOTS = [
@@ -60,10 +63,15 @@ function relativePaths(files: Iterable<string>): string[] {
 }
 
 export function offlineServiceWorker(): Plugin {
+  let bootSource = "";
+
   return {
     name: "offline-service-worker",
     apply: "build",
     enforce: "post",
+    configResolved(config) {
+      bootSource = readFileSync(resolve(config.publicDir, BOOT_FILE_NAME), "utf8");
+    },
     generateBundle: {
       order: "post",
       handler(_options, bundle) {
@@ -89,13 +97,15 @@ export function offlineServiceWorker(): Plugin {
           excelFiles.delete(file);
         });
 
-        const precachePaths = ["./", ...relativePaths(baseFiles)];
+        const precachePaths = ["./", `./${BOOT_FILE_NAME}`, ...relativePaths(baseFiles)];
         const excelPaths = relativePaths(excelFiles);
         const fontPaths = relativePaths(fontFiles);
         const buildId = createHash("sha256")
           .update(manifestSource)
           .update("\n")
           .update(indexHtmlSource)
+          .update("\n")
+          .update(bootSource)
           .digest("hex")
           .slice(0, 16);
         const cacheName = `csv2txt-app-${buildId}`;

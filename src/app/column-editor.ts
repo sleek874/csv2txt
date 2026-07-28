@@ -1,58 +1,130 @@
-export function renderColumnEditor(
+import type { ColumnSetting } from "../core/types";
+
+interface ColumnControls {
+  cumulativeWidth: HTMLElement;
+  defaultValue: HTMLInputElement;
+  required: HTMLInputElement;
+  width: HTMLInputElement;
+}
+
+export interface ColumnEditorSnapshot {
+  columns: ColumnSetting[] | null;
+  totalWidth: number | null;
+}
+
+export interface ColumnEditor {
+  readonly columnCount: number;
+  apply(columns: readonly ColumnSetting[]): void;
+  bind(onChange: () => void): void;
+  collect(): ColumnEditorSnapshot;
+}
+
+function setAriaInvalid(element: HTMLElement, invalid: boolean): void {
+  if (invalid) {
+    element.setAttribute("aria-invalid", "true");
+  } else {
+    element.removeAttribute("aria-invalid");
+  }
+}
+
+export function createColumnEditor(
   container: HTMLTableSectionElement,
   widths: readonly number[],
-): void {
-  let cumulativeWidth = 0;
-  const rows = widths.map((width, index) => {
+): ColumnEditor {
+  const rows = Array.from(container.rows);
+  if (rows.length !== widths.length) {
+    throw new Error("The static column editor does not match the default settings.");
+  }
+
+  const controls = rows.map((row, index): ColumnControls => {
     const position = index + 1;
-    cumulativeWidth += width;
+    const heading = row.querySelector<HTMLTableCellElement>("th");
+    const required = row.querySelector<HTMLInputElement>(".required-input");
+    const defaultValue = row.querySelector<HTMLInputElement>(".default-input");
+    const width = row.querySelector<HTMLInputElement>(".width-input");
+    const cumulativeWidth = row.querySelector<HTMLElement>(".cumulative-width");
 
-    const row = document.createElement("tr");
-    const heading = document.createElement("th");
-    heading.scope = "row";
-    heading.textContent = `欄位${position}`;
+    if (!heading || !required || !defaultValue || !width || !cumulativeWidth) {
+      throw new Error(`The static editor row for column ${position} is incomplete.`);
+    }
 
-    const requiredCell = document.createElement("td");
-    requiredCell.className = "center-cell";
-    const required = document.createElement("input");
-    required.id = `required-${index}`;
-    required.className = "required-input";
-    required.type = "checkbox";
-    required.setAttribute("aria-label", `欄位${position}不可空白`);
-    required.setAttribute("aria-describedby", "required-help");
-    requiredCell.append(required);
-
-    const defaultCell = document.createElement("td");
-    const defaultValue = document.createElement("input");
-    defaultValue.id = `default-${index}`;
-    defaultValue.className = "default-input";
-    defaultValue.type = "text";
-    defaultValue.autocomplete = "off";
-    defaultValue.placeholder = "選填";
-    defaultValue.setAttribute("aria-label", `欄位${position}空值預設`);
-    defaultValue.setAttribute("aria-describedby", "default-help");
-    defaultCell.append(defaultValue);
-
-    const widthCell = document.createElement("td");
-    const widthInput = document.createElement("input");
-    widthInput.id = `width-${index}`;
-    widthInput.className = "width-input";
-    widthInput.type = "number";
-    widthInput.min = "1";
-    widthInput.step = "1";
-    widthInput.inputMode = "numeric";
-    widthInput.value = String(width);
-    widthInput.setAttribute("aria-label", `欄位${position}欄寬`);
-    widthInput.setAttribute("aria-describedby", "width-help");
-    widthCell.append(widthInput);
-
-    const cumulativeCell = document.createElement("td");
-    cumulativeCell.className = "number-cell cumulative-width";
-    cumulativeCell.textContent = String(cumulativeWidth);
-
-    row.append(heading, requiredCell, defaultCell, widthCell, cumulativeCell);
-    return row;
+    width.value = String(widths[index]);
+    return { cumulativeWidth, defaultValue, required, width };
   });
 
-  container.replaceChildren(...rows);
+  function syncDefaultInput(control: ColumnControls): void {
+    control.defaultValue.disabled = control.required.checked;
+    control.defaultValue.placeholder = control.required.checked ? "已停用" : "選填";
+    if (control.required.checked) {
+      control.defaultValue.value = "";
+    }
+  }
+
+  function collect(): ColumnEditorSnapshot {
+    let cumulativeWidth = 0;
+    let widthsAreValid = true;
+    const columns = controls.map((control): ColumnSetting => {
+      const widthBytes = Number(control.width.value);
+      const widthIsValid = Number.isInteger(widthBytes) && widthBytes >= 1;
+      setAriaInvalid(control.width, !widthIsValid);
+      widthsAreValid &&= widthIsValid;
+
+      if (widthsAreValid) {
+        cumulativeWidth += widthBytes;
+        control.cumulativeWidth.textContent = String(cumulativeWidth);
+      } else {
+        control.cumulativeWidth.textContent = "—";
+      }
+
+      return {
+        required: control.required.checked,
+        defaultValue: control.required.checked ? "" : control.defaultValue.value,
+        widthBytes,
+      };
+    });
+
+    return {
+      columns: widthsAreValid ? columns : null,
+      totalWidth: widthsAreValid ? cumulativeWidth : null,
+    };
+  }
+
+  function apply(columns: readonly ColumnSetting[]): void {
+    if (columns.length !== controls.length) {
+      throw new Error("The settings do not match the static column editor.");
+    }
+
+    controls.forEach((control, index) => {
+      const column = columns[index];
+      if (!column) {
+        throw new Error(`The settings are missing column ${index + 1}.`);
+      }
+      control.required.checked = column.required;
+      control.defaultValue.value = column.defaultValue;
+      control.width.value = String(column.widthBytes);
+      syncDefaultInput(control);
+    });
+    collect();
+  }
+
+  function bind(onChange: () => void): void {
+    controls.forEach((control) => {
+      control.width.addEventListener("input", onChange);
+      control.defaultValue.addEventListener("input", onChange);
+      control.required.addEventListener("change", () => {
+        syncDefaultInput(control);
+        onChange();
+      });
+    });
+  }
+
+  controls.forEach(syncDefaultInput);
+  collect();
+
+  return {
+    columnCount: controls.length,
+    apply,
+    bind,
+    collect,
+  };
 }

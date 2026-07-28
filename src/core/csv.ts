@@ -30,8 +30,8 @@ export function parseCsv(text: string): ParsedCsv {
         TooFewFields: "這筆資料的欄位數不足。",
         TooManyFields: "這筆資料的欄位數過多。",
       };
-      const rowLabel = typeof error.row === "number" ? `（資料列 ${error.row + 1}）` : "";
-      return `CSV 格式錯誤${rowLabel}：${translatedMessages[error.code] ?? "CSV 內容格式不正確。"}`;
+      const rowLabel = typeof error.row === "number" ? `資料列 ${error.row + 1}：` : "";
+      return `${rowLabel}${translatedMessages[error.code] ?? "CSV 內容格式不正確。"}`;
     }),
   };
 }

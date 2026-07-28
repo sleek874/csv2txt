@@ -14,6 +14,7 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
+    <script vite-ignore src="./boot.js"></script>
     <link rel="canonical" href="https://sleek874.github.io/csv2txt/" />
     <link
       rel="alternate"
@@ -26,12 +27,18 @@
     <title>CSV / Excel 轉 Big5 定長文字檔</title>
   </head>
   <body>
-    <div id="app" class="page-shell" aria-busy="true">
+    <div id="app" class="page-shell">
       <header class="page-header">
         <div>
-          <p class="eyebrow">瀏覽器本機處理</p>
+          <div class="header-meta">
+            <p class="eyebrow">瀏覽器本機處理</p>
+            <span class="header-meta__separator" aria-hidden="true">·</span>
+            <div id="readiness-status" class="readiness-status" data-state="components">
+              <span class="readiness-status__text">載入必要元件</span>
+            </div>
+          </div>
           <h1>CSV / Excel 轉 Big5 定長文字檔</h1>
-          <p>先設定轉換規則，再選擇來源檔案。所有處理都在此瀏覽器完成。</p>
+          <p>設定規則後，選擇來源檔案。檔案不會上傳。</p>
         </div>
         <div class="header-badges">
           <button
@@ -40,80 +47,44 @@
             type="button"
             role="switch"
             aria-checked="false"
-            aria-label="深色模式 系統"
+            aria-label="深色模式（系統）"
           >
             <span>深色模式</span>
             <span class="theme-toggle-mode">系統</span>
             <span class="theme-toggle-track" aria-hidden="true"></span>
           </button>
-          <div id="offline-status" class="offline-status" role="status" aria-atomic="true">正在準備離線使用…</div>
         </div>
       </header>
 
       <noscript>
         <div class="noscript-warning" role="alert" aria-labelledby="noscript-heading">
-          <strong id="noscript-heading">JavaScript 已停用，轉換功能無法使用</strong>
-          <p>這個工具需要 JavaScript 才能在瀏覽器內讀取、驗證與轉換檔案。請啟用 JavaScript，然後重新整理頁面；檔案仍不會上傳。</p>
+          <strong id="noscript-heading">需要 JavaScript</strong>
+          <p>請啟用 JavaScript 後重新整理。檔案不會上傳。</p>
         </div>
       </noscript>
 
-      <div id="app-loading" class="app-loading" role="status" aria-live="polite" aria-atomic="true">
-        <span class="busy-spinner" aria-hidden="true"></span>
-        <span class="app-loading__text">正在啟用轉換功能…</span>
-      </div>
-
-      <main id="app-content" aria-label="CSV 與 Excel 轉換流程" inert>
-        <nav class="workflow-nav" aria-label="轉換步驟">
-          <ol>
-            <li><a href="#profile-step" aria-label="步驟 0：設定檔"><span aria-hidden="true">0</span>設定檔</a></li>
-            <li><a href="#columns-step" aria-label="步驟 1：欄位設定"><span aria-hidden="true">1</span>欄位</a></li>
-            <li><a href="#global-step" aria-label="步驟 2：全域設定"><span aria-hidden="true">2</span>全域</a></li>
-            <li><a href="#source-step" aria-label="步驟 3：選擇來源檔案"><span aria-hidden="true">3</span>選檔</a></li>
-            <li><a href="#results-step" aria-label="步驟 4：驗證、預覽與下載"><span aria-hidden="true">4</span>結果</a></li>
-          </ol>
-        </nav>
-
+      <main id="app-content" aria-label="CSV 與 Excel 轉換流程">
         <section id="profile-step" class="panel" aria-labelledby="profile-heading">
           <div class="step-heading">
             <span aria-hidden="true">0</span>
             <div>
               <h2 id="profile-heading">設定檔</h2>
-              <p class="help-text">
-                <span class="help-line">設定會自動儲存在這個瀏覽器，也可上傳或下載設定檔，或載入預設設定。</span>
-                <span class="help-line">套用設定後，已選的來源檔案會自動重新驗證；設定檔不包含來源資料。</span>
-              </p>
+              <p class="help-text">設定會自動儲存，也可上傳或下載設定檔。</p>
             </div>
           </div>
 
           <div class="profile-actions">
-            <div class="action-explainer compact-card">
-              <button id="load-settings-button" class="secondary-button" type="button" aria-describedby="settings-upload-help">上傳設定檔</button>
-              <input
-                id="settings-file"
-                class="visually-hidden"
-                type="file"
-                accept=".json,application/json"
-                aria-label="選擇 JSON 設定檔"
-                aria-describedby="settings-upload-help"
-                tabindex="-1"
-              />
-              <span id="settings-upload-help">選擇本機 JSON 設定檔，檢查後套用；不會傳送到網路。</span>
-            </div>
-            <div class="action-explainer compact-card">
-              <button id="save-settings-button" class="secondary-button" type="button" aria-describedby="save-settings-help">下載設定檔</button>
-              <span id="save-settings-help">將目前的欄位與全域設定下載為 JSON 備份。</span>
-            </div>
-            <div class="action-explainer compact-card">
-              <button id="load-default-button" class="secondary-button" type="button" aria-describedby="settings-default-help">載入預設設定</button>
-              <span id="settings-default-help">套用內建的 15 欄預設設定。</span>
-            </div>
+            <button id="load-settings-button" class="secondary-button" type="button">上傳設定檔</button>
+            <input id="settings-file" type="file" accept=".json,application/json" hidden />
+            <button id="save-settings-button" class="secondary-button" type="button">下載設定檔</button>
+            <button id="load-default-button" class="secondary-button" type="button">使用預設設定</button>
           </div>
 
-          <div id="settings-status" class="profile-status" role="status" aria-live="polite" aria-atomic="true">
+          <div id="settings-status" class="profile-status">
             <span class="status-dot" aria-hidden="true"></span>
             <div class="profile-status-copy">
-              <strong id="settings-status-title">目前設定：內建預設設定</strong>
-              <span id="settings-status-detail">15 欄；修改後會自動儲存。</span>
+              <strong id="settings-status-title">預設設定</strong>
+              <span id="settings-status-detail">已儲存</span>
             </div>
             <button id="revert-valid-settings-button" class="secondary-button profile-status-action" type="button" hidden>
               復原上次有效設定
@@ -127,18 +98,18 @@
               <span aria-hidden="true">1</span>
               <div>
                 <h2 id="columns-heading">欄位設定</h2>
-                <p class="help-text">設定每個欄位的空值處理方式與 Big5 輸出寬度。</p>
+                <p class="help-text">設定必填、空值預設與 Big5 欄寬。</p>
               </div>
             </div>
-            <div class="schema-summary" aria-label="目前欄位格式摘要">
+            <div class="schema-summary">
               <span><strong id="field-count-summary">15</strong> 欄</span>
               <span><strong id="record-width-summary">208</strong> 位元組／筆</span>
             </div>
           </div>
-          <div class="option-guide" aria-label="欄位選項說明">
-            <div id="required-help" class="compact-card"><strong>不可空白</strong><span>來源值必須含有非空白字元，且不能使用空值預設。</span></div>
-            <div id="default-help" class="compact-card"><strong>空值預設</strong><span>來源儲存格完全沒有內容時才代入；空格不算空值。</span></div>
-            <div id="width-help" class="compact-card"><strong>欄寬</strong><span>以 Big5 位元組計算；內容過長會報錯，不會截斷。</span></div>
+          <div class="option-guide">
+            <div id="required-help" class="compact-card"><strong>不可空白</strong><span>空值會報錯；此欄不能設定空值預設。</span></div>
+            <div id="default-help" class="compact-card"><strong>空值預設</strong><span>來源值經空白處理後為空時套用。</span></div>
+            <div id="width-help" class="compact-card"><strong>欄寬</strong><span>以 Big5 位元組計；超出時報錯。</span></div>
           </div>
           <div class="table-scroll" tabindex="0" aria-label="欄位設定表格，可左右捲動">
             <table>
@@ -152,7 +123,113 @@
                   <th scope="col">累計寬度</th>
                 </tr>
               </thead>
-              <tbody id="column-settings-body"></tbody>
+              <tbody id="column-settings-body">
+                <tr>
+                  <th scope="row">欄位1</th>
+                  <td class="center-cell"><input id="required-0" class="required-input" type="checkbox" aria-label="欄位1不可空白" aria-describedby="required-help" /></td>
+                  <td><input id="default-0" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位1空值預設" aria-describedby="default-help" /></td>
+                  <td><input id="width-0" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="1" aria-label="欄位1欄寬" aria-describedby="width-help" /></td>
+                  <td class="number-cell cumulative-width">1</td>
+                </tr>
+                <tr>
+                  <th scope="row">欄位2</th>
+                  <td class="center-cell"><input id="required-1" class="required-input" type="checkbox" aria-label="欄位2不可空白" aria-describedby="required-help" /></td>
+                  <td><input id="default-1" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位2空值預設" aria-describedby="default-help" /></td>
+                  <td><input id="width-1" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="2" aria-label="欄位2欄寬" aria-describedby="width-help" /></td>
+                  <td class="number-cell cumulative-width">3</td>
+                </tr>
+                <tr>
+                  <th scope="row">欄位3</th>
+                  <td class="center-cell"><input id="required-2" class="required-input" type="checkbox" aria-label="欄位3不可空白" aria-describedby="required-help" /></td>
+                  <td><input id="default-2" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位3空值預設" aria-describedby="default-help" /></td>
+                  <td><input id="width-2" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="1" aria-label="欄位3欄寬" aria-describedby="width-help" /></td>
+                  <td class="number-cell cumulative-width">4</td>
+                </tr>
+                <tr>
+                  <th scope="row">欄位4</th>
+                  <td class="center-cell"><input id="required-3" class="required-input" type="checkbox" aria-label="欄位4不可空白" aria-describedby="required-help" /></td>
+                  <td><input id="default-3" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位4空值預設" aria-describedby="default-help" /></td>
+                  <td><input id="width-3" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="10" aria-label="欄位4欄寬" aria-describedby="width-help" /></td>
+                  <td class="number-cell cumulative-width">14</td>
+                </tr>
+                <tr>
+                  <th scope="row">欄位5</th>
+                  <td class="center-cell"><input id="required-4" class="required-input" type="checkbox" aria-label="欄位5不可空白" aria-describedby="required-help" /></td>
+                  <td><input id="default-4" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位5空值預設" aria-describedby="default-help" /></td>
+                  <td><input id="width-4" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="10" aria-label="欄位5欄寬" aria-describedby="width-help" /></td>
+                  <td class="number-cell cumulative-width">24</td>
+                </tr>
+                <tr>
+                  <th scope="row">欄位6</th>
+                  <td class="center-cell"><input id="required-5" class="required-input" type="checkbox" aria-label="欄位6不可空白" aria-describedby="required-help" /></td>
+                  <td><input id="default-5" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位6空值預設" aria-describedby="default-help" /></td>
+                  <td><input id="width-5" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="8" aria-label="欄位6欄寬" aria-describedby="width-help" /></td>
+                  <td class="number-cell cumulative-width">32</td>
+                </tr>
+                <tr>
+                  <th scope="row">欄位7</th>
+                  <td class="center-cell"><input id="required-6" class="required-input" type="checkbox" aria-label="欄位7不可空白" aria-describedby="required-help" /></td>
+                  <td><input id="default-6" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位7空值預設" aria-describedby="default-help" /></td>
+                  <td><input id="width-6" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="12" aria-label="欄位7欄寬" aria-describedby="width-help" /></td>
+                  <td class="number-cell cumulative-width">44</td>
+                </tr>
+                <tr>
+                  <th scope="row">欄位8</th>
+                  <td class="center-cell"><input id="required-7" class="required-input" type="checkbox" aria-label="欄位8不可空白" aria-describedby="required-help" /></td>
+                  <td><input id="default-7" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位8空值預設" aria-describedby="default-help" /></td>
+                  <td><input id="width-7" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="1" aria-label="欄位8欄寬" aria-describedby="width-help" /></td>
+                  <td class="number-cell cumulative-width">45</td>
+                </tr>
+                <tr>
+                  <th scope="row">欄位9</th>
+                  <td class="center-cell"><input id="required-8" class="required-input" type="checkbox" aria-label="欄位9不可空白" aria-describedby="required-help" /></td>
+                  <td><input id="default-8" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位9空值預設" aria-describedby="default-help" /></td>
+                  <td><input id="width-8" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="120" aria-label="欄位9欄寬" aria-describedby="width-help" /></td>
+                  <td class="number-cell cumulative-width">165</td>
+                </tr>
+                <tr>
+                  <th scope="row">欄位10</th>
+                  <td class="center-cell"><input id="required-9" class="required-input" type="checkbox" aria-label="欄位10不可空白" aria-describedby="required-help" /></td>
+                  <td><input id="default-9" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位10空值預設" aria-describedby="default-help" /></td>
+                  <td><input id="width-9" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="15" aria-label="欄位10欄寬" aria-describedby="width-help" /></td>
+                  <td class="number-cell cumulative-width">180</td>
+                </tr>
+                <tr>
+                  <th scope="row">欄位11</th>
+                  <td class="center-cell"><input id="required-10" class="required-input" type="checkbox" aria-label="欄位11不可空白" aria-describedby="required-help" /></td>
+                  <td><input id="default-10" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位11空值預設" aria-describedby="default-help" /></td>
+                  <td><input id="width-10" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="10" aria-label="欄位11欄寬" aria-describedby="width-help" /></td>
+                  <td class="number-cell cumulative-width">190</td>
+                </tr>
+                <tr>
+                  <th scope="row">欄位12</th>
+                  <td class="center-cell"><input id="required-11" class="required-input" type="checkbox" aria-label="欄位12不可空白" aria-describedby="required-help" /></td>
+                  <td><input id="default-11" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位12空值預設" aria-describedby="default-help" /></td>
+                  <td><input id="width-11" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="1" aria-label="欄位12欄寬" aria-describedby="width-help" /></td>
+                  <td class="number-cell cumulative-width">191</td>
+                </tr>
+                <tr>
+                  <th scope="row">欄位13</th>
+                  <td class="center-cell"><input id="required-12" class="required-input" type="checkbox" aria-label="欄位13不可空白" aria-describedby="required-help" /></td>
+                  <td><input id="default-12" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位13空值預設" aria-describedby="default-help" /></td>
+                  <td><input id="width-12" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="8" aria-label="欄位13欄寬" aria-describedby="width-help" /></td>
+                  <td class="number-cell cumulative-width">199</td>
+                </tr>
+                <tr>
+                  <th scope="row">欄位14</th>
+                  <td class="center-cell"><input id="required-13" class="required-input" type="checkbox" aria-label="欄位14不可空白" aria-describedby="required-help" /></td>
+                  <td><input id="default-13" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位14空值預設" aria-describedby="default-help" /></td>
+                  <td><input id="width-13" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="8" aria-label="欄位14欄寬" aria-describedby="width-help" /></td>
+                  <td class="number-cell cumulative-width">207</td>
+                </tr>
+                <tr>
+                  <th scope="row">欄位15</th>
+                  <td class="center-cell"><input id="required-14" class="required-input" type="checkbox" aria-label="欄位15不可空白" aria-describedby="required-help" /></td>
+                  <td><input id="default-14" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位15空值預設" aria-describedby="default-help" /></td>
+                  <td><input id="width-14" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="1" aria-label="欄位15欄寬" aria-describedby="width-help" /></td>
+                  <td class="number-cell cumulative-width">208</td>
+                </tr>
+              </tbody>
               <tfoot>
                 <tr>
                   <th colspan="4" scope="row">每筆總寬度</th>
@@ -168,35 +245,32 @@
             <span aria-hidden="true">2</span>
             <div>
               <h2 id="global-heading">全域設定</h2>
-              <p class="help-text">這些選項套用到整份來源檔案及所有輸出欄位。</p>
             </div>
           </div>
           <div class="global-options">
-            <label class="control-group" for="source-encoding">
-              <span>來源編碼</span>
-              <select id="source-encoding" aria-describedby="source-encoding-help">
-                <option value="auto">自動判斷（預設）</option>
-                <option value="utf-8">UTF-8</option>
-                <option value="utf-16">UTF-16</option>
-                <option value="big5">Big5</option>
-              </select>
-              <small id="source-encoding-help">僅用於 CSV。Excel 會直接讀取工作表內容；不確定時請保留自動判斷。</small>
-            </label>
-            <label class="control-group" for="expected-rows">
-              <span>預期資料筆數</span>
-              <input id="expected-rows" class="expected-rows-input" type="number"
+            <div class="control-group">
+              <label for="expected-rows">預期資料筆數</label>
+              <input id="expected-rows" type="number"
                 min="1" step="1" inputmode="numeric" value="200"
                 aria-describedby="expected-rows-help" />
-              <small id="expected-rows-help">實際資料筆數必須完全相同；第一列也算一筆資料，不視為標題。</small>
-            </label>
-            <label class="control-group" for="alignment">
-              <span>輸出對齊方式</span>
+              <small id="expected-rows-help">筆數須完全相同；第一列也算資料。</small>
+            </div>
+            <div class="control-group">
+              <label for="alignment">輸出對齊方式</label>
               <select id="alignment" aria-describedby="alignment-help">
-                <option value="left">全部靠左（預設）</option>
-                <option value="right">全部靠右</option>
+                <option value="left">靠左</option>
+                <option value="right">靠右</option>
               </select>
-              <small id="alignment-help">內容不足欄寬時，以半形空格補在右側或左側。</small>
-            </label>
+              <small id="alignment-help">不足欄寬時，以半形空格補齊。</small>
+            </div>
+            <div class="control-group">
+              <label for="remove-whitespace">來源空白字元處理</label>
+              <select id="remove-whitespace" aria-describedby="remove-whitespace-help">
+                <option value="remove" selected>移除</option>
+                <option value="preserve">保留</option>
+              </select>
+              <small id="remove-whitespace-help">套用空值預設與驗證前處理；保留時會在預覽標示。</small>
+            </div>
           </div>
         </section>
 
@@ -205,32 +279,38 @@
             <span aria-hidden="true">3</span>
             <div>
               <h2 id="file-heading">選擇來源檔案</h2>
-              <p class="help-text">選擇後會立即驗證；每筆來源資料必須正好有 <strong id="source-contract-count">15</strong> 欄。</p>
+              <p class="help-text">選擇後立即驗證；每筆須有 <strong id="source-contract-count">15</strong> 欄。</p>
             </div>
           </div>
-          <div id="source-file-picker" class="file-picker source-file-picker" aria-describedby="source-file-help">
-            <div class="file-picker-actions">
-              <button id="select-source-button" class="primary-button" type="button" aria-describedby="source-file-help">選擇來源檔案</button>
-              <input
-                id="source-file"
-                class="visually-hidden"
-                type="file"
-                accept=".csv,.xls,.xlsx"
-                aria-label="選擇 CSV、XLS 或 XLSX 來源檔案"
-                aria-describedby="source-file-help"
-                tabindex="-1"
-              />
-              <button id="start-over-button" class="secondary-button" type="button" disabled>清除檔案</button>
+          <div class="source-options">
+            <div id="source-file-picker" class="file-picker source-file-picker">
+              <div class="file-picker-actions">
+                <button id="select-source-button" class="primary-button" type="button" aria-describedby="source-file-help">選擇來源檔案</button>
+                <input id="source-file" type="file" accept=".csv,.xls,.xlsx" hidden />
+                <button id="start-over-button" class="secondary-button" type="button" disabled>清除檔案</button>
+              </div>
+              <div>
+                <p class="file-status-line">
+                  <span id="file-processing-indicator" class="busy-spinner" hidden aria-hidden="true"></span>
+                  <span id="file-status" class="file-status">尚未選擇檔案</span>
+                </p>
+                <p id="source-file-help" class="help-text">支援 CSV、XLS 與 XLSX；檔案上限 25 MiB。</p>
+                <p id="encoding-status" class="help-text status-line">尚未判斷</p>
+              </div>
             </div>
-            <div>
-              <p class="file-status-line">
-                <span id="file-processing-indicator" class="busy-spinner" hidden aria-hidden="true"></span>
-                <span id="file-status" class="file-status">尚未選擇檔案</span>
-              </p>
-              <p id="source-file-help" class="help-text">支援 CSV、XLS 與 XLSX；檔案上限 25 MiB。</p>
-              <p id="encoding-status" class="help-text">尚未判斷來源格式。</p>
+            <div class="source-encoding control-group">
+              <label for="source-encoding">CSV 來源編碼</label>
+              <select id="source-encoding" aria-describedby="source-encoding-help" disabled>
+                <option value="auto">自動判斷（預設）</option>
+                <option value="utf-8">UTF-8</option>
+                <option value="utf-16">UTF-16</option>
+                <option value="big5">Big5</option>
+              </select>
+              <small id="source-encoding-help">只供目前的 CSV 使用，不存入設定檔；Excel 不使用。</small>
             </div>
           </div>
+          <div id="source-file-error" class="notice error-notice source-file-error"
+            role="alert" hidden></div>
         </section>
 
         <section id="results-step" class="panel" aria-labelledby="preview-heading">
@@ -239,7 +319,7 @@
               <span aria-hidden="true">4</span>
               <div>
                 <h2 id="preview-heading">驗證、預覽與下載</h2>
-                <p class="help-text">選檔或修改設定後會自動重新驗證；只有全部通過時才能下載 Big5 TXT。</p>
+                <p class="help-text">設定變更後會重新驗證；通過後即可下載。</p>
               </div>
             </div>
           </div>
@@ -253,7 +333,7 @@
           </dl>
 
           <div class="subsection-heading">
-            <div><h3 id="issues-heading">問題清單</h3><p>錯誤會阻止下載；提醒只協助檢查可疑空白，不會修改原始內容。</p></div>
+            <div><h3 id="issues-heading">問題清單</h3><p>錯誤會阻止下載；提醒不會修改內容。</p></div>
           </div>
           <div id="issue-results" class="table-scroll issue-scroll" tabindex="0" aria-labelledby="issues-heading">
             <table class="error-table">
@@ -262,13 +342,13 @@
                 <tr><th scope="col">資料列</th><th scope="col">欄位</th><th scope="col">類型</th><th scope="col">問題</th></tr>
               </thead>
               <tbody id="issue-table-body">
-                <tr><td colspan="4" class="empty-table-message">選擇檔案後顯示驗證結果</td></tr>
+                <tr><td colspan="4" class="empty-table-message">尚未驗證</td></tr>
               </tbody>
             </table>
           </div>
 
           <div class="subsection-heading preview-subsection-heading">
-            <div><h3 id="preview-output-heading">輸出預覽</h3><p>預覽會標示來源內容與補齊空格；實際欄寬仍以 Big5 位元組為準。</p></div>
+            <div><h3 id="preview-output-heading">輸出預覽</h3><p>欄寬以 Big5 位元組計。</p></div>
             <div class="preview-options">
               <label class="preview-row-count" for="preview-row-limit">
                 <span>預覽筆數</span>
@@ -280,29 +360,25 @@
                   <option value="200">200 筆</option>
                 </select>
               </label>
-              <label class="preview-option">
-                <input id="show-whitespace" type="checkbox" checked />
-                顯示來源空白標記
-              </label>
             </div>
           </div>
           <p class="whitespace-legend">
-            <span class="legend-line">橘底為來源空白：半形 <code>·</code>、全形 <code>□</code>、定位字元 <code>→</code>、換行 <code>↵</code>、不換行空格 <code>⍽</code>。</span>
+            <span class="legend-line">橘底標示內容中的空白：半形 <code>·</code>、全形 <code>□</code>、定位字元 <code>→</code>、換行 <code>↵</code>、不換行空格 <code>⍽</code>。</span>
             <span class="legend-line"><span class="padding-key">藍底圓點 <span aria-hidden="true">·</span></span>為輸出補齊空格。</span>
           </p>
           <div id="preview-results" class="preview-results" role="region" aria-labelledby="preview-output-heading">
-            <div class="notice neutral-notice">
+            <div class="notice">
               <strong>尚未驗證</strong>
-              <span>選擇 CSV 或 Excel 檔案後，這裡會顯示可輸出的資料列。</span>
+              <span>選擇來源檔案。</span>
             </div>
           </div>
           <div class="download-bar">
-            <div><strong>輸出檔案</strong><span id="download-help">驗證通過後，可下載與來源檔同名、採 Big5 編碼的 .txt 檔案。</span></div>
+            <div><strong>輸出檔案</strong><span id="download-help">下載與來源檔同名的 Big5 .txt。</span></div>
             <button id="convert-button" class="primary-button" type="button" aria-describedby="download-help" disabled>下載 Big5 TXT</button>
           </div>
         </section>
 
-        <p id="app-status" class="app-status" role="status" aria-live="polite" aria-atomic="true">尚未選擇來源檔案。</p>
+        <p id="app-status" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></p>
       </main>
     </div>
     <script type="module" src="/src/bootstrap.ts"></script>
