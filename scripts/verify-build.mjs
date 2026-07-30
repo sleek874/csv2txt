@@ -7,6 +7,22 @@ const distUrl = new URL("../dist/", import.meta.url);
 const serviceWorker = readFileSync(new URL("sw.js", distUrl), "utf8");
 const indexHtml = readFileSync(new URL("index.html", distUrl), "utf8");
 const bootSource = readFileSync(new URL("boot.js", distUrl), "utf8");
+const componentStyles = readFileSync(
+  new URL("../src/styles.css", import.meta.url),
+  "utf8",
+);
+const foundationStyles = readFileSync(
+  new URL("../src/styles/foundation.css", import.meta.url),
+  "utf8",
+);
+const bootstrapStyles = readFileSync(
+  new URL("../src/styles/bootstrap.css", import.meta.url),
+  "utf8",
+);
+const resultStyles = readFileSync(
+  new URL("../src/styles/results.css", import.meta.url),
+  "utf8",
+);
 const manifestSource = readFileSync(new URL(".vite/manifest.json", distUrl), "utf8");
 const manifest = JSON.parse(manifestSource);
 
@@ -254,6 +270,41 @@ assert.match(
 assert.match(indexHtml, /id="file-processing-indicator"[\s\S]*?\shidden/u);
 assert.match(
   indexHtml,
+  /class="file-processing-slot"[\s\S]*?id="file-processing-indicator"/u,
+  "The file processing indicator must keep a stable layout slot.",
+);
+assert.match(
+  indexHtml,
+  /id="file-status"[\s\S]*?class="file-processing-slot"/u,
+  "The file name must stay left-aligned while the stable spinner slot remains trailing.",
+);
+assert.match(
+  indexHtml,
+  /id="file-status"[\s\S]*?id="file-status-name"[\s\S]*?id="file-status-meta"/u,
+  "Filename and file-size metadata must remain independently responsive.",
+);
+assert.match(
+  indexHtml,
+  /id="deselect-source-button"[^>]*>取消選擇<\/button>/u,
+  "Deselecting a source must not imply deleting the user's file.",
+);
+assert.doesNotMatch(
+  indexHtml,
+  /start-over-button|清除檔案/u,
+  "Legacy destructive-sounding source actions must not return.",
+);
+assert.match(
+  indexHtml,
+  /class="profile-actions responsive-grid"/u,
+  "Repeated action groups must consume the shared responsive-grid primitive.",
+);
+assert.match(
+  indexHtml,
+  /class="validation-summary responsive-grid"/u,
+  "Validation summaries must consume the shared responsive-grid primitive.",
+);
+assert.match(
+  indexHtml,
   /id="source-file-error"[^>]*role="alert"[^>]*hidden/u,
 );
 assert.doesNotMatch(indexHtml, /id="source-file-error"[^>]*tabindex=/u);
@@ -269,14 +320,69 @@ assert.doesNotMatch(
   /!important/u,
   "Application styles must not rely on important overrides.",
 );
+assert.doesNotMatch(
+  `${componentStyles}\n${bootstrapStyles}\n${resultStyles}`,
+  /#[\da-f]{3,8}\b|rgba?\(/iu,
+  "Component styles must consume shared palette tokens instead of color literals.",
+);
+assert.doesNotMatch(
+  `${componentStyles}\n${bootstrapStyles}\n${resultStyles}`,
+  /border(?:-(?:top|right|bottom|left))?:\s*1px\s+solid/u,
+  "Component styles must consume shared border primitives.",
+);
+assert.doesNotMatch(
+  `${componentStyles}\n${bootstrapStyles}\n${resultStyles}`,
+  /border-radius:\s*(?:0?\.\d+rem|999px)/u,
+  "Component styles must consume shared radius primitives.",
+);
 assert.match(
-  baseCss,
-  /\.header-badges\{[^}]*width:9\.5rem/u,
-  "The theme control must keep its reserved width.",
+  foundationStyles,
+  /--radius-ui:\s*0\.625rem/u,
+  "Common UI containers must share one radius.",
+);
+assert.match(
+  foundationStyles,
+  /--border-ui:\s*var\(--border-width-ui\)\s+solid\s+var\(--color-border\)/u,
+  "Common UI containers must share one border primitive.",
+);
+assert.match(
+  foundationStyles,
+  /\.responsive-grid\s*\{[\s\S]*?auto-fit[\s\S]*?--responsive-column-min/u,
+  "Reusable grids must adapt from their available width.",
+);
+assert.match(
+  foundationStyles,
+  /:where\([\s\S]*?dialog,[\s\S]*?\.panel,[\s\S]*?\.notice,[\s\S]*?\)\s*\{[\s\S]*?border:\s*var\(--border-ui\);[\s\S]*?border-radius:\s*var\(--radius-ui\);/u,
+  "Dialogs, panels, notices, and related surfaces must share geometry.",
 );
 assert.match(
   baseCss,
-  /\.theme-toggle\{[^}]*width:100%[^}]*height:2\.25rem/u,
+  /--color-success-bg:/u,
+  "The shared palette must provide a success surface.",
+);
+assert.match(
+  baseCss,
+  /--color-warning-border:/u,
+  "The shared palette must provide a warning border.",
+);
+assert.match(
+  baseCss,
+  /--color-error-bg:/u,
+  "The shared palette must provide an error surface.",
+);
+assert.match(
+  baseCss,
+  /--color-info-text:/u,
+  "The shared palette must provide an informational foreground.",
+);
+assert.match(
+  baseCss,
+  /\.header-badges\{[^}]*width:min\(100%,9\.5rem\)/u,
+  "The theme control must keep its reserved width without overflowing.",
+);
+assert.match(
+  baseCss,
+  /\.theme-toggle\{[^}]*width:100%[^}]*height:var\(--control-height-compact\)/u,
   "The theme capsule must fill the reserved header width.",
 );
 assert.match(
@@ -286,25 +392,67 @@ assert.match(
 );
 assert.match(
   baseCss,
-  /\.readiness-status\{[^}]*width:7\.75rem[^}]*height:1\.5rem[^}]*background:var\(--color-surface-soft\)/u,
-  "The readiness status must reserve a stable background capsule.",
+  /\.readiness-status\{[^}]*width:7\.75rem[^}]*height:1\.5rem[^}]*border:0/u,
+  "The readiness status must reserve a stable transparent text slot.",
 );
 const readinessStatusRule = baseCss.match(/\.readiness-status\{[^}]*\}/u)?.[0];
 assert.ok(readinessStatusRule, "The readiness status rule must exist.");
 assert.doesNotMatch(
   readinessStatusRule,
-  /animation:/u,
-  "The readiness status background must remain static.",
+  /(?:background|box-shadow|text-shadow|filter):/u,
+  "The readiness status container must not render a box or glow.",
 );
-const readinessGlow = baseCss.match(
-  /@keyframes readiness-loading-glow\{[\s\S]*?\}\}/u,
+const readinessShimmer = baseCss.match(
+  /@keyframes readiness-text-shimmer\{[\s\S]*?\}\}/u,
 )?.[0];
-assert.ok(readinessGlow, "Loading readiness states must use a text glow animation.");
-assert.match(readinessGlow, /text-shadow:/u);
+assert.ok(readinessShimmer, "Loading readiness states must use a text shimmer.");
+assert.match(readinessShimmer, /background-position:/u);
 assert.doesNotMatch(
-  readinessGlow,
-  /(?:background|box-shadow|filter|opacity):/u,
-  "The loading animation must affect only the text shadow.",
+  readinessShimmer,
+  /(?:box-shadow|text-shadow|filter|opacity|transform):/u,
+  "The loading shimmer must not animate glow, opacity, filters, or geometry.",
+);
+assert.match(
+  baseCss,
+  /prefers-reduced-motion:reduce[\s\S]*?background-image:none/u,
+  "Reduced-motion users must receive static readiness text.",
+);
+assert.match(
+  baseCss,
+  /forced-colors:active[\s\S]*?background-image:none/u,
+  "Forced-color users must receive static readiness text.",
+);
+assert.match(
+  baseCss,
+  /\.file-processing-slot\{[^}]*width:var\(--indicator-size\)[^}]*height:var\(--indicator-size\)/u,
+  "File processing must keep a stable indicator slot.",
+);
+assert.match(
+  componentStyles,
+  /\.panel\s*\{[^}]*container-name:\s*panel[^}]*container-type:\s*inline-size/u,
+  "Workflow panels must provide reusable inline-size containers.",
+);
+assert.match(
+  componentStyles,
+  /@container panel \(max-width:\s*54rem\)[\s\S]*?\.source-options\s*\{[\s\S]*?grid-template-columns:\s*1fr/u,
+  "Source controls must reflow from panel width before they overflow.",
+);
+assert.match(
+  componentStyles,
+  /@container panel \(max-width:\s*36rem\)[\s\S]*?\.file-status-line\s*\{[\s\S]*?height:\s*4\.5rem[\s\S]*?min-height:\s*4\.5rem/u,
+  "Narrow filename states must reserve stable multi-line space.",
+);
+const tableScrollRule = componentStyles.match(/\.table-scroll\s*\{[^}]*\}/u)?.[0];
+assert.ok(tableScrollRule, "Horizontal table scrolling must remain defined.");
+assert.doesNotMatch(
+  tableScrollRule,
+  /scrollbar-gutter:\s*stable/u,
+  "Horizontal-only tables must not reserve an unused vertical scrollbar gutter.",
+);
+assert.match(
+  resultStyles,
+  /\.preview-chunk\s*\{[^}]*scrollbar-gutter:\s*stable/u,
+  "Dynamic previews must retain their stable vertical scrollbar gutter.",
 );
 assert.doesNotMatch(
   baseCss,
@@ -320,6 +468,11 @@ assert.match(
   baseCss,
   /\.no-js \.readiness-status\{display:none/u,
   "The loading status must stay hidden when JavaScript is unavailable.",
+);
+assert.match(
+  bootSource,
+  /localStorage\.getItem\("csv2txt\.theme"\)/u,
+  "The early boot script must restore the saved theme before first paint.",
 );
 
 const baseJavaScript = precachePaths.filter((path) => path.endsWith(".js"));

@@ -22,8 +22,9 @@ export function installTheme(): void {
   function applyTheme(): void {
     const theme = resolvedTheme();
     document.documentElement.dataset.theme = theme;
+    const pageColor = getComputedStyle(document.documentElement).backgroundColor;
     document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
-      ?.setAttribute("content", theme === "dark" ? "#10171c" : "#f4f7f8");
+      ?.setAttribute("content", pageColor);
 
     const toggle = document.querySelector<HTMLButtonElement>("#theme-toggle");
     if (!toggle) {

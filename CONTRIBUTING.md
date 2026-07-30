@@ -8,28 +8,34 @@ Read the [design specification](docs/DESIGN.md). Changes to encoding, byte
 widths, defaults, required fields, privacy behavior, or output bytes must
 update the design and tests in the same pull request.
 
-The 15 preset widths and fixed labels are documented in `docs/DESIGN.md`. A
-sanitized legacy fixture is still required; do not invent production-derived
-test data.
+The 15 preset widths and fixed labels are documented in `docs/DESIGN.md`. Use
+only synthetic fixtures. An external-system compatibility fixture may be added
+only after the repository owner supplies and approves a sanitized source/output
+pair; never derive one from production data on your own.
 
 ## Local setup
 
 Requirements:
 
-- Node.js 22 or newer
-- npm 10 or newer
+- Node.js 24.18.0 (pinned in `.nvmrc`)
+- npm 11.16.x
 
 ```bash
-npm ci
+nvm use
+npm ci --ignore-scripts
 npm run dev
 ```
 
 Before opening a pull request:
 
 ```bash
-npm run check
-npm run build
+npm run verify
 ```
+
+`npm run verify` runs the Node test suite, TypeScript check, production build,
+and static build-contract verifier. Run `npm run generate:testdata` only when
+intentionally regenerating all six synthetic CSV/XLS/XLSX fixtures, then review
+the resulting fixture diff.
 
 Use `npm install` only when intentionally adding or updating dependencies, and
 commit the resulting `package-lock.json` change with `package.json`.

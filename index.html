@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <meta name="theme-color" content="#f4f7f8" />
+    <meta name="theme-color" content="#f8fafc" />
     <meta
       name="description"
       content="在瀏覽器中將 CSV、XLS、XLSX 轉換為 Big5 定長文字檔，資料不會上傳。"
@@ -73,7 +73,7 @@
             </div>
           </div>
 
-          <div class="profile-actions">
+          <div class="profile-actions responsive-grid">
             <button id="load-settings-button" class="secondary-button" type="button">上傳設定檔</button>
             <input id="settings-file" type="file" accept=".json,application/json" hidden />
             <button id="save-settings-button" class="secondary-button" type="button">下載設定檔</button>
@@ -106,7 +106,7 @@
               <span><strong id="record-width-summary">208</strong> 位元組／筆</span>
             </div>
           </div>
-          <div class="option-guide">
+          <div class="option-guide responsive-grid">
             <div id="required-help" class="compact-card"><strong>不可空白</strong><span>空值會報錯；此欄不能設定空值預設。</span></div>
             <div id="default-help" class="compact-card"><strong>空值預設</strong><span>來源值經空白處理後為空時套用。</span></div>
             <div id="width-help" class="compact-card"><strong>欄寬</strong><span>以 Big5 位元組計；超出時報錯。</span></div>
@@ -247,7 +247,7 @@
               <h2 id="global-heading">全域設定</h2>
             </div>
           </div>
-          <div class="global-options">
+          <div class="global-options responsive-grid">
             <div class="control-group">
               <label for="expected-rows">預期資料筆數</label>
               <input id="expected-rows" type="number"
@@ -287,12 +287,17 @@
               <div class="file-picker-actions">
                 <button id="select-source-button" class="primary-button" type="button" aria-describedby="source-file-help">選擇來源檔案</button>
                 <input id="source-file" type="file" accept=".csv,.xls,.xlsx" hidden />
-                <button id="start-over-button" class="secondary-button" type="button" disabled>清除檔案</button>
+                <button id="deselect-source-button" class="secondary-button" type="button" disabled>取消選擇</button>
               </div>
-              <div>
+              <div class="file-status-copy">
                 <p class="file-status-line">
-                  <span id="file-processing-indicator" class="busy-spinner" hidden aria-hidden="true"></span>
-                  <span id="file-status" class="file-status">尚未選擇檔案</span>
+                  <span id="file-status" class="file-status">
+                    <span id="file-status-name" class="file-status-name">尚未選擇檔案</span>
+                    <span id="file-status-meta" class="file-status-meta" hidden></span>
+                  </span>
+                  <span class="file-processing-slot" aria-hidden="true">
+                    <span id="file-processing-indicator" class="busy-spinner" hidden></span>
+                  </span>
                 </p>
                 <p id="source-file-help" class="help-text">支援 CSV、XLS 與 XLSX；檔案上限 25 MiB。</p>
                 <p id="encoding-status" class="help-text status-line">尚未判斷</p>
@@ -323,7 +328,7 @@
               </div>
             </div>
           </div>
-          <dl class="validation-summary" aria-label="驗證摘要">
+          <dl class="validation-summary responsive-grid" aria-label="驗證摘要">
             <div><dt>預期欄數</dt><dd id="expected-column-summary">15</dd></div>
             <div><dt>預期筆數</dt><dd id="expected-row-summary">200</dd></div>
             <div><dt>實際筆數</dt><dd id="actual-row-summary">—</dd></div>
@@ -367,7 +372,7 @@
             <span class="legend-line"><span class="padding-key">藍底圓點 <span aria-hidden="true">·</span></span>為輸出補齊空格。</span>
           </p>
           <div id="preview-results" class="preview-results" role="region" aria-labelledby="preview-output-heading">
-            <div class="notice">
+            <div class="notice info-notice">
               <strong>尚未驗證</strong>
               <span>選擇來源檔案。</span>
             </div>

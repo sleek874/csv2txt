@@ -52,6 +52,10 @@ is not uploaded to a server.
   header-delivered `frame-ancestors` policy.
 - Exposes semantic 0–4 workflow sections, concise live statuses, table
   captions, connected control help, and crawler/agent discovery metadata.
+- Uses a shared responsive visual system for light and dark themes. File,
+  settings, validation, and readiness states reserve stable layout space and
+  retain keyboard-accessible scrolling where fixed-width relationships cannot
+  be compressed safely.
 
 The complete requirements, architecture, conversion rules, test strategy, and
 acceptance criteria are maintained in the
@@ -74,7 +78,13 @@ npm run dev
 
 Vite normally serves the application at <http://localhost:5173>.
 
-Type-check and create a production build:
+Run the complete local verification:
+
+```bash
+npm run verify
+```
+
+Individual checks remain available when diagnosing a failure:
 
 ```bash
 npm run check
@@ -107,15 +117,17 @@ intentional invalid cases.
 
 ## Deployment
 
-Pushes to `main` trigger GitHub Actions to install dependencies, build the Vite
-application, upload `dist/`, and deploy it to GitHub Pages. The repository's
-Pages source must be set to **GitHub Actions** under **Settings → Pages**.
+Pushes to `main` trigger GitHub Actions to install dependencies, run the test
+suite and verified Vite build, upload `dist/`, and deploy it to GitHub Pages.
+The repository's Pages source must be set to **GitHub Actions** under
+**Settings → Pages**.
 
 The deployed site is available at <https://sleek874.github.io/csv2txt/>.
 
 ## Project documents
 
 - [Design specification](docs/DESIGN.md)
+- [Site-wide implementation review](docs/SITE_REVIEW.md)
 - [Contributing guide](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
 - [Agent-readable overview](public/llms.txt)

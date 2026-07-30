@@ -62,8 +62,13 @@ export function createSettingsController(options: SettingsControllerOptions) {
   let autoSaveTimer: number | null = null;
 
   function renderStatus(): void {
-    settingsStatus.classList.toggle("profile-status-custom", settingsKind === "custom");
-    settingsStatus.classList.toggle("profile-status-invalid", settingsKind === "invalid");
+    settingsStatus.dataset.tone = settingsKind === "invalid"
+      ? "error"
+      : persistenceState === "unavailable"
+        ? "warning"
+        : persistenceState === "pending"
+          ? "info"
+          : "success";
 
     const kindLabels: Record<SettingsKind, string> = {
       default: "預設設定",

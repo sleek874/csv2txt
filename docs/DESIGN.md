@@ -5,9 +5,10 @@ a 15-column, fixed-width Big5 text format. All file reading, validation,
 conversion, and download generation happen in the user's browser. No source
 data is uploaded to a server.
 
-> **Project status:** a minimum working browser flow, pure conversion core, and
-> explicit JSON settings load/save are implemented. Broader automated coverage
-> and the remaining release-hardening items are follow-up work.
+> **Project status:** the conversion core, browser workflow, recoverable version
+> 3 settings, offline preparation, and production build contracts are
+> implemented. External byte compatibility, browser-matrix evidence, and
+> performance measurements remain release-hardening work.
 
 ## Contents
 
@@ -23,12 +24,13 @@ data is uploaded to a server.
 - [Encoding detection](#encoding-detection)
 - [Validation and errors](#validation-and-errors)
 - [Settings persistence](#settings-persistence)
+- [Visual system](#visual-system)
 - [Architecture](#architecture)
 - [Privacy and security](#privacy-and-security)
 - [Browser and offline behavior](#browser-and-offline-behavior)
 - [Accessibility and compatibility](#accessibility-and-compatibility)
 - [Testing strategy](#testing-strategy)
-- [Delivery plan](#delivery-plan)
+- [Implementation status and next release plan](#implementation-status-and-next-release-plan)
 - [Acceptance criteria](#acceptance-criteria)
 - [Open decisions](#open-decisions)
 
@@ -235,7 +237,8 @@ default, and byte-width behavior immediately above the table.
   or output preview.
 - Announce each file-level error once through that source-area alert; do not
   repeat it through the application status region.
-- `清除檔案` clears only file-derived state and preserves current settings.
+- `取消選擇` discards only browser-held file-derived state and preserves current
+  settings. It never modifies or deletes the source file.
 
 ### 4. Validate, preview, and download
 
@@ -687,6 +690,57 @@ ignored or carried into a later download. The current fixed field editor also
 requires the loaded settings to match its visible field count; variable-length
 editing is a separate future change.
 
+## Visual system
+
+The interface uses one semantic palette from `styles/foundation.css`. Neutral
+slate surfaces establish hierarchy; sky blue is reserved for primary actions,
+focus, and informational progress. Green means success only. Warning amber and
+error red are shared by settings state, invalid controls, source-file feedback,
+validation summaries, issue rows, and preview notices. Preview field boundaries
+retain their separate cyan/orange data colors so semantic state and byte layout
+are not confused.
+
+Components consume `neutral`, `info`, `success`, `warning`, and `error` tokens
+for foregrounds, backgrounds, and borders. Component styles do not define color
+literals or use `!important`. Cascade layers preserve the order foundation,
+bootstrap, results, then workflow components without specificity escalation.
+The same light/dark token declaration uses the active `color-scheme`, and the
+early boot asset restores a saved manual theme before the stylesheet paints.
+
+Buttons, dialogs, panels, sections, cards, notices, form controls, table
+containers, and preview containers share one 10 px UI radius, one-pixel border
+primitives, control-height primitives, and reusable surface/dialog shadows.
+Only controls whose geometry carries meaning use a different shape: switch
+tracks are pills, while step badges, status dots, and spinners are circles.
+Preview field boundaries and notice accents use explicit shared emphasis-width
+tokens rather than component-local border measurements.
+
+Responsive behavior follows the same shared system. Repeating card and summary
+layouts use one auto-fitting grid primitive with a component-provided minimum
+column width. Workflow panels establish inline-size containers, so source-file
+controls, status actions, headings, notices, and download actions reflow from
+their available panel width rather than from viewport width alone. Flex and grid
+children share a zero minimum inline size so long translated labels, filenames,
+and validation messages shrink or wrap inside their own surface.
+
+Content with an intrinsic horizontal relationship is not compressed into an
+unreadable mobile layout. The column editor, issue table, and fixed-width output
+preview remain inside bounded, keyboard-focusable horizontal scrollers. The
+preview keeps its row labels sticky and reduces only the label gutter on narrow
+panels. Horizontal-only table scrollers do not reserve a vertical scrollbar
+gutter, so header and footer surfaces reach the container edge; the preview
+retains a stable gutter because its vertical scrollbar changes with row count.
+Dynamic filename metadata uses one-line truncation at comfortable widths and a
+reserved, two-line filename plus metadata slot on narrow panels; the trailing
+processing indicator always occupies a fixed slot, so loading does not change
+text alignment or panel height.
+
+The readiness message always occupies one fixed transparent text slot. Loading
+states use a slow, low-contrast shimmer clipped to the text; the container has
+no bounding box, background, shadow, or glow. Ready, limited, and error states
+are static semantic colors. Reduced-motion and forced-color users receive static
+informational text.
+
 ## Architecture
 
 ```mermaid
@@ -800,7 +854,9 @@ GitHub Pages is the primary runtime:
   JavaScript runs. The complete workflow and its 15 deterministic field rows
   remain visible at their final geometry while the main coordinator initializes.
   A persistent header indicator moves from loading core modules to optional
-  offline preparation without inserting or removing a loading panel.
+  offline preparation without inserting or removing a loading panel. Its fixed
+  text slot and the source-file spinner slot reserve their final geometry across
+  every loading state.
 - A production service worker precaches only the base application shell. Excel
   parsing and preview-font resources use separate generated resource groups.
   Vite's production manifest is the canonical graph for all three groups; the
@@ -877,7 +933,36 @@ Implementation order:
 
 All fixtures must be synthetic and contain no production data.
 
-### Unit tests
+### Current automated coverage
+
+- `tests/encoding.test.mjs` covers Unicode BOM handling, ASCII ambiguity,
+  explicit decoding, Big5 round trips, and lossy rejection.
+- `tests/csv.test.mjs` covers quoted commas, escaped quotes, embedded CRLF,
+  empty cells, terminal-line handling, and translated malformed-quote errors.
+- `tests/fixed-width.test.mjs` covers exact Big5 output, left/right padding,
+  final CRLF, default ordering, preserved-whitespace warnings, blocking errors,
+  and the 200-record/208-byte preset contract.
+- `tests/settings.test.mjs` covers settings-state classification, strict version
+  3 validation, and rejection of removed or unknown properties.
+- `tests/spreadsheet.test.mjs` covers source extension detection, XLS/XLSX
+  formatted values, blank cells, formula errors, and CSV fixture parity.
+- `tests/whitespace.test.mjs` covers removal and preservation policy primitives.
+- `tests/resources.test.mjs` covers CSV/Excel optional-resource ordering and
+  retry after transient spreadsheet import failure.
+- `tests/register-typescript.mjs` keeps the production extensionless import
+  convention while resolving those imports to TypeScript source during Node
+  tests.
+- `scripts/verify-build.mjs` covers the production CSP, service-worker manifest
+  groups, base JavaScript budget, semantic/ARIA references, responsive/style
+  invariants, discovery files, and removed legacy hooks.
+
+### Coverage requirements and backlog
+
+The following lists define the intended contract. Items already represented in
+the automated files above remain here because they are acceptance requirements;
+the unimplemented items form the browser/performance backlog.
+
+#### Unit and conversion coverage
 
 - UTF-8 BOM and strict UTF-8 validation
 - UTF-16LE/BE BOM and conservative BOM-less detection
@@ -899,7 +984,7 @@ All fixtures must be synthetic and contain no production data.
 - Settings validation and version rejection
 - CRLF ordering and mandatory final CRLF
 
-### CSV tests
+#### CSV coverage
 
 - First CSV row treated as data
 - Commas inside quotes
@@ -912,7 +997,7 @@ All fixtures must be synthetic and contain no production data.
 - Malformed quotations
 - File-level parse errors shown only beneath source selection
 
-### Spreadsheet tests
+#### Spreadsheet coverage
 
 - Case-insensitive CSV/XLS/XLSX extension detection and rejection of other types
 - XLS and XLSX formatted strings, dates, percentages, booleans, and Chinese text
@@ -920,7 +1005,7 @@ All fixtures must be synthetic and contain no production data.
 - Cached formula results and rejection of formulas without saved results
 - First worksheet selection and preservation of leading blank rows
 
-### Integration tests
+#### Integration and browser coverage
 
 - UTF-8 CSV to expected Big5 TXT bytes
 - UTF-16LE and UTF-16BE CSV to expected Big5 TXT bytes
@@ -939,15 +1024,17 @@ All fixtures must be synthetic and contain no production data.
 - Whitespace removal changes source values before default and width handling
 - Disabling removal preserves source whitespace and reports warnings
 
-### Legacy compatibility test
+### External compatibility gate
 
-Obtain one approved source CSV and its Access-generated TXT output, sanitize the
-values, and commit the sanitized pair as fixtures. The browser output must match
-the expected TXT byte-for-byte.
+Obtain one owner-approved source CSV and its Access-generated TXT output,
+sanitize the values, and commit the sanitized pair as fixtures. The browser
+output must match the expected TXT byte-for-byte. Until that evidence exists,
+the project must describe its output as the documented Big5/CRLF contract, not
+as proven legacy-system compatibility.
 
-## Delivery plan
+## Implementation status and next release plan
 
-### Milestone 0 — legacy compatibility contract
+### Milestone 0 — external compatibility contract (not complete)
 
 - Supply a sanitized source/output fixture pair.
 - Run the synthetic Office characterization fixture and document all observed
@@ -955,21 +1042,21 @@ the expected TXT byte-for-byte.
 - Confirm the external system accepts the documented CRLF and final-CRLF
   contract.
 
-### Milestone 1 — pure conversion core
+### Milestone 1 — pure conversion core (complete)
 
 - Implement settings validation.
 - Implement positional validation and default rules.
 - Implement Big5 safety checks and byte-width output.
 - Add unit and byte-for-byte fixture tests.
 
-### Milestone 2 — browser workflow
+### Milestone 2 — browser workflow (complete)
 
 - Implement file selection, detection, CSV parsing, preview, configuration, and
   validation UI.
 - Add accessible error handling and downloads.
 - Add browser settings autosave plus explicit JSON settings load/save.
 
-### Milestone 3 — release hardening
+### Milestone 3 — release hardening (in progress)
 
 - Cross-browser and accessibility verification.
 - File-size and responsiveness testing.

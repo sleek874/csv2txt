@@ -29,7 +29,7 @@ function renderNotice(
   detail: string,
 ): void {
   const notice = document.createElement("div");
-  notice.className = "notice";
+  notice.className = "notice info-notice";
   const strong = document.createElement("strong");
   strong.textContent = title;
   const description = document.createElement("span");
@@ -54,13 +54,16 @@ const sourceFilePicker = requireElement<HTMLElement>("#source-file-picker");
 const fileProcessingIndicator =
   requireElement<HTMLElement>("#file-processing-indicator");
 const fileStatus = requireElement<HTMLElement>("#file-status");
+const fileStatusName = requireElement<HTMLElement>("#file-status-name");
+const fileStatusMeta = requireElement<HTMLElement>("#file-status-meta");
 const sourceEncodingSelect = requireElement<HTMLSelectElement>("#source-encoding");
 const encodingStatus = requireElement<HTMLElement>("#encoding-status");
 const sourceFileError = requireElement<HTMLElement>("#source-file-error");
 const previewResults = requireElement<HTMLElement>("#preview-results");
 const issueTableBody = requireElement<HTMLTableSectionElement>("#issue-table-body");
 const convertButton = requireElement<HTMLButtonElement>("#convert-button");
-const startOverButton = requireElement<HTMLButtonElement>("#start-over-button");
+const deselectSourceButton =
+  requireElement<HTMLButtonElement>("#deselect-source-button");
 const previewRowLimitSelect = requireElement<HTMLSelectElement>("#preview-row-limit");
 const alignmentSelect = requireElement<HTMLSelectElement>("#alignment");
 const readinessStatus = requireElement<HTMLElement>("#readiness-status");
@@ -108,12 +111,28 @@ let fileReadSequence = 0;
 let parseSequence = 0;
 
 function setSourceProcessing(processing: boolean): void {
+  sourceFilePicker.dataset.processing = String(processing);
   if (processing) {
     sourceFilePicker.setAttribute("aria-busy", "true");
   } else {
     sourceFilePicker.removeAttribute("aria-busy");
   }
   fileProcessingIndicator.hidden = !processing;
+}
+
+function renderFileStatus(
+  name: string,
+  options: { meta?: string; title?: string } = {},
+): void {
+  const meta = options.meta ?? "";
+  fileStatusName.textContent = name;
+  fileStatusMeta.textContent = meta;
+  fileStatusMeta.hidden = meta.length === 0;
+  if (options.title) {
+    fileStatus.title = options.title;
+  } else {
+    fileStatus.removeAttribute("title");
+  }
 }
 
 function yieldToBrowser(): Promise<void> {
@@ -139,6 +158,7 @@ function clearSourceError(): void {
 }
 
 function renderSourceError(title: string, details: string | readonly string[]): void {
+  sourceFilePicker.dataset.tone = "error";
   const strong = document.createElement("strong");
   strong.textContent = title;
   const messages = typeof details === "string" ? [details] : details;
@@ -168,6 +188,9 @@ function resetValidationView(detail: string): void {
   validRowSummary.textContent = "—";
   invalidRowSummary.textContent = "—";
   warningSummary.textContent = "—";
+  validRowSummary.removeAttribute("data-tone");
+  invalidRowSummary.removeAttribute("data-tone");
+  warningSummary.removeAttribute("data-tone");
   renderNotice(previewResults, "尚未驗證", detail);
   const row = document.createElement("tr");
   const cell = document.createElement("td");
@@ -196,6 +219,7 @@ function validateAndRender(announce = true): void {
   if (!settings) {
     lastResult = null;
     convertButton.disabled = true;
+    sourceFilePicker.dataset.tone = "warning";
     if (announce) {
       appStatus.textContent = "請修正標示的預期筆數或欄寬。";
     }
@@ -208,6 +232,10 @@ function validateAndRender(announce = true): void {
   validRowSummary.textContent = String(result.validRows);
   invalidRowSummary.textContent = String(result.invalidRows);
   warningSummary.textContent = String(result.warningCount);
+  validRowSummary.dataset.tone = result.validRows > 0 ? "success" : "neutral";
+  invalidRowSummary.dataset.tone = result.invalidRows > 0 ? "error" : "success";
+  warningSummary.dataset.tone = result.warningCount > 0 ? "warning" : "success";
+  sourceFilePicker.dataset.tone = result.outputBytes ? "success" : "warning";
   convertButton.disabled = result.outputBytes === null;
   renderPreview(result);
   renderIssues(result.issues);
@@ -317,11 +345,11 @@ function clearFileState(): void {
   unloadGuard.setPendingFile(false);
   fileInput.value = "";
   sourceEncodingSelect.disabled = true;
-  fileStatus.textContent = "尚未選擇檔案";
-  fileStatus.removeAttribute("title");
+  renderFileStatus("尚未選擇檔案");
+  sourceFilePicker.dataset.tone = "neutral";
   encodingStatus.textContent = "尚未判斷";
   encodingStatus.removeAttribute("title");
-  startOverButton.disabled = true;
+  deselectSourceButton.disabled = true;
   clearSourceError();
   resetValidationView("選擇來源檔案。");
   appStatus.textContent = "";
@@ -359,10 +387,13 @@ async function handleSourceFileSelection(): Promise<void> {
   sourceFileType = fileType;
   unloadGuard.setPendingFile(true);
   sourceEncodingSelect.disabled = fileType !== "csv";
-  startOverButton.disabled = false;
+  deselectSourceButton.disabled = false;
   setSourceProcessing(true);
-  fileStatus.textContent = "正在讀取檔案…";
-  fileStatus.title = file.name;
+  sourceFilePicker.dataset.tone = "info";
+  renderFileStatus(file.name, {
+    meta: "正在讀取檔案…",
+    title: file.name,
+  });
   appStatus.textContent = "正在驗證檔案…";
 
   try {
@@ -371,9 +402,11 @@ async function handleSourceFileSelection(): Promise<void> {
       return;
     }
     sourceBytes = new Uint8Array(buffer);
-    fileStatus.textContent =
-      `${file.name} · ${file.size.toLocaleString("zh-Hant-TW")} 位元組`;
-    fileStatus.title = fileStatus.textContent;
+    const fileSize = `${file.size.toLocaleString("zh-Hant-TW")} 位元組`;
+    renderFileStatus(file.name, {
+      meta: fileSize,
+      title: `${file.name} · ${fileSize}`,
+    });
     await parseAndValidate();
   } catch {
     if (sequence === fileReadSequence) {
@@ -396,7 +429,7 @@ previewRowLimitSelect.addEventListener("change", () => {
     renderPreview(lastResult);
   }
 });
-startOverButton.addEventListener("click", clearFileState);
+deselectSourceButton.addEventListener("click", clearFileState);
 convertButton.addEventListener("click", () => {
   validateAndRender();
   if (!sourceFile || !lastResult?.outputBytes) {

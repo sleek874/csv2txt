@@ -1,5 +1,14 @@
 (() => {
   const root = document.documentElement;
+  try {
+    const storedTheme = localStorage.getItem("csv2txt.theme");
+    if (storedTheme === "light" || storedTheme === "dark") {
+      root.dataset.theme = storedTheme;
+    }
+  } catch {
+    // The system color scheme remains available when storage is unavailable.
+  }
+
   root.classList.remove("no-js");
   root.classList.add("js-booting");
 

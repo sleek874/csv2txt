@@ -19,11 +19,9 @@
   width: 7.75rem;
   height: 1.5rem;
   align-items: center;
-  padding: 0 0.45rem;
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
+  padding: 0 0.1rem;
+  border: 0;
   color: var(--color-text-muted);
-  background: var(--color-surface-soft);
   font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -42,8 +40,27 @@
   [data-state="components"],
   [data-state="offline"]
 ) .readiness-status__text {
-  color: var(--color-accent-text);
-  animation: readiness-loading-glow 1.4s ease-in-out infinite;
+  color: var(--color-info-text);
+}
+
+@supports ((background-clip: text) or (-webkit-background-clip: text)) {
+  .readiness-status:is(
+    [data-state="components"],
+    [data-state="offline"]
+  ) .readiness-status__text {
+    color: transparent;
+    background-image: linear-gradient(
+      100deg,
+      var(--color-text-muted) 18%,
+      var(--color-info-text) 48%,
+      var(--color-text-muted) 78%
+    );
+    background-position: 120% 0;
+    background-size: 240% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    animation: readiness-text-shimmer 2.4s linear infinite;
+  }
 }
 
 .readiness-status[data-state="ready"] {
@@ -58,24 +75,20 @@
   color: var(--color-error-text);
 }
 
-@keyframes readiness-loading-glow {
-  0%,
-  100% {
-    text-shadow: 0 0 0 transparent;
-  }
-
-  50% {
-    text-shadow: 0 0 0.55rem currentcolor;
+@keyframes readiness-text-shimmer {
+  to {
+    background-position: -120% 0;
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@media (prefers-reduced-motion: reduce), (forced-colors: active) {
   .readiness-status:is(
     [data-state="components"],
     [data-state="offline"]
   ) .readiness-status__text {
     animation: none;
-    text-shadow: none;
+    color: var(--color-info-text);
+    background-image: none;
   }
 }
 
@@ -83,12 +96,10 @@
   width: min(36rem, calc(100% - 2rem));
   margin: 10vh auto 2rem;
   padding: clamp(1.5rem, 5vw, 2.5rem);
-  border: 1px solid var(--color-border);
-  border-left: 5px solid var(--color-accent);
-  border-radius: 0.8rem;
+  border-left: var(--border-width-emphasis) solid var(--color-accent);
   color: var(--color-text);
   background: var(--color-surface);
-  box-shadow: 0 10px 30px var(--color-shadow);
+  box-shadow: var(--shadow-dialog);
 }
 
 .embed-blocked h1 {

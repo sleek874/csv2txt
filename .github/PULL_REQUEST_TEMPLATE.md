@@ -4,8 +4,7 @@ Describe the change and its user-visible effect.
 
 ## Verification
 
-- [ ] `npm run check` passes
-- [ ] `npm run build` passes
+- [ ] `npm run verify` passes
 - [ ] Tests were added or updated where behavior changed
 - [ ] No sensitive or production-derived fixture data is included
 - [ ] Big5 or fixed-width changes were verified at the byte level
