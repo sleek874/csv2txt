@@ -4,6 +4,7 @@ type SpreadsheetModule = typeof import("../core/spreadsheet");
 type SpreadsheetImporter = () => Promise<SpreadsheetModule>;
 
 export interface SpreadsheetParser {
+  create(rows: readonly (readonly string[])[]): Promise<Uint8Array>;
   parse(
     bytes: Uint8Array,
     minimumColumnCount: number,
@@ -25,6 +26,10 @@ export function createSpreadsheetParser(
   }
 
   return {
+    async create(rows) {
+      const spreadsheet = await load();
+      return spreadsheet.createSpreadsheet(rows);
+    },
     async prepare(): Promise<void> {
       await load();
     },

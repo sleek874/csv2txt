@@ -346,6 +346,16 @@ h3 {
   display: none;
 }
 
+.inverse-status,
+.inverse-caveat {
+  margin-top: 0.75rem;
+}
+
+.inverse-status ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
 .source-file-error ul {
   margin: 0;
   padding-left: 1.25rem;

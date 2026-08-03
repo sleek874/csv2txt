@@ -31,7 +31,7 @@ function strictUnicodeDecode(
   }
 }
 
-function strictBig5Decode(bytes: Uint8Array): string {
+export function decodeBig5(bytes: Uint8Array): string {
   const decoded = iconv.decode(bytes, "big5");
   const encoded = new Uint8Array(iconv.encode(decoded, "big5"));
 
@@ -79,7 +79,7 @@ function decodeDetected(bytes: Uint8Array, encoding: DetectedEncoding): string {
     case "utf-16be":
       return strictUnicodeDecode(startsWith(bytes, [0xfe, 0xff]) ? bytes.subarray(2) : bytes, "utf-16be");
     case "big5":
-      return strictBig5Decode(bytes);
+      return decodeBig5(bytes);
   }
 }
 

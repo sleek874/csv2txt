@@ -178,6 +178,7 @@ assert.match(indexHtml, /id="noscript-heading"/u);
 assert.match(indexHtml, /<script[^>]*src="\.\/boot\.js"[^>]*><\/script>/u);
 assert.match(indexHtml, /id="settings-file"[^>]*\shidden(?:\s|>)/u);
 assert.match(indexHtml, /id="source-file"[^>]*\shidden(?:\s|>)/u);
+assert.match(indexHtml, /id="inverse-file"[^>]*\shidden(?:\s|>)/u);
 assert.doesNotMatch(indexHtml, /id="app"[^>]*\shidden(?:\s|>)/u);
 assert.match(indexHtml, /<html[^>]*class="no-js"/u);
 assert.doesNotMatch(indexHtml, /noscript\.css/u);
@@ -193,6 +194,7 @@ for (const sectionId of [
   "global-step",
   "source-step",
   "results-step",
+  "inverse-step",
 ]) {
   assert.match(indexHtml, new RegExp(`<section id="${sectionId}"`, "u"));
 }

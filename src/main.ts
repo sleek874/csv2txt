@@ -12,6 +12,7 @@ import { createUnloadGuard } from "./browser/unload-guard";
 import { parseCsv } from "./core/csv";
 import { decodeSource } from "./core/encoding";
 import { convertRows } from "./core/fixed-width";
+import { parseFixedWidthBig5 } from "./core/fixed-width-inverse";
 import { detectSourceFileType, type SourceFileType } from "./core/source";
 import type {
   ConversionResult,
@@ -69,6 +70,17 @@ const alignmentSelect = requireElement<HTMLSelectElement>("#alignment");
 const readinessStatus = requireElement<HTMLElement>("#readiness-status");
 const readinessText =
   requireElement<HTMLElement>("#readiness-status .readiness-status__text");
+const inverseFileInput = requireElement<HTMLInputElement>("#inverse-file");
+const selectInverseButton =
+  requireElement<HTMLButtonElement>("#select-inverse-button");
+const deselectInverseButton =
+  requireElement<HTMLButtonElement>("#deselect-inverse-button");
+const inverseFilePicker = requireElement<HTMLElement>("#inverse-file-picker");
+const inverseFileName = requireElement<HTMLElement>("#inverse-file-name");
+const inverseFileMeta = requireElement<HTMLElement>("#inverse-file-meta");
+const inverseStatus = requireElement<HTMLElement>("#inverse-status");
+const inverseConvertButton =
+  requireElement<HTMLButtonElement>("#inverse-convert-button");
 
 const { renderIssues, renderPreview } = createResultsView({
   alignment: () => alignmentSelect.value === "right" ? "right" : "left",
@@ -109,6 +121,14 @@ let parseErrorMessages: string[] = [];
 let lastResult: ConversionResult | null = null;
 let fileReadSequence = 0;
 let parseSequence = 0;
+let inverseFile: File | null = null;
+let inverseBytes: Uint8Array | null = null;
+let inverseRows: string[][] | null = null;
+let inverseFileReadSequence = 0;
+
+function syncUnloadGuard(): void {
+  unloadGuard.setPendingFile(sourceFile !== null || inverseFile !== null);
+}
 
 function setSourceProcessing(processing: boolean): void {
   sourceFilePicker.dataset.processing = String(processing);
@@ -142,8 +162,15 @@ function yieldToBrowser(): Promise<void> {
 const settingsController = createSettingsController({
   appStatus,
   columnEditor,
-  hasSource: () => sourceBytes !== null,
-  onRevalidate: validateAndRender,
+  hasSource: () => sourceBytes !== null || inverseBytes !== null,
+  onRevalidate: (announce) => {
+    if (sourceBytes !== null) {
+      validateAndRender(announce);
+    }
+    if (inverseBytes !== null) {
+      validateInverse(announce && sourceBytes === null);
+    }
+  },
 });
 
 function sourceEncoding(): SourceEncodingPreference {
@@ -342,7 +369,7 @@ function clearFileState(): void {
   parsedRows = null;
   parseErrorMessages = [];
   setSourceProcessing(false);
-  unloadGuard.setPendingFile(false);
+  syncUnloadGuard();
   fileInput.value = "";
   sourceEncodingSelect.disabled = true;
   renderFileStatus("尚未選擇檔案");
@@ -385,7 +412,7 @@ async function handleSourceFileSelection(): Promise<void> {
   clearSourceError();
   sourceFile = file;
   sourceFileType = fileType;
-  unloadGuard.setPendingFile(true);
+  syncUnloadGuard();
   sourceEncodingSelect.disabled = fileType !== "csv";
   deselectSourceButton.disabled = false;
   setSourceProcessing(true);
@@ -440,6 +467,190 @@ convertButton.addEventListener("click", () => {
   const filename = sourceFile.name.replace(/\.(?:csv|xlsx?)$/iu, "") + ".txt";
   downloadBlob(new Blob([bytes.slice().buffer], { type: "text/plain" }), filename);
   appStatus.textContent = "已建立下載。";
+});
+
+function renderInverseStatus(
+  tone: "info" | "error",
+  title: string,
+  details: string | readonly string[],
+): void {
+  inverseStatus.className = `notice ${tone}-notice inverse-status`;
+  const strong = document.createElement("strong");
+  strong.textContent = title;
+  const messages = typeof details === "string" ? [details] : details;
+
+  if (messages.length === 1) {
+    const description = document.createElement("span");
+    description.textContent = messages[0] ?? "";
+    inverseStatus.replaceChildren(strong, description);
+  } else {
+    const list = document.createElement("ul");
+    messages.forEach((message) => {
+      const item = document.createElement("li");
+      item.textContent = message;
+      list.append(item);
+    });
+    inverseStatus.replaceChildren(strong, list);
+  }
+}
+
+function validateInverse(announce = true): void {
+  inverseRows = null;
+  inverseConvertButton.disabled = true;
+  if (!inverseBytes) {
+    return;
+  }
+
+  const snapshot = columnEditor.collect();
+  if (!snapshot.columns) {
+    inverseFilePicker.dataset.tone = "warning";
+    renderInverseStatus("error", "欄寬設定無效", "請修正標示的欄寬後再試。");
+    if (announce) {
+      appStatus.textContent = "請修正標示的欄寬。";
+    }
+    return;
+  }
+
+  const result = parseFixedWidthBig5(
+    inverseBytes,
+    snapshot.columns.map((column) => column.widthBytes),
+    alignmentSelect.value === "right" ? "right" : "left",
+  );
+  if (result.errors.length > 0) {
+    inverseFilePicker.dataset.tone = "error";
+    const visibleErrors = result.errors.slice(0, 10);
+    if (result.errors.length > visibleErrors.length) {
+      visibleErrors.push(`另有 ${result.errors.length - visibleErrors.length} 項錯誤。`);
+    }
+    renderInverseStatus("error", "TXT 驗證未通過", visibleErrors);
+    if (announce) {
+      appStatus.textContent = `TXT 驗證未通過，共 ${result.errors.length} 項錯誤。`;
+    }
+    return;
+  }
+
+  inverseRows = result.rows;
+  inverseConvertButton.disabled = false;
+  inverseFilePicker.dataset.tone = "success";
+  renderInverseStatus(
+    "info",
+    "可以下載",
+    `已讀取 ${result.rows.length} 筆、每筆 ${result.recordWidthBytes} 位元組。`,
+  );
+  if (announce) {
+    appStatus.textContent = "Big5 TXT 驗證完成，可以下載 XLSX。";
+  }
+}
+
+function clearInverseFileState(): void {
+  inverseFileReadSequence += 1;
+  inverseFile = null;
+  inverseBytes = null;
+  inverseRows = null;
+  inverseFileInput.value = "";
+  inverseFileName.textContent = "尚未選擇檔案";
+  inverseFileName.removeAttribute("title");
+  inverseFileMeta.textContent = "";
+  inverseFileMeta.hidden = true;
+  inverseFilePicker.dataset.tone = "neutral";
+  deselectInverseButton.disabled = true;
+  inverseConvertButton.disabled = true;
+  renderInverseStatus("info", "尚未驗證", "選擇 Big5 TXT 後即可建立 XLSX。");
+  syncUnloadGuard();
+  appStatus.textContent = "";
+}
+
+async function handleInverseFileSelection(): Promise<void> {
+  const file = inverseFileInput.files?.[0];
+  const sequence = ++inverseFileReadSequence;
+  if (!file) {
+    clearInverseFileState();
+    return;
+  }
+  if (!/\.txt$/iu.test(file.name)) {
+    clearInverseFileState();
+    inverseFilePicker.dataset.tone = "error";
+    renderInverseStatus("error", "不支援此檔案類型", "請選擇副檔名為 .txt 的檔案。");
+    return;
+  }
+  if (file.size === 0 || file.size > MAX_FILE_BYTES) {
+    clearInverseFileState();
+    inverseFilePicker.dataset.tone = "error";
+    renderInverseStatus(
+      "error",
+      file.size === 0 ? "檔案沒有內容" : "檔案超過大小上限",
+      file.size === 0 ? "請選擇含有資料的檔案。" : "請選擇 25 MiB 以下的檔案。",
+    );
+    return;
+  }
+
+  inverseFile = file;
+  inverseRows = null;
+  inverseConvertButton.disabled = true;
+  deselectInverseButton.disabled = false;
+  inverseFilePicker.dataset.tone = "info";
+  inverseFileName.textContent = file.name;
+  inverseFileName.title = file.name;
+  inverseFileMeta.textContent = "正在讀取檔案…";
+  inverseFileMeta.hidden = false;
+  syncUnloadGuard();
+  appStatus.textContent = "正在驗證 Big5 TXT…";
+
+  try {
+    const buffer = await file.arrayBuffer();
+    if (sequence !== inverseFileReadSequence) {
+      return;
+    }
+    inverseBytes = new Uint8Array(buffer);
+    inverseFileMeta.textContent = `${file.size.toLocaleString("zh-Hant-TW")} 位元組`;
+    validateInverse();
+  } catch {
+    if (sequence === inverseFileReadSequence) {
+      clearInverseFileState();
+      inverseFilePicker.dataset.tone = "error";
+      renderInverseStatus("error", "無法存取檔案", "請確認檔案仍可使用，或改選其他檔案。");
+    }
+  }
+}
+
+inverseFileInput.addEventListener("change", () => void handleInverseFileSelection());
+selectInverseButton.addEventListener("click", () => inverseFileInput.click());
+deselectInverseButton.addEventListener("click", clearInverseFileState);
+inverseConvertButton.addEventListener("click", async () => {
+  validateInverse(false);
+  const file = inverseFile;
+  const rows = inverseRows;
+  const sequence = inverseFileReadSequence;
+  if (!file || !rows) {
+    return;
+  }
+
+  inverseConvertButton.disabled = true;
+  appStatus.textContent = "正在建立 XLSX…";
+  try {
+    await yieldToBrowser();
+    const bytes = await spreadsheetParser.create(rows);
+    if (sequence !== inverseFileReadSequence) {
+      return;
+    }
+    const filename = file.name.replace(/\.txt$/iu, "") + ".xlsx";
+    downloadBlob(
+      new Blob([bytes.slice().buffer], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+      filename,
+    );
+    appStatus.textContent = "已建立 XLSX 下載。";
+  } catch {
+    if (sequence === inverseFileReadSequence) {
+      renderInverseStatus("error", "無法建立 XLSX", "請重新整理頁面後再試。");
+      appStatus.textContent = "無法建立 XLSX。";
+    }
+  } finally {
+    if (sequence === inverseFileReadSequence) {
+      inverseConvertButton.disabled = inverseRows === null;
+    }
+  }
 });
 
 settingsController.bind();

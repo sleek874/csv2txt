@@ -6,9 +6,22 @@ import { utils, write } from "xlsx";
 
 import { parseCsv } from "../src/core/csv.ts";
 import { detectSourceFileType } from "../src/core/source.ts";
-import { parseSpreadsheet } from "../src/core/spreadsheet.ts";
+import {
+  createSpreadsheet,
+  parseSpreadsheet,
+} from "../src/core/spreadsheet.ts";
 
 const fixtureDirectory = new URL("./fixtures/", import.meta.url);
+
+test("creates an XLSX with text cells and no added header row", () => {
+  const rows = [["00123", "中文", ""], ["00002", "A", "尾端"]];
+  const bytes = createSpreadsheet(rows);
+  const parsed = parseSpreadsheet(bytes, 3);
+
+  assert.equal(parsed.sheetName, "資料");
+  assert.deepEqual(parsed.rows, rows);
+  assert.deepEqual(parsed.errors, []);
+});
 
 test("source type detection only accepts CSV, XLS, and XLSX extensions", () => {
   assert.equal(detectSourceFileType("data.csv"), "csv");

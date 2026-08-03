@@ -383,6 +383,41 @@
           </div>
         </section>
 
+        <section id="inverse-step" class="panel" aria-labelledby="inverse-heading">
+          <div class="step-heading">
+            <span aria-hidden="true">5</span>
+            <div>
+              <h2 id="inverse-heading">Big5 TXT 轉 XLSX</h2>
+              <p class="help-text">使用目前的欄寬與對齊方式切回欄位；不加入標題列。</p>
+            </div>
+          </div>
+          <div id="inverse-file-picker" class="file-picker source-file-picker" data-tone="neutral">
+            <div class="file-picker-actions">
+              <button id="select-inverse-button" class="primary-button" type="button" aria-describedby="inverse-file-help">選擇 Big5 TXT</button>
+              <input id="inverse-file" type="file" accept=".txt,text/plain" hidden />
+              <button id="deselect-inverse-button" class="secondary-button" type="button" disabled>取消選擇</button>
+            </div>
+            <div class="file-status-copy">
+              <p class="file-status-line">
+                <span class="file-status">
+                  <span id="inverse-file-name" class="file-status-name">尚未選擇檔案</span>
+                  <span id="inverse-file-meta" class="file-status-meta" hidden></span>
+                </span>
+              </p>
+              <p id="inverse-file-help" class="help-text">支援 25 MiB 以下的 Big5 .txt；每筆須符合目前總欄寬。</p>
+            </div>
+          </div>
+          <div id="inverse-status" class="notice info-notice inverse-status">
+            <strong>尚未驗證</strong>
+            <span>選擇 Big5 TXT 後即可建立 XLSX。</span>
+          </div>
+          <p class="help-text inverse-caveat">定長補齊空格無法與原始邊界空格區分；轉回時會移除補齊側的連續半形空格。</p>
+          <div class="download-bar">
+            <div><strong>反向輸出檔案</strong><span id="inverse-download-help">每個欄位以文字寫入，保留前置零。</span></div>
+            <button id="inverse-convert-button" class="primary-button" type="button" aria-describedby="inverse-download-help" disabled>下載 XLSX</button>
+          </div>
+        </section>
+
         <p id="app-status" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></p>
       </main>
     </div>
