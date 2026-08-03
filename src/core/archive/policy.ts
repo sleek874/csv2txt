@@ -1,0 +1,39 @@
+export const ARCHIVE_LIMITS = {
+  maxArchiveDepth: 5,
+  maxEntries: 500,
+  maxExpandedFileBytes: 25 * 1024 * 1024,
+  maxExpandedTotalBytes: 100 * 1024 * 1024,
+  maxOutputBytes: 100 * 1024 * 1024,
+  maxVirtualFolderDepth: 5,
+} as const;
+
+export function safeArchivePath(path: string): string {
+  if (
+    path.length === 0
+    || path.startsWith("/")
+    || path.startsWith("\\")
+    || /^[a-z]:/iu.test(path)
+    || /[\u0000-\u001f\u007f]/u.test(path)
+  ) {
+    throw new Error(`ZIP 路徑不安全：${path || "（空白名稱）"}`);
+  }
+
+  const segments = path.replaceAll("\\", "/").split("/");
+  const directoryEntry = segments.at(-1) === "";
+  const meaningfulSegments = segments.filter((segment) => segment !== "");
+  if (
+    meaningfulSegments.length === 0
+    || meaningfulSegments.some((segment) => segment === "." || segment === "..")
+  ) {
+    throw new Error(`ZIP 路徑不安全：${path}`);
+  }
+  const folderDepth = meaningfulSegments.length - (directoryEntry ? 0 : 1);
+  if (folderDepth > ARCHIVE_LIMITS.maxVirtualFolderDepth) {
+    throw new Error(`ZIP 路徑超過 ${ARCHIVE_LIMITS.maxVirtualFolderDepth} 層資料夾上限：${path}`);
+  }
+  return meaningfulSegments.join("/");
+}
+
+export function archiveRootName(fileName: string): string {
+  return safeArchivePath(fileName).replace(/\.zip$/iu, "") || "ZIP";
+}

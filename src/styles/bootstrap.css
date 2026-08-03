@@ -14,82 +14,8 @@
 }
 
 .readiness-status {
-  display: flex;
-  flex: none;
-  width: 7.75rem;
-  height: 1.5rem;
-  align-items: center;
-  padding: 0 0.1rem;
-  border: 0;
-  color: var(--color-text-muted);
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  line-height: 1rem;
-}
-
-.readiness-status__text {
-  display: block;
-  width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.readiness-status:is(
-  [data-state="components"],
-  [data-state="offline"]
-) .readiness-status__text {
-  color: var(--color-info-text);
-}
-
-@supports ((background-clip: text) or (-webkit-background-clip: text)) {
-  .readiness-status:is(
-    [data-state="components"],
-    [data-state="offline"]
-  ) .readiness-status__text {
-    color: transparent;
-    background-image: linear-gradient(
-      100deg,
-      var(--color-text-muted) 18%,
-      var(--color-info-text) 48%,
-      var(--color-text-muted) 78%
-    );
-    background-position: 120% 0;
-    background-size: 240% 100%;
-    background-clip: text;
-    -webkit-background-clip: text;
-    animation: readiness-text-shimmer 2.4s linear infinite;
-  }
-}
-
-.readiness-status[data-state="ready"] {
-  color: var(--color-success-text);
-}
-
-.readiness-status[data-state="limited"] {
-  color: var(--color-warning-text);
-}
-
-.readiness-status[data-state="error"] {
-  color: var(--color-error-text);
-}
-
-@keyframes readiness-text-shimmer {
-  to {
-    background-position: -120% 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce), (forced-colors: active) {
-  .readiness-status:is(
-    [data-state="components"],
-    [data-state="offline"]
-  ) .readiness-status__text {
-    animation: none;
-    color: var(--color-info-text);
-    background-image: none;
-  }
+  --status-indicator-width: 7.75rem;
+  --status-indicator-height: 1.5rem;
 }
 
 .embed-blocked {

@@ -11,9 +11,10 @@ function revealApplication(): void {
 
 function renderLoadingError(): void {
   const status = document.querySelector<HTMLElement>("#readiness-status");
-  const message = status?.querySelector<HTMLElement>(".readiness-status__text");
+  const message = status?.querySelector<HTMLElement>(".status-indicator__text");
   if (status) {
-    status.dataset.state = "error";
+    status.dataset.tone = "error";
+    status.dataset.loading = "false";
   }
   status?.setAttribute("role", "alert");
   status?.setAttribute("aria-live", "assertive");

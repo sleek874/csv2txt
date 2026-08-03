@@ -10,6 +10,7 @@ export interface FixedFieldDefinition {
   index: number;
   widthBytes: number;
   pattern: RegExp;
+  formatErrorMessage: string;
   description: string;
   hooks: readonly FieldValidationHook[];
 }
@@ -17,21 +18,21 @@ export interface FixedFieldDefinition {
 export const FIXED_RECORD_WIDTH_BYTES = 208;
 
 export const FIXED_FIELDS: readonly FixedFieldDefinition[] = [
-  { index: 1, widthBytes: 1, pattern: /^[AB]$/u, description: "必填", hooks: [] },
-  { index: 2, widthBytes: 2, pattern: /^[0-9]{2}$/u, description: "必填；保留前置零", hooks: [] },
-  { index: 3, widthBytes: 1, pattern: /^[1-6]$/u, description: "必填", hooks: [] },
-  { index: 4, widthBytes: 10, pattern: /^[0-9]{10}$/u, description: "必填；不自動補零", hooks: [] },
-  { index: 5, widthBytes: 10, pattern: /^[a-z0-9]{5,10}$/iu, description: "轉大寫；證號無效時提醒，性別不符時錯誤", hooks: ["optional-id-warning", "field-5-gender-match"] },
-  { index: 6, widthBytes: 8, pattern: /^[0-9]{8}$/u, description: "真實日期且早於今天", hooks: ["date-before-today"] },
-  { index: 7, widthBytes: 12, pattern: /^.+$/u, description: "可安全轉為 Big5", hooks: [] },
-  { index: 8, widthBytes: 1, pattern: /^[12]$/u, description: "有效證號時與欄位5比對性別", hooks: ["field-5-gender-match"] },
-  { index: 9, widthBytes: 120, pattern: /^.+$/u, description: "必填；可安全轉為 Big5", hooks: [] },
-  { index: 10, widthBytes: 15, pattern: /^[0-9()+#-]{1,15}$/u, description: "來源可空；空值明確補 0000000000", hooks: [] },
-  { index: 11, widthBytes: 10, pattern: /^[A-Z][12][0-9]{8}$/u, description: "必須通過臺灣身分證檢查碼", hooks: ["required-id-checksum"] },
-  { index: 12, widthBytes: 1, pattern: /^[ABCD]$/u, description: "必填", hooks: [] },
-  { index: 13, widthBytes: 8, pattern: /^[0-9]{8}$/u, description: "真實日期且早於今天", hooks: ["date-before-today"] },
-  { index: 14, widthBytes: 8, pattern: /^(?:[0-9]{8})?$/u, description: "有值時晚於欄位13且早於今天", hooks: ["optional-date-after-field-13", "field-14-15-pair"] },
-  { index: 15, widthBytes: 1, pattern: /^[1-4]?$/u, description: "與欄位14同時有值或同時空白", hooks: ["field-14-15-pair"] },
+  { index: 1, widthBytes: 1, pattern: /^[AB]$/u, formatErrorMessage: "只能填 A 或 B。", description: "必填", hooks: [] },
+  { index: 2, widthBytes: 2, pattern: /^[0-9]{2}$/u, formatErrorMessage: "請輸入 2 位數字。", description: "必填", hooks: [] },
+  { index: 3, widthBytes: 1, pattern: /^[1-6]$/u, formatErrorMessage: "只能填 1 至 6。", description: "必填", hooks: [] },
+  { index: 4, widthBytes: 10, pattern: /^[0-9]{10}$/u, formatErrorMessage: "請輸入 10 位數字。", description: "必填", hooks: [] },
+  { index: 5, widthBytes: 10, pattern: /^[a-z0-9]{5,10}$/iu, formatErrorMessage: "請輸入 5 至 10 個英文字母或數字。", description: "轉大寫；證號無效時警告", hooks: ["optional-id-warning", "field-5-gender-match"] },
+  { index: 6, widthBytes: 8, pattern: /^[0-9]{8}$/u, formatErrorMessage: "請輸入 8 位西元日期，例如 20250831。", description: "真實日期且早於今天", hooks: ["date-before-today"] },
+  { index: 7, widthBytes: 12, pattern: /^.+$/u, formatErrorMessage: "請輸入內容。", description: "必填；可安全轉為 Big5", hooks: [] },
+  { index: 8, widthBytes: 1, pattern: /^[12]$/u, formatErrorMessage: "只能填 1 或 2。", description: "有效證號時與欄位5比對性別，性別不符時錯誤", hooks: ["field-5-gender-match"] },
+  { index: 9, widthBytes: 120, pattern: /^.+$/u, formatErrorMessage: "請輸入內容。", description: "必填；可安全轉為 Big5", hooks: [] },
+  { index: 10, widthBytes: 15, pattern: /^[0-9()+#-]{1,15}$/u, formatErrorMessage: "只能使用數字及 ( ) + # -，最多 15 個字元。", description: "來源可空；空值明確補 0000000000", hooks: [] },
+  { index: 11, widthBytes: 10, pattern: /^[A-Z][12][0-9]{8}$/u, formatErrorMessage: "請輸入 1 個大寫英文字母與 9 位數字，第二碼須為 1 或 2。", description: "必須通過臺灣身分證檢查碼", hooks: ["required-id-checksum"] },
+  { index: 12, widthBytes: 1, pattern: /^[ABCD]$/u, formatErrorMessage: "只能填 A、B、C 或 D。", description: "必填", hooks: [] },
+  { index: 13, widthBytes: 8, pattern: /^[0-9]{8}$/u, formatErrorMessage: "請輸入 8 位西元日期，例如 20250831。", description: "真實日期且早於今天", hooks: ["date-before-today"] },
+  { index: 14, widthBytes: 8, pattern: /^(?:[0-9]{8})?$/u, formatErrorMessage: "請輸入 8 位西元日期，例如 20250831，或留空。", description: "有值時晚於欄位13且早於今天", hooks: ["optional-date-after-field-13", "field-14-15-pair"] },
+  { index: 15, widthBytes: 1, pattern: /^[1-4]?$/u, formatErrorMessage: "只能填 1 至 4，或留空。", description: "與欄位14同時有值或同時空白", hooks: ["field-14-15-pair"] },
 ];
 
 export const FIXED_FIELD_COUNT = FIXED_FIELDS.length;

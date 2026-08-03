@@ -11,11 +11,30 @@
 ## 目前進度
 
 - Phase 0 已完成。
-- Phase 1 的固定 profile、共用 IR、正規化、欄位／日期／身分證／跨欄驗證及欄位10明確修改已建立。
+- Phase 1 的固定 profile、共用 IR、正規化、欄位／日期／身分證／跨欄驗證及欄位10明確自動修正已建立。
 - Phase 2 的四區靜態骨架、單一 picker、四種單檔 input adapter、共同 100-row 分頁預覽及兩種 output adapter 已建立。
-- Phase 3 的多檔追加、扁平檔案清單、逐檔移除與 stale-work cancellation 已建立；目前虛擬路徑只是每個檔案的標籤，真正的資料夾／archive tree 與聚合節點仍待後續補齊。
-- Phase 4 的共同 15 欄預覽、狀態排序與篩選、100-row 分頁、逐列輸出決策、兩次驗證及欄位10明確修改已建立。
-- Phase 5 的 ZIP reader、safe path、quota、nested ZIP 與 lazy archive chunk 已提前隨第一個使用者完成；整批 ZIP writer 仍未實作。
+- Phase 3 的多檔追加、來源／資料夾／檔案樹、聚合狀態、整組或逐檔移除、鍵盤 navigation 與 stale-work cancellation 已建立。
+- Phase 4 的共同 15 欄預覽、狀態排序與篩選、100-row 分頁、逐列輸出決策、兩次驗證及欄位10明確自動修正已建立。
+- Phase 5 的 ZIP reader／writer、safe path、quota、nested ZIP、檔名 metadata／Unicode Path／CP950 fallback、整批完整摘要與 lazy archive chunk 已完成。
+
+### 已完成的責任重構
+
+- 將 CSV、Big5 TXT 與 Spreadsheet 收斂為各自可讀可寫的 tabular codec。
+- 新增 CSV standard output，Section 2 改用原生 dropdown。
+- 將 ZIP 收斂為獨立可讀可寫的 container codec，並保留既有安全限制。
+- 以單一 resource manager 管理 codec 的 memoized prepare/get 與 offline resource priority。
+- 將原本同時管理 file picker、tree、preview 與 download 的大型 view/controller 拆成 section-scoped modules，加上一個共享 workspace model。
+- 抽出可重用 status indicator，保留既有 readiness text shimmer、固定尺寸與 reduced-motion fallback。
+- 保留已完成的 Section 0 lazy rules rendering 與目前欄位描述，不還原重複 HTML 規則表。
+- Section 3 繼續保持未開放，但明確規定未來重用同一 spreadsheet codec，而不是直接使用或重複載入 SheetJS。
+
+### 2026-08-04 本機 Lighthouse 診斷基準
+
+- 以 Node 24.18.0、Chrome 151.0.7922.71 與 Lighthouse 13.4.1 檢查當前正式建置根路徑，三次有效本機診斷的 Performance 為 95–97，Accessibility 為 100，Best Practices 為 100，SEO 為 92；修正主題初始化的同步 style read 後最新 Performance 為 96，且 forced reflow audit 已無項目。
+- 可及性與瀏覽器最佳實務沒有 Lighthouse 失敗項目；後續仍需以鍵盤、螢幕閱讀器、reduced-motion 與 forced-colors 實際流程補足自動審查邊界。
+- SEO 的 `robots.txt` 與 `llms.txt` 為 Lighthouse 檢索器受正式 `connect-src 'none'` CSP 阻擋，不是檔案返回失敗；直接 HTTP 檢查兩者皆為 200 與 `text/plain`。保留該 CSP，改由 build verifier 驗證 robots、sitemap 與 agent discovery 內容。
+- 目前最大的效能機會是 base main bundle 約 102 KiB 的未使用 JavaScript 估算；納入 Phase 6 以真實檔案的首次可用交互、離線預備與編解碼成本一併量測，不為單次分數拆分核心。
+- Lighthouse HTML、JSON、Chrome profile 與 log 只存於 repository 外的暫存目錄，不納入版本控制。
 
 ## Phase 0 — Foundation
 
@@ -54,8 +73,8 @@
 - Section 0 改為初始收合、點擊展開的固定欄位規則；regex 可見，hook 支援 hover、focus 與觸控說明。
 - 以單一通用 file picker 取代方向 tabs；先接受 CSV、XLS、XLSX 與 Big5 TXT，Phase 5 由同一控制加入 ZIP。
 - 移除手動 encoding selector；decoder metadata 只在自動判定有 issue 時顯示。
-- Section 1 建立共用檔案選取、tree、IR 預覽、驗證與修改 shell；點選檔案顯示該檔摘要及 issue，輸入格式不改變版面。
-- Section 2 提供整批 Big5 TXT 或 XLSX 的輸出選擇與下載狀態。
+- Section 1 建立共用檔案選取、tree、IR 預覽、驗證與自動修正 shell；點選檔案顯示該檔摘要及 issue，輸入格式不改變版面。
+- Section 2 提供整批 Big5 TXT、UTF-8 CSV 或 XLSX 的輸出選擇與下載狀態。
 - Section 3 保留為進階輸出說明，不在 lookup contract 未定時建立無作用的 upload／mapping 控制。
 - 更新 static verifier，確認沒有 settings residue。
 
@@ -100,7 +119,7 @@
 - 加入經審查的 browser ZIP dependency 與 lazy archive chunk。
 - 支援 nested ZIP 與 virtual directory，深度上限 5。
 - 不跟隨 symlink；實作 safe path、quota、entry limit 與 collision error。
-- 依整批輸出選擇，將每個保留檔案序列化為 Big5 TXT 或 XLSX。
+- 依整批輸出選擇，將每個保留檔案序列化為 Big5 TXT、UTF-8 CSV 或 XLSX。
 - 輸出一個保留虛擬路徑的 ZIP；相同 stem 造成的輸出路徑碰撞必須報錯。
 - 更新 offline cache group 與 build verifier。
 
@@ -128,11 +147,8 @@
 
 ### PR #21 後優先工作
 
-1. 將目前扁平的工作區檔案清單改成真正的 folder／archive／file tree；建立父子節點、展開狀態、聚合嚴重程度、整組移除與鍵盤 tree navigation。在完成前，不把虛擬路徑字串當成已完成的階層模型。
-2. 建立檔名解碼契約與 fixtures。普通 `File.name` 由瀏覽器提供 Unicode 字串；ZIP entry 另須保存原始名稱 bytes、UTF-8 flag、Unicode path metadata、採用的 decoder 與可信度。遇到來源不明或顯示替代字元時要提出 issue，不靜默猜測 Big5、重新命名或合併路徑。
-3. 完成整批 output path 規劃、碰撞檢查與 ZIP writer，讓 Section 2 的格式選擇真正套用整批，而不是只下載目前選取檔案。
-4. 把 CSV decoder 的低可信判定轉成可見的檔案 issue，補足副檔名／內容 signature 衝突測試。
-5. 在 tree、整批 writer 與 page request contract 穩定後，再移入單一有界 worker，量測取消、記憶體與互動延遲。
+1. 把 CSV decoder 的低可信判定轉成可見的檔案 issue，補足副檔名／內容 signature 衝突測試。
+2. 在 tree、整批 writer 與 page request contract 穩定後，再移入單一有界 worker，量測取消、記憶體與互動延遲。
 
 ### Future phase — Advanced organized XLSX
 

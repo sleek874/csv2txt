@@ -1,0 +1,56 @@
+.status-indicator {
+  display: flex;
+  flex: none;
+  width: var(--status-indicator-width, auto);
+  min-height: var(--status-indicator-height, 1.5rem);
+  align-items: center;
+  padding: 0 0.1rem;
+  border: 0;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1rem;
+}
+
+.status-indicator__text {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-indicator[data-tone="info"] { color: var(--color-info-text); }
+.status-indicator[data-tone="success"] { color: var(--color-success-text); }
+.status-indicator[data-tone="warning"] { color: var(--color-warning-text); }
+.status-indicator[data-tone="error"] { color: var(--color-error-text); }
+
+@supports ((background-clip: text) or (-webkit-background-clip: text)) {
+  .status-indicator[data-loading="true"] .status-indicator__text {
+    color: transparent;
+    background-image: linear-gradient(
+      100deg,
+      var(--color-text-muted) 18%,
+      var(--color-info-text) 48%,
+      var(--color-text-muted) 78%
+    );
+    background-position: 120% 0;
+    background-size: 240% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    animation: status-indicator-text-shimmer 2.4s linear infinite;
+  }
+}
+
+@keyframes status-indicator-text-shimmer {
+  to { background-position: -120% 0; }
+}
+
+@media (prefers-reduced-motion: reduce), (forced-colors: active) {
+  .status-indicator[data-loading="true"] .status-indicator__text {
+    animation: none;
+    color: var(--color-info-text);
+    background-image: none;
+  }
+}

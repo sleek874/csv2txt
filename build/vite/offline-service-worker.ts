@@ -11,8 +11,8 @@ interface GeneratedAsset {
 const MANIFEST_FILE_NAME = ".vite/manifest.json";
 const BOOT_FILE_NAME = "boot.js";
 const BASE_MANIFEST_ROOTS = ["index.html", "src/main.ts"];
-const EXCEL_MANIFEST_ROOTS = ["src/core/spreadsheet.ts"];
-const ARCHIVE_CHUNK_NAMES = ["archive"];
+const EXCEL_MANIFEST_ROOTS = ["src/core/formats/spreadsheet.ts"];
+const ARCHIVE_MANIFEST_ROOTS = ["src/core/archive/zip.ts"];
 const FONT_MANIFEST_ROOTS = [
   "src/styles/preview-font.css",
   "src/assets/fonts/SarasaMonoTC-Regular.woff2",
@@ -42,25 +42,6 @@ function collectManifestGroup(
     pending.push(...(chunk.imports ?? []));
   }
 
-  return files;
-}
-
-function collectNamedChunks(
-  manifest: Manifest,
-  names: readonly string[],
-): Set<string> {
-  const files = new Set<string>();
-  for (const chunk of Object.values(manifest)) {
-    if (!chunk.name || !names.includes(chunk.name)) {
-      continue;
-    }
-    files.add(chunk.file);
-    chunk.css?.forEach((file) => files.add(file));
-    chunk.assets?.forEach((file) => files.add(file));
-  }
-  if (files.size === 0) {
-    throw new Error(`Vite manifest is missing named chunks: ${names.join(", ")}`);
-  }
   return files;
 }
 
@@ -113,18 +94,18 @@ export function offlineServiceWorker(): Plugin {
         const indexHtmlSource = readAssetSource(indexHtmlAsset);
         const baseFiles = collectManifestGroup(manifest, BASE_MANIFEST_ROOTS);
         const excelFiles = collectManifestGroup(manifest, EXCEL_MANIFEST_ROOTS);
-        const archiveFiles = collectNamedChunks(manifest, ARCHIVE_CHUNK_NAMES);
+        const archiveFiles = collectManifestGroup(manifest, ARCHIVE_MANIFEST_ROOTS);
         const fontFiles = collectManifestGroup(manifest, FONT_MANIFEST_ROOTS);
-        baseFiles.forEach((file) => excelFiles.delete(file));
-        archiveFiles.forEach((file) => {
-          baseFiles.delete(file);
-          excelFiles.delete(file);
-        });
         fontFiles.forEach((file) => {
           baseFiles.delete(file);
           excelFiles.delete(file);
           archiveFiles.delete(file);
         });
+        baseFiles.forEach((file) => {
+          excelFiles.delete(file);
+          archiveFiles.delete(file);
+        });
+        excelFiles.forEach((file) => archiveFiles.delete(file));
 
         const precachePaths = ["./", `./${BOOT_FILE_NAME}`, ...relativePaths(baseFiles)];
         const excelPaths = relativePaths(excelFiles);

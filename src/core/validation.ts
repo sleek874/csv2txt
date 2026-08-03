@@ -22,6 +22,7 @@ function issue(
   message: string,
   sourceRow: number,
   fieldIndex?: number,
+  relatedFieldIndices?: readonly number[],
 ): DataIssue {
   return {
     severity,
@@ -30,6 +31,7 @@ function issue(
     message,
     sourceRow,
     ...(fieldIndex === undefined ? {} : { fieldIndex }),
+    ...(relatedFieldIndices === undefined ? {} : { relatedFieldIndices }),
   };
 }
 
@@ -109,7 +111,7 @@ function validateCalendarField(
   }
   const parsed = parseCalendarDate(value);
   if (!parsed) {
-    return [issue(stage, "error", "INVALID_DATE", "必須是有效的八位西元日期。", sourceRow, fieldIndex)];
+    return [issue(stage, "error", "INVALID_DATE", "請輸入真實的西元日期。", sourceRow, fieldIndex)];
   }
   if (value >= today) {
     return [issue(stage, "error", "DATE_NOT_BEFORE_TODAY", "日期必須早於今天。", sourceRow, fieldIndex)];
@@ -129,13 +131,14 @@ function validateCell(
   }
   const value = stage === "source" ? cell.normalizedValue : cellValue(cell);
   const issues: DataIssue[] = [];
+  const formatMatches = field.pattern.test(value);
 
-  if (!field.pattern.test(value)) {
+  if (!formatMatches) {
     issues.push(issue(
       stage,
       "error",
       "PATTERN_MISMATCH",
-      `內容不符合固定規則 ${field.pattern.source}。`,
+      value === "" ? "此欄位不能空白。" : field.formatErrorMessage,
       row.sourceRow,
       field.index,
     ));
@@ -147,25 +150,25 @@ function validateCell(
 
   const encoded = encodeBig5(value);
   if (!encoded) {
-    issues.push(issue(stage, "error", "UNENCODABLE_BIG5", "含有無法安全轉為 Big5 的字元。", row.sourceRow, field.index));
+    issues.push(issue(stage, "error", "UNENCODABLE_BIG5", "含有 Big5 無法使用的字元。", row.sourceRow, field.index));
   } else if (encoded.length > field.widthBytes) {
     issues.push(issue(
       stage,
       "error",
       "WIDTH_OVERFLOW",
-      `需要 ${encoded.length} 位元組，超過固定欄寬 ${field.widthBytes}。`,
+      `內容太長：目前 ${encoded.length} bytes，此欄最多 ${field.widthBytes} bytes。`,
       row.sourceRow,
       field.index,
     ));
   }
 
-  if (field.index === 5 && !isValidField5Id(value)) {
-    issues.push(issue(stage, "warning", "OPTIONAL_ID_INVALID", "不是有效的國民身分證或新式外來人口統一證號。", row.sourceRow, field.index));
+  if (field.index === 5 && formatMatches && !isValidField5Id(value)) {
+    issues.push(issue(stage, "warning", "OPTIONAL_ID_INVALID", "這個值不是有效的國民身分證或新式外來人口統一證號，請確認是否正確。", row.sourceRow, field.index));
   }
-  if (field.index === 11 && !isValidTaiwanNationalId(value)) {
-    issues.push(issue(stage, "error", "REQUIRED_ID_INVALID", "臺灣身分證字號格式或檢查碼錯誤。", row.sourceRow, field.index));
+  if (field.index === 11 && formatMatches && !isValidTaiwanNationalId(value)) {
+    issues.push(issue(stage, "error", "REQUIRED_ID_INVALID", "身分證字號的檢查碼不正確，請再次確認。", row.sourceRow, field.index));
   }
-  if (field.index === 6 || field.index === 13 || field.index === 14) {
+  if (formatMatches && (field.index === 6 || field.index === 13 || field.index === 14)) {
     issues.push(...validateCalendarField(value, row.sourceRow, field.index, stage, today));
   }
 
@@ -197,9 +200,10 @@ function validateCrossField(
       stage,
       "error",
       "ID_GENDER_MISMATCH",
-      "欄位8必須與欄位5有效證號的性別碼相符。",
+      "欄位5的證號性別與欄位8不一致，請確認兩個欄位。",
       row.sourceRow,
-      8,
+      undefined,
+      [5, 8],
     ));
   }
 
@@ -208,8 +212,10 @@ function validateCrossField(
       stage,
       "error",
       "OPTIONAL_FIELDS_MISMATCH",
-      "欄位14與欄位15必須同時有值或同時空白。",
+      "欄位14與欄位15需一起填寫，或一起留空。",
       row.sourceRow,
+      undefined,
+      [14, 15],
     ));
   }
 
@@ -224,9 +230,10 @@ function validateCrossField(
       stage,
       "error",
       "DATE_ORDER_INVALID",
-      "欄位14日期必須晚於欄位13。",
+      "欄位14的日期需晚於欄位13。",
       row.sourceRow,
-      14,
+      undefined,
+      [13, 14],
     ));
   }
 

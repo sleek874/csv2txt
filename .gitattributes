@@ -4,3 +4,8 @@
 *.big5 binary
 tests/fixtures/*.txt binary
 tests/fixtures/*.csv binary
+testdata/csv/*.csv binary
+testdata/txt/*.txt binary
+testdata/xls/*.xls binary
+testdata/xlsx/*.xlsx binary
+testdata/zip/*.zip binary

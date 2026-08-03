@@ -1,18 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createOutputAdapter } from "../src/app/adapters/output-adapter.ts";
+import { createCodecManager } from "../src/app/resources/codec-manager.ts";
 import { createInternalFile } from "../src/core/conversion-pipeline.ts";
 import {
   FIXED_FIELDS,
   FIXED_RECORD_WIDTH_BYTES,
   FIXED_WIDTHS,
 } from "../src/core/fixed-profile.ts";
-import { serializeFixedWidthBig5 } from "../src/core/fixed-width.ts";
-import { parseFixedWidthBig5 } from "../src/core/fixed-width-inverse.ts";
+import { parseBig5Txt } from "../src/core/formats/big5-txt.ts";
+import { issueFieldIndices } from "../src/core/internal-model.ts";
 import {
   isValidNewResidentId,
   isValidTaiwanNationalId,
 } from "../src/core/validation.ts";
+
+const outputAdapter = createOutputAdapter(createCodecManager());
 
 function validRow(overrides = {}) {
   const row = [
@@ -36,7 +40,7 @@ function issuesFor(file) {
   ];
 }
 
-test("normalizes one shared row, records the telephone change, and emits 208-byte Big5 records", () => {
+test("normalizes one shared row, records the telephone change, and emits 208-byte Big5 records", async () => {
   const file = createInternalFile(
     "file-1",
     "sample.csv",
@@ -48,7 +52,7 @@ test("normalizes one shared row, records the telephone change, and emits 208-byt
   assert.equal(file.summary.excludedBlankRows, 1);
   assert.equal(file.summary.errorCount, 1, "the extra source column remains a visible error");
   assert.equal(file.rows[0]?.included, false);
-  assert.throws(() => serializeFixedWidthBig5(file), /尚未選擇任何輸出列/u);
+  await assert.rejects(outputAdapter.create([file], "big5-txt"), /尚未選擇任何輸出列/u);
 
   const validFile = createInternalFile(
     "file-2",
@@ -61,11 +65,11 @@ test("normalizes one shared row, records the telephone change, and emits 208-byt
   assert.equal(validFile.rows[0]?.included, true);
   assert.equal(validFile.rows[0]?.cells[9]?.finalValue, "0000000000");
 
-  const bytes = serializeFixedWidthBig5(validFile);
+  const bytes = (await outputAdapter.create([validFile], "big5-txt")).bytes;
   assert.equal(bytes.length, FIXED_RECORD_WIDTH_BYTES + 2);
   assert.deepEqual(bytes.slice(-2), new Uint8Array([0x0d, 0x0a]));
 
-  const parsed = parseFixedWidthBig5(bytes, FIXED_WIDTHS);
+  const parsed = parseBig5Txt(bytes, FIXED_WIDTHS);
   assert.deepEqual(parsed.errors, []);
   assert.deepEqual(parsed.rows[0], validRow({ 10: "0000000000" }));
 });
@@ -94,12 +98,18 @@ test("blocks checksum, date, cross-field, width, and Big5 failures without hidde
   assert.ok(issues.some((issue) => issue.code === "UNENCODABLE_BIG5"));
   assert.ok(issues.some((issue) => issue.code === "REQUIRED_ID_INVALID"));
   assert.ok(issues.some((issue) => issue.code === "INVALID_DATE"));
-  assert.ok(issues.some((issue) => issue.code === "OPTIONAL_FIELDS_MISMATCH"));
-  assert.ok(issues.some((issue) => issue.code === "DATE_ORDER_INVALID"));
+  assert.deepEqual(
+    issueFieldIndices(issues.find((issue) => issue.code === "OPTIONAL_FIELDS_MISMATCH")),
+    [14, 15],
+  );
+  assert.deepEqual(
+    issueFieldIndices(issues.find((issue) => issue.code === "DATE_ORDER_INVALID")),
+    [13, 14],
+  );
   assert.equal(file.summary.errorCount > 0, true);
 });
 
-test("uses regex alone for field format and empty-value acceptance", () => {
+test("uses regex for the contract but presents friendly format errors", () => {
   const expectedPatterns = new Map([
     [5, "^[a-z0-9]{5,10}$"],
     [7, "^.+$"],
@@ -131,7 +141,28 @@ test("uses regex alone for field format and empty-value acceptance", () => {
     [...new Set(formatIssues.map((issue) => issue.fieldIndex))].sort((left, right) => left - right),
     [5, 7, 9, 14, 15],
   );
+  const messages = new Map(formatIssues.map((issue) => [issue.fieldIndex, issue.message]));
+  assert.equal(messages.get(5), "請輸入 5 至 10 個英文字母或數字。");
+  assert.equal(messages.get(7), "此欄位不能空白。");
+  assert.equal(messages.get(9), "此欄位不能空白。");
+  assert.equal(messages.get(14), "請輸入 8 位西元日期，例如 20250831，或留空。");
+  assert.equal(messages.get(15), "只能填 1 至 4，或留空。");
+  assert.equal(formatIssues.some((issue) => issue.message.includes("固定規則")), false);
+  assert.equal(formatIssues.some((issue) => issue.message.includes("^")), false);
   assert.equal(issuesFor(invalidFile).some((issue) => issue.code === "MISSING_REQUIRED"), false);
+
+  const malformedId = createInternalFile(
+    "malformed-id",
+    "malformed-id.csv",
+    { rows: [validRow({ 11: "BAD" })] },
+    "20260803",
+  );
+  const idIssues = issuesFor(malformedId);
+  assert.equal(
+    idIssues.find((issue) => issue.code === "PATTERN_MISMATCH" && issue.fieldIndex === 11)?.message,
+    "請輸入 1 個大寫英文字母與 9 位數字，第二碼須為 1 或 2。",
+  );
+  assert.equal(idIssues.some((issue) => issue.code === "REQUIRED_ID_INVALID"), false);
 });
 
 test("accepts valid new resident IDs in field 5 and maps their sex code", () => {
@@ -165,6 +196,7 @@ test("accepts valid new resident IDs in field 5 and maps their sex code", () => 
   assert.equal(mismatchIssues.some((issue) => issue.code === "OPTIONAL_ID_INVALID"), false);
   const genderMismatch = mismatchIssues.find((issue) => issue.code === "ID_GENDER_MISMATCH");
   assert.equal(genderMismatch?.severity, "error");
+  assert.deepEqual(issueFieldIndices(genderMismatch), [5, 8]);
   assert.equal(mismatchFile.summary.errorCount, 1);
   assert.equal(mismatchFile.rows[0]?.included, false);
 
@@ -183,7 +215,7 @@ test("accepts valid new resident IDs in field 5 and maps their sex code", () => 
   assert.equal(invalidFile.rows[0]?.included, false);
 });
 
-test("defaults issue rows to excluded and serializes them only after an explicit row decision", () => {
+test("defaults issue rows to excluded and serializes them only after an explicit row decision", async () => {
   const file = createInternalFile(
     "row-output-decisions",
     "row-output-decisions.csv",
@@ -203,8 +235,8 @@ test("defaults issue rows to excluded and serializes them only after an explicit
     issuesFor(file).some((issue) => issue.code === "PATTERN_MISMATCH" && issue.fieldIndex === 9),
     true,
   );
-  assert.equal(serializeFixedWidthBig5(file).length, FIXED_RECORD_WIDTH_BYTES + 2);
+  assert.equal((await outputAdapter.create([file], "big5-txt")).bytes.length, FIXED_RECORD_WIDTH_BYTES + 2);
 
   file.rows[1].included = true;
-  assert.equal(serializeFixedWidthBig5(file).length, (FIXED_RECORD_WIDTH_BYTES + 2) * 2);
+  assert.equal((await outputAdapter.create([file], "big5-txt")).bytes.length, (FIXED_RECORD_WIDTH_BYTES + 2) * 2);
 });

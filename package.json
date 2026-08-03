@@ -11,7 +11,7 @@
     "build": "npm run check && vite build && npm run verify:build",
     "verify": "npm test && npm run build",
     "verify:build": "node scripts/verify-build.mjs",
-    "generate:testdata": "node scripts/generate-testdata.mjs",
+    "generate:testdata": "node --import ./tests/register-typescript.mjs scripts/generate-testdata.mjs",
     "preview": "vite preview"
   },
   "engines": {

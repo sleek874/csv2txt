@@ -1,0 +1,326 @@
+{
+  "generatedAt": "2026-08-04",
+  "deterministicToday": "20260804",
+  "fieldNameNote": "欄位名稱僅供合成資料辨識，依 regex、寬度與跨欄 hook 推定；正式契約仍以欄位1至欄位15的位置規則為準。",
+  "fixedRecordWidthBytes": 208,
+  "maximumRowsPerFile": 6000,
+  "maximumDistinctDataFiles": 300,
+  "generatedDataFileCount": 44,
+  "fieldNames": [
+    {
+      "field": 1,
+      "name": "資料類別",
+      "widthBytes": 1
+    },
+    {
+      "field": 2,
+      "name": "區域／機構代碼",
+      "widthBytes": 2
+    },
+    {
+      "field": 3,
+      "name": "資料子類型",
+      "widthBytes": 1
+    },
+    {
+      "field": 4,
+      "name": "來源紀錄編號",
+      "widthBytes": 10
+    },
+    {
+      "field": 5,
+      "name": "選填證號",
+      "widthBytes": 10
+    },
+    {
+      "field": 6,
+      "name": "出生／生效日期",
+      "widthBytes": 8
+    },
+    {
+      "field": 7,
+      "name": "姓名／名稱",
+      "widthBytes": 12
+    },
+    {
+      "field": 8,
+      "name": "性別代碼",
+      "widthBytes": 1
+    },
+    {
+      "field": 9,
+      "name": "地址",
+      "widthBytes": 120
+    },
+    {
+      "field": 10,
+      "name": "電話",
+      "widthBytes": 15
+    },
+    {
+      "field": 11,
+      "name": "必填國民身分證字號",
+      "widthBytes": 10
+    },
+    {
+      "field": 12,
+      "name": "分類代碼",
+      "widthBytes": 1
+    },
+    {
+      "field": 13,
+      "name": "登錄日期",
+      "widthBytes": 8
+    },
+    {
+      "field": 14,
+      "name": "異動／終止日期",
+      "widthBytes": 8
+    },
+    {
+      "field": 15,
+      "name": "異動狀態",
+      "widthBytes": 1
+    }
+  ],
+  "formats": [
+    "csv",
+    "xls",
+    "xlsx",
+    "txt"
+  ],
+  "datasets": [
+    {
+      "name": "clean-single",
+      "rowCount": 1,
+      "category": "clean",
+      "expectedSummary": {
+        "sourceRows": 1,
+        "includedRows": 1,
+        "excludedBlankRows": 0,
+        "errorCount": 0,
+        "warningCount": 0,
+        "modifiedCount": 0
+      }
+    },
+    {
+      "name": "clean-small-25",
+      "rowCount": 25,
+      "category": "clean",
+      "expectedSummary": {
+        "sourceRows": 25,
+        "includedRows": 25,
+        "excludedBlankRows": 0,
+        "errorCount": 0,
+        "warningCount": 0,
+        "modifiedCount": 0
+      }
+    },
+    {
+      "name": "clean-medium-250",
+      "rowCount": 250,
+      "category": "clean",
+      "expectedSummary": {
+        "sourceRows": 250,
+        "includedRows": 250,
+        "excludedBlankRows": 0,
+        "errorCount": 0,
+        "warningCount": 0,
+        "modifiedCount": 0
+      }
+    },
+    {
+      "name": "clean-large-6000",
+      "rowCount": 6000,
+      "category": "clean",
+      "expectedSummary": {
+        "sourceRows": 6000,
+        "includedRows": 6000,
+        "excludedBlankRows": 0,
+        "errorCount": 0,
+        "warningCount": 0,
+        "modifiedCount": 0
+      }
+    },
+    {
+      "name": "clean-boundaries",
+      "rowCount": 4,
+      "category": "clean",
+      "expectedSummary": {
+        "sourceRows": 4,
+        "includedRows": 4,
+        "excludedBlankRows": 0,
+        "errorCount": 0,
+        "warningCount": 0,
+        "modifiedCount": 0
+      }
+    },
+    {
+      "name": "modified-phone-default",
+      "rowCount": 30,
+      "category": "modified",
+      "expectedSummary": {
+        "sourceRows": 30,
+        "includedRows": 30,
+        "excludedBlankRows": 0,
+        "errorCount": 0,
+        "warningCount": 0,
+        "modifiedCount": 30
+      }
+    },
+    {
+      "name": "warning-optional-id",
+      "rowCount": 40,
+      "category": "warning",
+      "expectedSummary": {
+        "sourceRows": 40,
+        "includedRows": 0,
+        "excludedBlankRows": 0,
+        "errorCount": 0,
+        "warningCount": 40,
+        "modifiedCount": 0
+      }
+    },
+    {
+      "name": "error-validation",
+      "rowCount": 40,
+      "category": "error",
+      "expectedSummary": {
+        "sourceRows": 40,
+        "includedRows": 0,
+        "excludedBlankRows": 0,
+        "errorCount": 43,
+        "warningCount": 0,
+        "modifiedCount": 0
+      }
+    },
+    {
+      "name": "mixed-conditions-200",
+      "rowCount": 200,
+      "category": "mixed",
+      "expectedSummary": {
+        "sourceRows": 200,
+        "includedRows": 171,
+        "excludedBlankRows": 0,
+        "errorCount": 13,
+        "warningCount": 17,
+        "modifiedCount": 25
+      }
+    },
+    {
+      "name": "mixed-large-1200",
+      "rowCount": 1200,
+      "category": "mixed",
+      "expectedSummary": {
+        "sourceRows": 1200,
+        "includedRows": 1097,
+        "excludedBlankRows": 0,
+        "errorCount": 45,
+        "warningCount": 61,
+        "modifiedCount": 85
+      }
+    }
+  ],
+  "archives": [
+    {
+      "name": "clean-mixed-formats.zip",
+      "entries": [
+        {
+          "path": "clean/clean-single.csv",
+          "format": "csv",
+          "dataset": "clean-single"
+        },
+        {
+          "path": "clean/clean-small-25.xls",
+          "format": "xls",
+          "dataset": "clean-small-25"
+        },
+        {
+          "path": "clean/clean-medium-250.xlsx",
+          "format": "xlsx",
+          "dataset": "clean-medium-250"
+        },
+        {
+          "path": "clean/clean-boundaries.txt",
+          "format": "txt",
+          "dataset": "clean-boundaries"
+        }
+      ]
+    },
+    {
+      "name": "warning-mixed-formats.zip",
+      "entries": [
+        {
+          "path": "warning/source.csv",
+          "format": "csv",
+          "dataset": "warning-optional-id"
+        },
+        {
+          "path": "warning/source.xls",
+          "format": "xls",
+          "dataset": "warning-optional-id"
+        },
+        {
+          "path": "warning/source.xlsx",
+          "format": "xlsx",
+          "dataset": "warning-optional-id"
+        },
+        {
+          "path": "warning/source.txt",
+          "format": "txt",
+          "dataset": "warning-optional-id"
+        }
+      ]
+    },
+    {
+      "name": "error-mixed-formats.zip",
+      "entries": [
+        {
+          "path": "error/source.csv",
+          "format": "csv",
+          "dataset": "error-validation"
+        },
+        {
+          "path": "error/source.xls",
+          "format": "xls",
+          "dataset": "error-validation"
+        },
+        {
+          "path": "error/source.xlsx",
+          "format": "xlsx",
+          "dataset": "error-validation"
+        },
+        {
+          "path": "error/source.txt",
+          "format": "txt",
+          "dataset": "error-validation"
+        }
+      ]
+    },
+    {
+      "name": "mixed-nested-formats.zip",
+      "entries": [
+        {
+          "path": "batch/a/mixed.csv",
+          "format": "csv",
+          "dataset": "mixed-conditions-200"
+        },
+        {
+          "path": "batch/b/mixed.xls",
+          "format": "xls",
+          "dataset": "mixed-conditions-200"
+        },
+        {
+          "path": "batch/c/mixed.xlsx",
+          "format": "xlsx",
+          "dataset": "mixed-large-1200"
+        },
+        {
+          "path": "batch/d/mixed.txt",
+          "format": "txt",
+          "dataset": "modified-phone-default"
+        }
+      ]
+    }
+  ]
+}

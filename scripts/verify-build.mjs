@@ -7,8 +7,15 @@ const distUrl = new URL("../dist/", import.meta.url);
 const serviceWorker = readFileSync(new URL("sw.js", distUrl), "utf8");
 const indexHtml = readFileSync(new URL("index.html", distUrl), "utf8");
 const bootSource = readFileSync(new URL("boot.js", distUrl), "utf8");
+const llmsTxt = readFileSync(new URL("llms.txt", distUrl), "utf8");
+const robotsTxt = readFileSync(new URL("robots.txt", distUrl), "utf8");
+const sitemapXml = readFileSync(new URL("sitemap.xml", distUrl), "utf8");
 const componentStyles = readFileSync(
   new URL("../src/styles.css", import.meta.url),
+  "utf8",
+);
+const reusableComponentStyles = readFileSync(
+  new URL("../src/styles/components.css", import.meta.url),
   "utf8",
 );
 const foundationStyles = readFileSync(
@@ -23,8 +30,12 @@ const resultStyles = readFileSync(
   new URL("../src/styles/results.css", import.meta.url),
   "utf8",
 );
-const workspaceViewSource = readFileSync(
-  new URL("../src/app/workspace-view.ts", import.meta.url),
+const dataPreviewViewSource = readFileSync(
+  new URL("../src/app/sections/input/data-preview-view.ts", import.meta.url),
+  "utf8",
+);
+const themeSource = readFileSync(
+  new URL("../src/browser/theme.ts", import.meta.url),
   "utf8",
 );
 const manifestSource = readFileSync(new URL(".vite/manifest.json", distUrl), "utf8");
@@ -49,20 +60,6 @@ function collectManifestGroup(roots) {
     pending.push(...(chunk.imports ?? []));
   }
 
-  return files;
-}
-
-function collectNamedChunks(names) {
-  const files = new Set();
-  for (const chunk of Object.values(manifest)) {
-    if (!chunk.name || !names.includes(chunk.name)) {
-      continue;
-    }
-    files.add(chunk.file);
-    chunk.css?.forEach((file) => files.add(file));
-    chunk.assets?.forEach((file) => files.add(file));
-  }
-  assert.ok(files.size > 0, `Vite manifest is missing named chunks: ${names.join(", ")}`);
   return files;
 }
 
@@ -119,22 +116,22 @@ const excelPaths = readPathGroup("EXCEL_PATHS");
 const archivePaths = readPathGroup("ARCHIVE_PATHS");
 const fontPaths = readPathGroup("FONT_PATHS");
 const expectedBaseFiles = collectManifestGroup(["index.html", "src/main.ts"]);
-const expectedExcelFiles = collectManifestGroup(["src/core/spreadsheet.ts"]);
-const expectedArchiveFiles = collectNamedChunks(["archive"]);
+const expectedExcelFiles = collectManifestGroup(["src/core/formats/spreadsheet.ts"]);
+const expectedArchiveFiles = collectManifestGroup(["src/core/archive/zip.ts"]);
 const expectedFontFiles = collectManifestGroup([
   "src/styles/preview-font.css",
   "src/assets/fonts/SarasaMonoTC-Regular.woff2",
 ]);
-expectedBaseFiles.forEach((file) => expectedExcelFiles.delete(file));
-expectedArchiveFiles.forEach((file) => {
-  expectedBaseFiles.delete(file);
-  expectedExcelFiles.delete(file);
-});
 expectedFontFiles.forEach((file) => {
   expectedBaseFiles.delete(file);
   expectedExcelFiles.delete(file);
   expectedArchiveFiles.delete(file);
 });
+expectedBaseFiles.forEach((file) => {
+  expectedExcelFiles.delete(file);
+  expectedArchiveFiles.delete(file);
+});
+expectedExcelFiles.forEach((file) => expectedArchiveFiles.delete(file));
 
 assert.deepEqual(
   precachePaths,
@@ -242,34 +239,33 @@ assert.match(
   /<details id="rules-disclosure">[\s\S]*?<summary>[\s\S]*?15[\s\S]*?208[\s\S]*?<\/summary>/u,
   "Fixed rules must start as a native collapsed disclosure with a compact summary.",
 );
-assert.equal(
-  Array.from(indexHtml.matchAll(/<th scope="row">欄位(?:[1-9]|1[0-5])<\/th>/gu)).length,
-  15,
-  "The fixed profile disclosure must contain all 15 fields.",
-);
-for (const [fieldIndex, pattern] of [
-  [5, "^[a-z0-9]{5,10}$"],
-  [7, "^.+$"],
-  [9, "^.+$"],
-  [14, "^(?:[0-9]{8})?$"],
-  [15, "^[1-4]?$"],
-]) {
-  assert.ok(
-    indexHtml.includes(`<th scope="row">欄位${fieldIndex}</th>`) && indexHtml.includes(`<code>${pattern}</code>`),
-    `Field ${fieldIndex} must expose one complete regex instead of mixed format prose.`,
-  );
-}
 assert.match(
   indexHtml,
-  /欄位5[\s\S]*?證號無效時提醒，性別不符時錯誤[\s\S]*?欄位8[\s\S]*?有效證號時與欄位5比對性別/u,
-  "Field 5 and field 8 must describe the shared national and new-resident ID behavior.",
+  /<tbody id="fixed-rules-body"><\/tbody>/u,
+  "The fixed profile disclosure must expose an initially empty body for lazy rendering.",
+);
+assert.doesNotMatch(
+  indexHtml,
+  /<th scope="row">欄位(?:[1-9]|1[0-5])<\/th>/u,
+  "Fixed profile rows must come from the TypeScript profile instead of duplicated HTML.",
+);
+assert.match(indexHtml, /<label for="output-format">輸出格式<\/label>/u);
+assert.match(
+  indexHtml,
+  /<select id="output-format"[^>]*aria-describedby="output-format-help"[\s\S]*?<option value="big5-txt" selected>Big5 TXT<\/option>[\s\S]*?<option value="csv">CSV（UTF-8）<\/option>[\s\S]*?<option value="xlsx">XLSX<\/option>[\s\S]*?<\/select>/u,
+  "Output formats must use one native select and expose all three codecs.",
+);
+assert.doesNotMatch(indexHtml, /<input[^>]*name="output-format"|class="format-option"/u);
+assert.match(
+  indexHtml,
+  /id="row-filter"[\s\S]*?value="modified"[\s\S]*?value="excluded"/u,
+  "The preview must expose both transformed and explicitly excluded row filters.",
 );
 assert.match(
   indexHtml,
-  /name="output-format" value="big5-txt" checked/u,
+  /id="data-page-status"[^>]*aria-live="polite"/u,
+  "Explicit preview pagination and filter changes must announce their concise page status.",
 );
-assert.match(indexHtml, /name="output-format" value="xlsx"/u);
-assert.match(indexHtml, /id="row-filter"[\s\S]*?value="modified"/u);
 assert.match(
   indexHtml,
   /<th scope="col">輸出<\/th>/u,
@@ -301,7 +297,7 @@ assert.doesNotMatch(
 );
 assert.match(
   indexHtml,
-  /class="header-meta"[\s\S]*?<p class="eyebrow">瀏覽器本機處理<\/p>[\s\S]*?class="header-meta__separator"[^>]*>·<\/span>[\s\S]*?id="readiness-status"[^>]*data-state="components"[\s\S]*?>載入必要元件<\/span>/u,
+  /class="header-meta"[\s\S]*?<p class="eyebrow">瀏覽器本機處理<\/p>[\s\S]*?class="header-meta__separator"[^>]*>·<\/span>[\s\S]*?id="readiness-status"[^>]*class="status-indicator readiness-status"[^>]*data-tone="info"[^>]*data-loading="true"[\s\S]*?class="status-indicator__text">載入必要元件<\/span>/u,
 );
 assert.doesNotMatch(
   indexHtml,
@@ -343,13 +339,18 @@ assert.doesNotMatch(
 );
 assert.match(
   indexHtml,
-  /class="output-format-grid responsive-grid"/u,
-  "Output choices must consume the shared responsive-grid primitive.",
+  /class="output-format-control"/u,
+  "Output choices must use the compact native-select control.",
 );
 assert.match(
   indexHtml,
   /class="validation-summary responsive-grid"/u,
   "Validation summaries must consume the shared responsive-grid primitive.",
+);
+assert.match(
+  indexHtml,
+  /id="output-heading">輸出格式[\s\S]*?整個工作區所有檔案的完整摘要[\s\S]*?id="output-summary-heading">工作區完整摘要[\s\S]*?aria-labelledby="output-summary-heading"/u,
+  "Section 2 must identify its summary as the full workspace summary.",
 );
 assert.match(
   indexHtml,
@@ -374,17 +375,17 @@ assert.doesNotMatch(
   "Application styles must not rely on important overrides.",
 );
 assert.doesNotMatch(
-  `${componentStyles}\n${bootstrapStyles}\n${resultStyles}`,
+  `${componentStyles}\n${reusableComponentStyles}\n${bootstrapStyles}\n${resultStyles}`,
   /#[\da-f]{3,8}\b|rgba?\(/iu,
   "Component styles must consume shared palette tokens instead of color literals.",
 );
 assert.doesNotMatch(
-  `${componentStyles}\n${bootstrapStyles}\n${resultStyles}`,
+  `${componentStyles}\n${reusableComponentStyles}\n${bootstrapStyles}\n${resultStyles}`,
   /border(?:-(?:top|right|bottom|left))?:\s*1px\s+solid/u,
   "Component styles must consume shared border primitives.",
 );
 assert.doesNotMatch(
-  `${componentStyles}\n${bootstrapStyles}\n${resultStyles}`,
+  `${componentStyles}\n${reusableComponentStyles}\n${bootstrapStyles}\n${resultStyles}`,
   /border-radius:\s*(?:0?\.\d+rem|999px)/u,
   "Component styles must consume shared radius primitives.",
 );
@@ -451,19 +452,24 @@ assert.match(
   "The eyebrow and readiness status must reserve one stable line.",
 );
 assert.match(
-  baseCss,
-  /\.readiness-status\{[^}]*width:7\.75rem[^}]*height:1\.5rem[^}]*border:0/u,
-  "The readiness status must reserve a stable transparent text slot.",
+  reusableComponentStyles,
+  /\.status-indicator\s*\{[^}]*width:\s*var\(--status-indicator-width, auto\)[^}]*min-height:\s*var\(--status-indicator-height, 1\.5rem\)[^}]*border:\s*0/u,
+  "The reusable status indicator must own stable, configurable geometry.",
 );
-const readinessStatusRule = baseCss.match(/\.readiness-status\{[^}]*\}/u)?.[0];
-assert.ok(readinessStatusRule, "The readiness status rule must exist.");
+assert.match(
+  bootstrapStyles,
+  /\.readiness-status\s*\{[^}]*--status-indicator-width:\s*7\.75rem[^}]*--status-indicator-height:\s*1\.5rem/u,
+  "The header readiness instance must reserve its established slot.",
+);
+const readinessStatusRule = reusableComponentStyles.match(/\.status-indicator\s*\{[^}]*\}/u)?.[0];
+assert.ok(readinessStatusRule, "The reusable status indicator rule must exist.");
 assert.doesNotMatch(
   readinessStatusRule,
   /(?:background|box-shadow|text-shadow|filter):/u,
   "The readiness status container must not render a box or glow.",
 );
 const readinessShimmer = baseCss.match(
-  /@keyframes readiness-text-shimmer\{[\s\S]*?\}\}/u,
+  /@keyframes status-indicator-text-shimmer\{[\s\S]*?\}\}/u,
 )?.[0];
 assert.ok(readinessShimmer, "Loading readiness states must use a text shimmer.");
 assert.match(readinessShimmer, /background-position:/u);
@@ -530,8 +536,8 @@ assert.match(
   "Preview field indexes 1 through 15 must align with left-aligned cell content.",
 );
 assert.match(
-  workspaceViewSource,
-  /const FILTERABLE_ROW_STATES:[\s\S]*?function syncRowFilterOptions\(file: InternalFile\): void \{[\s\S]*?option\.disabled = !file\.rows\.some\(\(row\) => rowMatches\(row, filter\)\);[\s\S]*?rowFilter\.value = "all";/u,
+  dataPreviewViewSource,
+  /const FILTERABLE_ROW_STATES:[\s\S]*?function syncFilterOptions\(file: InternalFile\): void \{[\s\S]*?option\.disabled = !file\.rows\.some\(\(row\) => rowMatches\(row, filter\)\);[\s\S]*?rowFilter\.value = "all";/u,
   "Filters without matching rows must be disabled, with a safe fallback to all rows.",
 );
 assert.match(
@@ -560,8 +566,8 @@ assert.match(
   "Short preview results must retain non-interactive blank cellular rows.",
 );
 assert.match(
-  workspaceViewSource,
-  /const PREVIEW_ROW_SLOTS = 14;[\s\S]*?placeholderRow\.className = "preview-placeholder-row";[\s\S]*?placeholderRow\.setAttribute\("aria-hidden", "true"\)/u,
+  dataPreviewViewSource,
+  /const PREVIEW_ROW_SLOTS = 14;[\s\S]*?placeholder\.className = "preview-placeholder-row";[\s\S]*?placeholder\.setAttribute\("aria-hidden", "true"\)/u,
   "The preview must pad short or empty result sets with hidden blank rows.",
 );
 assert.match(
@@ -610,6 +616,11 @@ assert.match(
   /localStorage\.getItem\("csv2txt\.theme"\)/u,
   "The early boot script must restore the saved theme before first paint.",
 );
+assert.match(
+  themeSource,
+  /requestAnimationFrame\(\(\) => \{[\s\S]*?getComputedStyle\(document\.documentElement\)\.backgroundColor[\s\S]*?meta\[name="theme-color"\][\s\S]*?\}\);/u,
+  "Theme-color synchronization must defer its computed-style read until the next frame.",
+);
 
 const baseJavaScript = precachePaths.filter((path) => path.endsWith(".js"));
 const baseGzipBytes = baseJavaScript.reduce((total, path) => {
@@ -639,6 +650,51 @@ for (const agentFile of ["llms.txt", "robots.txt", "sitemap.xml"]) {
     `Agent discovery file is missing from the build: ${agentFile}`,
   );
 }
+assert.match(
+  llmsTxt,
+  /^#\s+\S.+$/mu,
+  "Agent discovery must provide a Markdown H1.",
+);
+assert.ok(
+  llmsTxt.length >= 50,
+  "Agent discovery content must not be suspiciously short.",
+);
+assert.match(
+  llmsTxt,
+  /\[[^\]]+\]\(https:\/\/[^)]+\)/u,
+  "Agent discovery must provide at least one Markdown link.",
+);
+for (const capability of ["CSV", "Big5 TXT", "XLSX", "ZIP", "不會上傳"]) {
+  assert.ok(
+    llmsTxt.includes(capability),
+    `Agent discovery is missing a current capability or privacy statement: ${capability}`,
+  );
+}
+assert.match(
+  robotsTxt,
+  /^User-agent:\s*\*\s*$/mu,
+  "robots.txt must declare the default crawler group.",
+);
+assert.match(
+  robotsTxt,
+  /^Allow:\s*\/\s*$/mu,
+  "robots.txt must allow the published application path.",
+);
+assert.match(
+  robotsTxt,
+  /^Sitemap:\s*https:\/\/sleek874\.github\.io\/csv2txt\/sitemap\.xml\s*$/mu,
+  "robots.txt must reference the canonical sitemap URL.",
+);
+assert.match(
+  sitemapXml,
+  /<loc>https:\/\/sleek874\.github\.io\/csv2txt\/<\/loc>/u,
+  "The sitemap must expose the canonical application URL.",
+);
+assert.match(
+  indexHtml,
+  /connect-src 'none'/u,
+  "The production CSP must continue to block runtime connections.",
+);
 assert.equal(
   generatedFiles.some((file) => file.endsWith(".map")),
   false,

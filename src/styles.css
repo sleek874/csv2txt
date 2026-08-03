@@ -1,6 +1,7 @@
 @layer foundation, bootstrap, components, results;
 @import "./styles/foundation.css" layer(foundation);
 @import "./styles/bootstrap.css" layer(bootstrap);
+@import "./styles/components.css" layer(components);
 @import "./styles/results.css" layer(results);
 
 @layer components {
@@ -618,12 +619,8 @@ button:disabled {
 }
 
 .rules-content {
-  padding: 0 1.35rem 1.35rem;
+  padding: 1rem 1.35rem 1.35rem;
   border-top: var(--border-ui-soft);
-}
-
-.rules-content > .help-text {
-  margin: 1rem 0 0.75rem;
 }
 
 .rules-table code {
@@ -642,50 +639,44 @@ button:disabled {
   font-size: 0.88rem;
 }
 
-.output-format-grid {
-  --responsive-column-min: 15rem;
-
+.output-format-control {
+  display: grid;
+  grid-template-columns: max-content minmax(10rem, 14rem) minmax(12rem, 1fr);
+  align-items: center;
+  gap: 0.35rem 1rem;
   margin: 1rem 0 0;
-  padding: 0;
-  border: 0;
 }
 
-.format-option {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.75rem;
-  padding: 0.9rem;
-  border: var(--border-ui);
-  border-radius: var(--radius-ui);
-  background: var(--color-surface-soft);
-  cursor: pointer;
+.output-format-control label {
+  font-weight: 700;
 }
 
-.format-option:has(input:checked) {
-  border-color: var(--color-accent-border);
-  background: var(--color-accent-bg);
-  box-shadow: var(--shadow-ui);
+.output-format-control select {
+  width: 100%;
 }
 
-.format-option input {
-  flex: none;
-  margin-top: 0.25rem;
-  accent-color: var(--color-accent);
+.output-format-control .help-text {
+  grid-column: 3;
+  margin: 0;
 }
 
-.format-option strong,
-.format-option small {
-  display: block;
-}
-
-.format-option small {
-  margin-top: 0.2rem;
-  color: var(--color-text-muted);
-  font-size: 0.78rem;
-  line-height: 1.45;
+.output-summary-heading {
+  margin-top: 1.25rem;
 }
 
 @container panel (max-width: 36rem) {
+  .output-format-control {
+    grid-template-columns: 1fr;
+  }
+
+  .output-format-control .help-text {
+    grid-column: 1;
+  }
+
+  .output-format-control select {
+    width: min(100%, 14rem);
+  }
+
   .rules-panel details > summary {
     align-items: stretch;
     flex-direction: column;
@@ -697,7 +688,7 @@ button:disabled {
   }
 
   .rules-content {
-    padding: 0 1rem 1rem;
+    padding: 1rem;
   }
 
   .data-toolbar,

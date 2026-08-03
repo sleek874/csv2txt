@@ -1,41 +1,35 @@
 # 離線資料轉換
 
-隱私優先的瀏覽器本機工具。所有來源資料、預覽、驗證與輸出只在目前瀏覽器記憶體處理，不會上傳。
+隱私優先的瀏覽器本機批次資料工具。來源檔案、預覽、驗證結果與輸出只保留在目前頁面的記憶體中，不會上傳、寫入瀏覽器儲存空間或傳送到第三方服務。
 
-## 目前部署能力
+## 此建置可用功能
 
-- CSV、XLS、XLSX 轉固定寬 Big5 TXT。
-- Big5 TXT 解析與 XLSX 輸出的單檔流程已在開發分支驗證。
-- 15 欄、208-byte 固定寬核心、Big5 round-trip、CRLF、離線快取與延遲 Excel 資源。
-- 目前部署頁面仍可能顯示舊設定式 workflow；不要把下列主要版本目標誤認為已完成。
+- 從同一個檔案選擇區載入 CSV、XLS、XLSX、Big5 TXT 與 ZIP。
+- 將所有支援的來源解析為共同的 15 欄資料模型，顯示逐檔狀態、問題與 100 列分頁預覽。
+- 遞迴處理 ZIP，保留安全虛擬路徑，限制巢狀深度、項目數與解壓縮大小。
+- 整批輸出 Big5 固定寬 TXT、UTF-8 CSV 或 XLSX；單一檔案直接下載，多個檔案保留路徑並打包為 ZIP。
+- 錯誤與警告資料列預設不輸出，使用者可逐列明確決定是否納入。
+- 支援離線快取、深色模式、鍵盤操作、減少動態效果與強制色彩模式。
 
-## 下一個主要版本
+## 固定資料契約
 
-- 網站名稱：離線資料轉換。
-- 單一通用檔案選擇區接受 CSV、XLS、XLSX、Big5 TXT 與 ZIP，不使用方向 tabs。
-- 固定 15 欄、每筆 208 bytes，不提供設定檔或欄寬修改。
-- 多檔案與遞迴 ZIP 批次處理。
-- 自動 decoder，不提供手動 encoding 選項。
-- 安全虛擬目錄、檔案篩選、狀態樹與 100-row 分頁內部資料表。
-- Source validation、明確 modification、final validation 後才輸出。
-- 下載階段為整批選擇 Big5 TXT 或 XLSX；輸出選擇不改變 IR 的驗證與修改。
-- UI 分為：0 收合式欄位規則、1 檔案樹與 IR preview、2 標準輸出格式、3 未來進階 XLSX 輸出。
-- 進階輸出將使用另一個參照 workbook 對 final IR 執行明確 lookup；詳細規則尚未定義，也尚未實作。
-- Error／warning 列預設不輸出；使用者可在預覽逐列勾選後強制納入，檔案層級 error 仍阻止輸出。
+- 共 15 欄，每筆 Big5 TXT 固定 208 bytes，欄寬為 `1, 2, 1, 10, 10, 8, 12, 1, 120, 15, 10, 1, 8, 8, 1`。
+- 所有來源儲存格先移除空白字元，完全空白的資料列會移除並計數。
+- Big5 TXT 的值靠左，右側以 `0x20` 補足欄寬，每筆及最後一筆都以 CRLF 結束。
+- 欄位10空值會在可追蹤的自動修正階段補為 `0000000000`，不在解析器或輸出器中靜默修改。
+- 不靜默截斷、覆寫、改名、展平路徑或略過整個失敗檔案。
 
-## 固定行為摘要
+## 隱私與範圍
 
-- 所有來源 cell 移除全部空白。
-- 完全空白列與 `,,,` 類全空 record 被移除並計數。
-- 所有 TXT 值靠左，右補 `0x20`。
-- 欄位10空值在共用 IR 的修改階段補為 `0000000000`，與來源及輸出格式無關。
-- ZIP 與虛擬資料夾深度上限 5，不跟隨 symbolic link。
-- UI 只顯示欄位1至欄位15，不顯示業務名稱。
+- 正式建置沒有上傳端點、帳號、遙測、執行階段 CDN 或第三方連線。
+- 檔案內容、路徑、問題、內部資料與輸出不會寫入 localStorage、IndexedDB、網址或紀錄。
+- 目前第 3 區只說明未來的進階 XLSX 整理流程，尚未提供參照活頁簿、欄位對應或查找功能。
+- 此檔案描述目前建置的能力；已部署網站可能在分支合併與 GitHub Pages 發布前仍是較舊版本。
 
-## 連結
+## 主要連結
 
-- 工具：https://sleek874.github.io/csv2txt/
-- 原始碼：https://github.com/sleek874/csv2txt
-- 規格：docs/DESIGN.md
-- 架構：docs/ARCHITECTURE.md
-- Roadmap：docs/ROADMAP.md
+- [開啟工具](https://sleek874.github.io/csv2txt/)
+- [原始碼](https://github.com/sleek874/csv2txt)
+- [資料與產品規格](https://github.com/sleek874/csv2txt/blob/main/docs/DESIGN.md)
+- [架構與責任邊界](https://github.com/sleek874/csv2txt/blob/main/docs/ARCHITECTURE.md)
+- [分階段更新計畫](https://github.com/sleek874/csv2txt/blob/main/docs/ROADMAP.md)

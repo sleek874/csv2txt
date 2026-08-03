@@ -2,7 +2,7 @@
 
 ## 1. 架構目標
 
-下一個主要版本保留已驗證的靜態頁面、離線、視覺與檔案轉換骨架，但不延伸舊 settings-first controller。新架構以共用內部表示為唯一工作區，讓所有輸入格式、批次 ZIP、驗證、修改、預覽與兩種輸出共用同一條可測試資料管線。
+下一個主要版本保留已驗證的靜態頁面、離線、視覺與檔案轉換骨架，但不延伸舊 settings-first controller。新架構以共用內部表示為唯一工作區，讓所有輸入格式、批次 ZIP、驗證、自動修正、預覽與三種輸出共用同一條可測試資料管線。
 
 原則：
 
@@ -46,7 +46,7 @@ Optional advanced branch
 建議型別方向：
 
 ```ts
-type OutputFormat = "big5-txt" | "xlsx";
+type OutputFormat = "big5-txt" | "csv" | "xlsx";
 type Severity = "error" | "warning";
 
 interface InternalFile {
@@ -99,21 +99,30 @@ interface InternalCell {
 | Input adapters | CSV、Excel、Big5 TXT 解析為 logical rows | 補 TEL、下載、UI issue render |
 | Normalization | 移除空白、空白列、ID 大寫、來源列號 | 最終 byte padding |
 | Validation | 欄位、日期、checksum、跨欄、severity | 直接修改值 |
-| Transformations | 明確列篩選與值修改、change log | 隱藏修正 validator error |
-| Output adapters | Big5 TXT bytes、XLSX workbook | Parser fallback、UI state |
-| Advanced lookup | 參照 workbook、有序 join plan、match issue、整理後 workbook model | 修改 primary IR、隱藏 fallback、阻擋 standard output |
+| Transformations | 明確列篩選與值自動修正、change log | 隱藏修正 validator error |
+| Output adapters | Big5 TXT bytes、UTF-8 CSV、XLSX workbook | Parser fallback、UI state |
+| Advanced lookup | 參照 workbook、有序 join plan、match issue、整理後 workbook model | 改寫 primary IR、隱藏 fallback、阻擋 standard output |
 | Archive | ZIP inventory、quota、安全路徑、ZIP output | 欄位規則 |
 | Batch orchestration | Queue、取消、狀態聚合、資源需求、整批輸出選擇 | Validator 細節、DOM markup |
 | Views | Tree、summary、100-row page、issue popover | 解析、checksum、ZIP 解壓 |
 | Browser integration | File picker、download、unload guard、theme | Domain 規則 |
 
-## 5. 目前模組輪廓
+## 5. 模組輪廓與本次重構
 
-目前只保留已有實際使用者的模組；進階輸出、資料夾節點與 worker 在對應契約確認前不建立空殼。
+本次重構將格式 I/O、容器 I/O、資源生命週期與各 section UI 明確分層。只建立已有實際使用者的模組；進階輸出、資料夾節點與 worker 在對應契約確認前不建立空殼。
 
 ```text
 src/
   core/
+    formats/
+      types.ts
+      csv.ts
+      big5-txt.ts
+      spreadsheet.ts
+    archive/
+      types.ts
+      policy.ts
+      zip.ts
     fixed-profile.ts
     internal-model.ts
     conversion-pipeline.ts
@@ -121,28 +130,45 @@ src/
     validation.ts
     transformations.ts
     encoding.ts
-    csv.ts
-    spreadsheet.ts
-    fixed-width.ts
-    fixed-width-inverse.ts
-    archive.ts
-    source.ts
+    bytes.ts
+    file-formats.ts
   app/
-    workspace-controller.ts
-    workspace-view.ts
-    source-adapter.ts
-    output-adapter.ts
-    resource-priority.ts
-    spreadsheet-loader.ts
-    archive-loader.ts
+    state/
+      workspace-model.ts
+      workspace-types.ts
+    sections/
+      rules/rules-view.ts
+      input/input-controller.ts
+      input/input-section-view.ts
+      input/file-picker-view.ts
+      input/file-tree-view.ts
+      input/data-preview-view.ts
+      output/output-controller.ts
+      output/output-view.ts
+      output/output-presentations.ts
+    adapters/
+      input-adapter.ts
+      output-adapter.ts
+    resources/
+      codec-manager.ts
+      resource-policy.ts
+    shell/
+      app-status.ts
+      readiness-view.ts
+      status-indicator.ts
   browser/
     dom.ts
+    download.ts
     offline-cache.ts
     theme.ts
     unload-guard.ts
 ```
 
-`src/main.ts` 只建立共享的 spreadsheet、archive、offline cache、controller 與 view，並連接頂層生命週期。`workspace-controller.ts` 負責批次狀態與流程；`workspace-view.ts` 集中管理目前單一頁面的 DOM 呈現。等真正的資料夾節點或 worker page protocol 成為使用者後，再沿 `file-tree-view` 與 `data-page-view` 邊界拆分，避免先建立只有轉呼叫的薄模組。
+CSV、Big5 TXT 與 Spreadsheet 是三個 tabular codec，各自擁有 parse 與 serialize。ZIP 是 container codec，交換 archive entries 而非 logical rows，因此放在 `core/archive/`，也不成為 Section 2 dropdown 的第四種資料格式。
+
+`src/main.ts` 只建立共享 model、resource manager、controllers 與 views，並連接頂層生命週期。每個 view 只查詢自己 section root 內的元素；跨 section 的檔案、列納入決策與整批輸出格式由 `workspace-model.ts` 保存。Section 2 的完整摘要與下載計畫由目前 snapshot 即時計算，不另存衍生狀態；頁碼、篩選、tooltip 與 disclosure 等純呈現狀態留在各 view。
+
+Section 3 尚未實作，因此 `app/sections/advanced/` 與 `core/advanced/` 只記錄為已確認的未來邊界，不先建立空檔案或無作用控制。
 
 ## 6. Batch state
 
@@ -186,22 +212,32 @@ Worker 保存 active batch 的內部表示，並以 request/response API 提供�
 
 ### Excel
 
-保留 `src/app/spreadsheet-loader.ts` 的單一 memoized loader 與 Excel manual chunk：
+由 `src/app/resources/codec-manager.ts` 保存單一 memoized spreadsheet codec promise 與 Excel manual chunk：
 
 - Inventory 或 parser 遇到 XLS/XLSX input 時載入 Excel。
 - CSV 或 Big5 TXT input 本身不載入 Excel。
 - 使用者選擇 XLSX output、實際需要建立 workbook 時載入 Excel。
-- Section 3 讀取 reference workbook 與產生 organized XLSX 時重用同一個 loader，不建立第二套 Excel dependency。
+- Section 3 讀取 reference workbook 與產生 organized XLSX 時重用同一個 spreadsheet codec；Section 3 不直接 import SheetJS，也不建立第二套 Excel dependency。
 - Batch 中多個檔案共用同一個 module promise。
+
+`spreadsheet.ts` 提供 generic workbook inspection/read/write 能力，以及 standard 15-column workflow 的 convenience functions。Section 3 重用前者，但 lookup、mapping 與 organized workbook model 仍屬於 `core/advanced/`，不得塞入 codec。
 
 ### ZIP
 
-ZIP library 採獨立 lazy chunk，由單一 `archive-loader` 管理：
+ZIP library 採獨立 lazy chunk，由 `codec-manager` 載入 `core/archive/zip.ts`：
 
 - Inventory 發現 ZIP 時載入 reader。
 - 只有準備下載時載入 writer 路徑。
 - 不在 UI component 直接 import ZIP dependency。
 - 解壓時使用 stream/filter/quota，不使用無界 `unzipSync` 處理整批內容。
+- `zip.ts` 同時提供安全 extract 與 serialize；path、depth、quota、symlink 與 collision 規則放在相鄰 policy 模組。
+- Standard output 只有一個檔案時直接回傳 tabular codec artifact；兩個以上才載入 ZIP writer，保留 virtual path，並以 output codec 與台北分鐘時間戳命名 archive。
+
+### CSV 與 Big5
+
+- CSV codec 負責自動文字解碼、CSV parse，以及 UTF-8 BOM／CRLF／無標題列的 CSV serialize。
+- Big5 TXT codec 負責嚴格 Big5、208-byte records、padding 與 CRLF 的雙向 I/O。
+- 三個 tabular codecs 都由 resource manager 暴露一致的 prepare/get 生命週期，但不強迫採相同載入時機。CSV 很小且是常見路徑；Big5 encoding 是固定 profile validation 的必要能力；Spreadsheet 才維持真正的 on-demand heavy chunk。
 
 ### Preview font
 
@@ -260,6 +296,8 @@ Build verifier 必須確認 manifest 與 group 一致、沒有遺漏 dynamic ass
 - Data page：15-column table、cell severity、pagination。
 - Standard output：summary、整批 output selector、download、file-level status。
 - Advanced output：獨立 reference picker、lookup plan/result、organized XLSX download。
+
+Header readiness 使用共用 status indicator component。Component 擁有固定幾何、狀態色、文字 shimmer、`prefers-reduced-motion` 與 forced-colors fallback；readiness view 只提供 state 與文字。動畫不得被複製成另一套 section-specific CSS。
 
 Live region 只宣告批次開始、完成、取消與目前選取檔案的重大結果；不得逐檔或逐列洗版。
 

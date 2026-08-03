@@ -28,8 +28,13 @@
           <div class="header-meta">
             <p class="eyebrow">瀏覽器本機處理</p>
             <span class="header-meta__separator" aria-hidden="true">·</span>
-            <div id="readiness-status" class="readiness-status" data-state="components">
-              <span class="readiness-status__text">載入必要元件</span>
+            <div
+              id="readiness-status"
+              class="status-indicator readiness-status"
+              data-tone="info"
+              data-loading="true"
+            >
+              <span class="status-indicator__text">載入必要元件</span>
             </div>
           </div>
           <h1>離線資料轉換</h1>
@@ -42,7 +47,7 @@
             type="button"
             role="switch"
             aria-checked="false"
-            aria-label="深色模式（系統）"
+            aria-label="深色模式 系統"
           >
             <span>深色模式</span>
             <span class="theme-toggle-mode">系統</span>
@@ -75,28 +80,11 @@
               </span>
             </summary>
             <div class="rules-content">
-              <p class="help-text">展開查看各欄位的寬度與格式。</p>
               <div class="table-scroll" tabindex="0" aria-label="固定欄位規則表格，可左右捲動">
                 <table class="rules-table">
                   <caption class="visually-hidden">固定 15 欄的 Big5 位元組寬度與驗證規則</caption>
                   <thead><tr><th scope="col">欄位</th><th scope="col">寬度</th><th scope="col">格式</th><th scope="col">額外規則</th></tr></thead>
-                  <tbody>
-                    <tr><th scope="row">欄位1</th><td>1</td><td><code>^[AB]$</code></td><td>必填</td></tr>
-                    <tr><th scope="row">欄位2</th><td>2</td><td><code>^[0-9]{2}$</code></td><td>必填；保留前置零</td></tr>
-                    <tr><th scope="row">欄位3</th><td>1</td><td><code>^[1-6]$</code></td><td>必填</td></tr>
-                    <tr><th scope="row">欄位4</th><td>10</td><td><code>^[0-9]{10}$</code></td><td>必填；不自動補零</td></tr>
-                    <tr><th scope="row">欄位5</th><td>10</td><td><code>^[a-z0-9]{5,10}$</code></td><td>轉大寫；證號無效時提醒，性別不符時錯誤</td></tr>
-                    <tr><th scope="row">欄位6</th><td>8</td><td><code>^[0-9]{8}$</code></td><td>真實日期且早於今天</td></tr>
-                    <tr><th scope="row">欄位7</th><td>12</td><td><code>^.+$</code></td><td>可安全轉為 Big5</td></tr>
-                    <tr><th scope="row">欄位8</th><td>1</td><td><code>^[12]$</code></td><td>有效證號時與欄位5比對性別</td></tr>
-                    <tr><th scope="row">欄位9</th><td>120</td><td><code>^.+$</code></td><td>必填；可安全轉為 Big5</td></tr>
-                    <tr><th scope="row">欄位10</th><td>15</td><td><code>^[0-9()+#-]{1,15}$</code></td><td>來源可空；空值明確補為 0000000000</td></tr>
-                    <tr><th scope="row">欄位11</th><td>10</td><td><code>^[A-Z][12][0-9]{8}$</code></td><td>身分證檢查碼</td></tr>
-                    <tr><th scope="row">欄位12</th><td>1</td><td><code>^[ABCD]$</code></td><td>必填</td></tr>
-                    <tr><th scope="row">欄位13</th><td>8</td><td><code>^[0-9]{8}$</code></td><td>真實日期且早於今天</td></tr>
-                    <tr><th scope="row">欄位14</th><td>8</td><td><code>^(?:[0-9]{8})?$</code></td><td>晚於欄位13且早於今天</td></tr>
-                    <tr><th scope="row">欄位15</th><td>1</td><td><code>^[1-4]?$</code></td><td>與欄位14同時有值或同時空白</td></tr>
-                  </tbody>
+                  <tbody id="fixed-rules-body"></tbody>
                 </table>
               </div>
             </div>
@@ -123,10 +111,10 @@
                   <span id="file-processing-indicator" class="busy-spinner" hidden></span>
                 </span>
               </div>
-              <p class="help-text">檔案只在這個頁面中處理；ZIP 內支援的檔案會加入下方清單。</p>
+              <p class="help-text">可分次新增檔案；工作區中既有的檔案會保留，所有內容只在這個頁面中處理。</p>
             </div>
             <div class="file-picker-actions">
-              <button id="select-source-button" class="primary-button" type="button">選擇檔案</button>
+              <button id="select-source-button" class="primary-button" type="button">新增檔案</button>
               <button id="clear-workspace-button" class="secondary-button" type="button" disabled>全部清除</button>
             </div>
             <input id="source-file" type="file" accept=".csv,.xls,.xlsx,.txt,.zip" multiple hidden />
@@ -146,7 +134,7 @@
                   <h3 id="file-tree-heading">工作區檔案</h3>
                   <span id="file-tree-count" class="file-tree-count"></span>
                 </div>
-                <p id="file-tree-help" class="visually-hidden">上下方向鍵可切換檔案；每列右側按鈕只會從工作區移除該檔案。</p>
+                <p id="file-tree-help" class="visually-hidden">上下方向鍵可移動，左右方向鍵可展開或收合；來源右側按鈕會從工作區移除該來源及其檔案。</p>
                 <ul id="file-tree" class="file-tree" role="tree" aria-describedby="file-tree-help"></ul>
               </aside>
 
@@ -156,22 +144,23 @@
                   <div><dt>輸出列</dt><dd id="included-row-summary">—</dd></div>
                   <div><dt>空白列</dt><dd id="blank-row-summary">—</dd></div>
                   <div><dt>錯誤</dt><dd id="error-summary">—</dd></div>
-                  <div><dt>提醒</dt><dd id="warning-summary">—</dd></div>
-                  <div><dt>修改</dt><dd id="modified-summary">—</dd></div>
+                  <div><dt>警告</dt><dd id="warning-summary">—</dd></div>
+                  <div><dt>自動修正</dt><dd id="modified-summary">—</dd></div>
                 </dl>
 
                 <div class="subsection-heading data-toolbar">
                   <div>
                     <h3>資料預覽</h3>
-                    <p>將游標移到標記的欄位，或用鍵盤聚焦，即可查看說明。</p>
+                    <p>將游標移到狀態欄，或用鍵盤聚焦，即可查看說明。</p>
                   </div>
                   <label class="filter-control" for="row-filter">顯示
                     <select id="row-filter">
                       <option value="all">全部</option>
                       <option value="error">錯誤</option>
-                      <option value="warning">提醒</option>
+                      <option value="warning">警告</option>
                       <option value="valid">有效</option>
-                      <option value="modified">已修改</option>
+                      <option value="modified">自動修正</option>
+                      <option value="excluded">已排除</option>
                     </select>
                   </label>
                 </div>
@@ -191,7 +180,7 @@
                   </table>
                 </div>
                 <div class="page-navigation">
-                  <p id="data-page-status" class="page-status"></p>
+                  <p id="data-page-status" class="page-status" aria-live="polite"></p>
                   <div class="page-actions">
                     <button id="previous-page-button" class="secondary-button" type="button" disabled>上一頁</button>
                     <button id="next-page-button" class="secondary-button" type="button" disabled>下一頁</button>
@@ -209,24 +198,37 @@
             <span aria-hidden="true">2</span>
             <div>
               <h2 id="output-heading">輸出格式</h2>
-              <p class="help-text">選擇下載格式。</p>
+              <p class="help-text">選擇下載格式，並查看整個工作區所有檔案的完整摘要。</p>
             </div>
           </div>
-          <fieldset class="output-format-grid responsive-grid">
-            <legend class="visually-hidden">選擇輸出格式</legend>
-            <label class="format-option">
-              <input type="radio" name="output-format" value="big5-txt" checked />
-              <span><strong>Big5 TXT</strong><small>固定 208 bytes／筆。</small></span>
-            </label>
-            <label class="format-option">
-              <input type="radio" name="output-format" value="xlsx" />
-              <span><strong>XLSX</strong><small>15 欄文字資料，不含標題列。</small></span>
-            </label>
-          </fieldset>
+          <div class="output-format-control">
+            <label for="output-format">輸出格式</label>
+            <select id="output-format" aria-describedby="output-format-help">
+              <option value="big5-txt" selected>Big5 TXT</option>
+              <option value="csv">CSV（UTF-8）</option>
+              <option value="xlsx">XLSX</option>
+            </select>
+            <p id="output-format-help" class="help-text">固定 208 bytes／筆。</p>
+          </div>
+          <div class="subsection-heading output-summary-heading">
+            <div>
+              <h3 id="output-summary-heading">工作區完整摘要</h3>
+              <p>合計涵蓋工作區內所有檔案，不只目前預覽的檔案。</p>
+            </div>
+          </div>
+          <dl class="validation-summary responsive-grid" aria-labelledby="output-summary-heading">
+            <div><dt>檔案</dt><dd id="output-file-summary">0</dd></div>
+            <div><dt>資料列</dt><dd id="output-source-row-summary">0</dd></div>
+            <div><dt>輸出列</dt><dd id="output-row-summary">0</dd></div>
+            <div><dt>空白列</dt><dd id="output-blank-row-summary">0</dd></div>
+            <div><dt>錯誤</dt><dd id="output-error-summary">0</dd></div>
+            <div><dt>警告</dt><dd id="output-warning-summary">0</dd></div>
+            <div><dt>自動修正</dt><dd id="output-modified-summary">0</dd></div>
+          </dl>
           <div class="download-bar">
             <div>
               <strong id="download-status-title">尚未準備下載</strong>
-              <span id="download-status-detail">請先選擇並完成驗證。</span>
+              <span id="download-status-detail">請先新增檔案並完成驗證。</span>
             </div>
             <button id="download-button" class="primary-button" type="button" disabled>下載 Big5 TXT</button>
           </div>

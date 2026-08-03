@@ -1,4 +1,4 @@
-export type OutputFormat = "big5-txt" | "xlsx";
+export type { OutputFormat } from "./file-formats";
 export type IssueSeverity = "error" | "warning";
 export type IssueStage = "adapter" | "source" | "final";
 
@@ -9,6 +9,14 @@ export interface DataIssue {
   message: string;
   sourceRow?: number;
   fieldIndex?: number;
+  relatedFieldIndices?: readonly number[];
+}
+
+export function issueFieldIndices(issue: DataIssue): readonly number[] {
+  return [...new Set([
+    ...(issue.fieldIndex === undefined ? [] : [issue.fieldIndex]),
+    ...(issue.relatedFieldIndices ?? []),
+  ])];
 }
 
 export interface TransformationChange {

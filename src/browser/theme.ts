@@ -5,6 +5,7 @@ type Theme = "light" | "dark";
 export function installTheme(): void {
   const systemDarkTheme = window.matchMedia("(prefers-color-scheme: dark)");
   let manualTheme: Theme | null = null;
+  let themeColorFrame: number | null = null;
 
   try {
     const storedTheme = localStorage.getItem(THEME_STORAGE_KEY);
@@ -19,12 +20,22 @@ export function installTheme(): void {
     return manualTheme ?? (systemDarkTheme.matches ? "dark" : "light");
   }
 
+  function scheduleThemeColorUpdate(): void {
+    if (themeColorFrame !== null) {
+      cancelAnimationFrame(themeColorFrame);
+    }
+    themeColorFrame = requestAnimationFrame(() => {
+      themeColorFrame = null;
+      const pageColor = getComputedStyle(document.documentElement).backgroundColor;
+      document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+        ?.setAttribute("content", pageColor);
+    });
+  }
+
   function applyTheme(): void {
     const theme = resolvedTheme();
     document.documentElement.dataset.theme = theme;
-    const pageColor = getComputedStyle(document.documentElement).backgroundColor;
-    document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
-      ?.setAttribute("content", pageColor);
+    scheduleThemeColorUpdate();
 
     const toggle = document.querySelector<HTMLButtonElement>("#theme-toggle");
     if (!toggle) {
@@ -33,7 +44,7 @@ export function installTheme(): void {
 
     const source = manualTheme ? "自訂" : "系統";
     toggle.setAttribute("aria-checked", String(theme === "dark"));
-    toggle.setAttribute("aria-label", `深色模式（${source}）`);
+    toggle.setAttribute("aria-label", `深色模式 ${source}`);
     toggle.title = `${theme === "dark" ? "深色" : "淺色"}模式（${source}）`;
     const mode = toggle.querySelector<HTMLElement>(".theme-toggle-mode");
     if (mode) {
