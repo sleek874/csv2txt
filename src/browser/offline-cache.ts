@@ -5,6 +5,11 @@ export type OfflineCacheState =
   | "ready"
   | "error";
 
+export interface OfflineCache {
+  prepareOfflineUse(): Promise<void>;
+  prioritizePreviewFont(): Promise<void>;
+}
+
 interface OfflineCacheOptions {
   baseUrl: string;
   production: boolean;
@@ -16,6 +21,7 @@ interface OfflinePreparationResult {
 }
 
 interface OfflinePreparationRequest {
+  includeArchive: boolean;
   includeExcel: boolean;
   type: "PREPARE_RESOURCES";
 }
@@ -36,6 +42,7 @@ function runWhenIdle(task: () => void): void {
 function requestPreparation(
   worker: ServiceWorker,
   includeExcel: boolean,
+  includeArchive: boolean,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const channel = new MessageChannel();
@@ -54,6 +61,7 @@ function requestPreparation(
     };
 
     const request: OfflinePreparationRequest = {
+      includeArchive,
       includeExcel,
       type: "PREPARE_RESOURCES",
     };
@@ -72,8 +80,9 @@ async function loadPreviewFont(): Promise<void> {
 async function activatePreviewFont(
   worker: ServiceWorker,
   includeExcel: boolean,
+  includeArchive: boolean,
 ): Promise<void> {
-  await requestPreparation(worker, includeExcel);
+  await requestPreparation(worker, includeExcel, includeArchive);
   await loadPreviewFont();
 }
 
@@ -130,7 +139,7 @@ export function createOfflineCache(options: OfflineCacheOptions) {
           return;
         }
 
-        void activatePreviewFont(worker, true)
+        void activatePreviewFont(worker, true, true)
           .then(() => options.onStateChange("ready"))
           .catch(() => options.onStateChange("error"));
       });
@@ -148,7 +157,7 @@ export function createOfflineCache(options: OfflineCacheOptions) {
     try {
       const worker = await prepareWorker();
       if (worker) {
-        await activatePreviewFont(worker, false);
+        await activatePreviewFont(worker, false, false);
       } else {
         await loadPreviewFont();
       }

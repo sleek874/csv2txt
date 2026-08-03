@@ -46,10 +46,6 @@
   --color-disabled-text: light-dark(#64748b, #64748b);
   --color-disabled-bg: light-dark(#e2e8f0, #1e293b);
   --color-disabled-border: light-dark(#cbd5e1, #475569);
-  --color-preview-a: light-dark(#4abfc4, #58c4c8);
-  --color-preview-b: light-dark(#f0aa61, #efb16f);
-  --color-padding-text: light-dark(#2f729e, #8ac9ee);
-  --color-padding-bg: light-dark(rgb(207 234 249 / 72%), rgb(35 78 105 / 78%));
   --color-shadow: light-dark(rgb(15 23 42 / 6%), rgb(0 0 0 / 24%));
   --radius-ui: 0.625rem;
   --radius-marker: 0.2rem;
@@ -105,16 +101,13 @@
   .page-header,
   .header-meta,
   .step-heading,
-  .section-heading-row,
-  .profile-status,
+  .rules-summary-heading,
   .file-picker,
   .file-picker-actions,
-  .source-options,
   .source-file-picker,
   .file-status-line,
   .subsection-heading,
-  .preview-options,
-  .preview-row-count,
+  .page-navigation,
   .download-bar
 ) > * {
   min-width: 0;
@@ -122,9 +115,7 @@
 
 :where(
   .help-text,
-  .profile-status-copy,
   .notice,
-  .control-group,
   .download-bar
 ) {
   overflow-wrap: anywhere;
@@ -133,15 +124,11 @@
 :where(
   dialog,
   .panel,
-  .compact-card,
-  .profile-status,
   .file-picker,
-  .source-encoding,
   .schema-summary,
   .table-scroll,
   .validation-summary,
   .notice,
-  .preview-chunk,
   .download-bar,
   .embed-blocked,
   .noscript-warning
@@ -260,6 +247,7 @@ button {
 
 button,
 input[type="checkbox"],
+input[type="radio"],
 select {
   cursor: pointer;
 }
@@ -272,7 +260,7 @@ button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 .table-scroll:focus-visible,
-.preview-chunk:focus-visible {
+.rules-panel summary:focus-visible {
   outline: 3px solid var(--color-focus);
   outline-offset: 2px;
 }

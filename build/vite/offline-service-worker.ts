@@ -2,13 +2,17 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import type { OutputAsset } from "rollup";
 import type { Manifest, Plugin } from "vite";
+
+interface GeneratedAsset {
+  source: string | Uint8Array;
+}
 
 const MANIFEST_FILE_NAME = ".vite/manifest.json";
 const BOOT_FILE_NAME = "boot.js";
 const BASE_MANIFEST_ROOTS = ["index.html", "src/main.ts"];
 const EXCEL_MANIFEST_ROOTS = ["src/core/spreadsheet.ts"];
+const ARCHIVE_CHUNK_NAMES = ["archive"];
 const FONT_MANIFEST_ROOTS = [
   "src/styles/preview-font.css",
   "src/assets/fonts/SarasaMonoTC-Regular.woff2",
@@ -41,13 +45,32 @@ function collectManifestGroup(
   return files;
 }
 
-function readAssetSource(asset: OutputAsset): string {
+function collectNamedChunks(
+  manifest: Manifest,
+  names: readonly string[],
+): Set<string> {
+  const files = new Set<string>();
+  for (const chunk of Object.values(manifest)) {
+    if (!chunk.name || !names.includes(chunk.name)) {
+      continue;
+    }
+    files.add(chunk.file);
+    chunk.css?.forEach((file) => files.add(file));
+    chunk.assets?.forEach((file) => files.add(file));
+  }
+  if (files.size === 0) {
+    throw new Error(`Vite manifest is missing named chunks: ${names.join(", ")}`);
+  }
+  return files;
+}
+
+function readAssetSource(asset: GeneratedAsset): string {
   return typeof asset.source === "string"
     ? asset.source
     : new TextDecoder().decode(asset.source);
 }
 
-function readManifestAsset(asset: OutputAsset): {
+function readManifestAsset(asset: GeneratedAsset): {
   manifest: Manifest;
   source: string;
 } {
@@ -88,17 +111,24 @@ export function offlineServiceWorker(): Plugin {
 
         const { manifest, source: manifestSource } = readManifestAsset(manifestAsset);
         const indexHtmlSource = readAssetSource(indexHtmlAsset);
-        const excelFiles = collectManifestGroup(manifest, EXCEL_MANIFEST_ROOTS);
-        const fontFiles = collectManifestGroup(manifest, FONT_MANIFEST_ROOTS);
         const baseFiles = collectManifestGroup(manifest, BASE_MANIFEST_ROOTS);
-        excelFiles.forEach((file) => baseFiles.delete(file));
+        const excelFiles = collectManifestGroup(manifest, EXCEL_MANIFEST_ROOTS);
+        const archiveFiles = collectNamedChunks(manifest, ARCHIVE_CHUNK_NAMES);
+        const fontFiles = collectManifestGroup(manifest, FONT_MANIFEST_ROOTS);
+        baseFiles.forEach((file) => excelFiles.delete(file));
+        archiveFiles.forEach((file) => {
+          baseFiles.delete(file);
+          excelFiles.delete(file);
+        });
         fontFiles.forEach((file) => {
           baseFiles.delete(file);
           excelFiles.delete(file);
+          archiveFiles.delete(file);
         });
 
         const precachePaths = ["./", `./${BOOT_FILE_NAME}`, ...relativePaths(baseFiles)];
         const excelPaths = relativePaths(excelFiles);
+        const archivePaths = relativePaths(archiveFiles);
         const fontPaths = relativePaths(fontFiles);
         const buildId = createHash("sha256")
           .update(manifestSource)
@@ -114,6 +144,7 @@ const MANAGED_CACHE_PREFIX = "csv2txt-";
 const FONT_CACHE_NAME = "csv2txt-fonts";
 const PRECACHE_PATHS = ${JSON.stringify(precachePaths)};
 const EXCEL_PATHS = ${JSON.stringify(excelPaths)};
+const ARCHIVE_PATHS = ${JSON.stringify(archivePaths)};
 const FONT_PATHS = ${JSON.stringify(fontPaths)};
 
 function scopedRequest(path, cache) {
@@ -168,6 +199,10 @@ function prepareExcel() {
   return cacheResources(APP_CACHE_NAME, EXCEL_PATHS);
 }
 
+function prepareArchive() {
+  return cacheResources(APP_CACHE_NAME, ARCHIVE_PATHS);
+}
+
 function prepareFonts() {
   return cacheResources(FONT_CACHE_NAME, FONT_PATHS, true);
 }
@@ -198,9 +233,9 @@ self.addEventListener("message", (event) => {
   }
 
   const replyPort = event.ports[0];
-  const preparation = event.data.includeExcel
-    ? prepareExcel().then(prepareFonts)
-    : prepareFonts();
+  const preparation = (event.data.includeExcel ? prepareExcel() : Promise.resolve())
+    .then(() => event.data.includeArchive ? prepareArchive() : undefined)
+    .then(prepareFonts);
   event.waitUntil(
     preparation
       .then(() => replyPort?.postMessage({ ok: true }))

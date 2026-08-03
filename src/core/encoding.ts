@@ -1,9 +1,6 @@
 import * as iconv from "iconv-lite";
 
-import type {
-  DetectedEncoding,
-  SourceEncodingPreference,
-} from "./types";
+type DetectedEncoding = "utf-8" | "utf-16le" | "utf-16be" | "big5";
 
 export interface DecodedSource {
   text: string;
@@ -31,7 +28,7 @@ function strictUnicodeDecode(
   }
 }
 
-function strictBig5Decode(bytes: Uint8Array): string {
+export function decodeBig5(bytes: Uint8Array): string {
   const decoded = iconv.decode(bytes, "big5");
   const encoded = new Uint8Array(iconv.encode(decoded, "big5"));
 
@@ -79,53 +76,13 @@ function decodeDetected(bytes: Uint8Array, encoding: DetectedEncoding): string {
     case "utf-16be":
       return strictUnicodeDecode(startsWith(bytes, [0xfe, 0xff]) ? bytes.subarray(2) : bytes, "utf-16be");
     case "big5":
-      return strictBig5Decode(bytes);
+      return decodeBig5(bytes);
   }
 }
 
-export function decodeSource(
-  bytes: Uint8Array,
-  preference: SourceEncodingPreference,
-): DecodedSource {
+export function decodeSource(bytes: Uint8Array): DecodedSource {
   if (bytes.length === 0) {
     throw new Error("檔案是空的，請選擇含有資料的 CSV 檔案。");
-  }
-
-  if (preference === "utf-8") {
-    return {
-      text: decodeDetected(bytes, "utf-8"),
-      encoding: "utf-8",
-      label: "UTF-8（手動指定）",
-      ambiguous: false,
-    };
-  }
-
-  if (preference === "big5") {
-    return {
-      text: decodeDetected(bytes, "big5"),
-      encoding: "big5",
-      label: "Big5（手動指定）",
-      ambiguous: false,
-    };
-  }
-
-  if (preference === "utf-16") {
-    const encoding = startsWith(bytes, [0xfe, 0xff])
-      ? "utf-16be"
-      : startsWith(bytes, [0xff, 0xfe])
-        ? "utf-16le"
-        : utf16Hint(bytes);
-
-    if (!encoding) {
-      throw new Error("UTF-16 檔案缺少 BOM，且無法安全判斷位元組順序。");
-    }
-
-    return {
-      text: decodeDetected(bytes, encoding),
-      encoding,
-      label: `${encoding === "utf-16le" ? "UTF-16LE" : "UTF-16BE"}（手動指定）`,
-      ambiguous: !startsWith(bytes, [0xff, 0xfe]) && !startsWith(bytes, [0xfe, 0xff]),
-    };
   }
 
   if (startsWith(bytes, [0xef, 0xbb, 0xbf])) {

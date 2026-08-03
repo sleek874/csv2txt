@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#f8fafc" />
     <meta
       name="description"
-      content="在瀏覽器中將 CSV、XLS、XLSX 轉換為 Big5 定長文字檔，資料不會上傳。"
+      content="在瀏覽器內驗證 CSV、XLS、XLSX、Big5 TXT 與 ZIP，並輸出固定格式資料；檔案不會上傳。"
     />
     <meta name="robots" content="index, follow" />
     <meta
@@ -16,18 +16,13 @@
     />
     <script vite-ignore src="./boot.js"></script>
     <link rel="canonical" href="https://sleek874.github.io/csv2txt/" />
-    <link
-      rel="alternate"
-      type="text/plain"
-      href="./llms.txt"
-      title="工具與隱私說明"
-    />
+    <link rel="alternate" type="text/plain" href="./llms.txt" title="工具與隱私說明" />
     <link rel="icon" type="image/svg+xml" href="/src/assets/favicon.svg" />
     <link rel="stylesheet" href="/src/styles.css" />
-    <title>CSV / Excel 轉 Big5 定長文字檔</title>
+    <title>離線資料轉換</title>
   </head>
   <body>
-    <div id="app" class="page-shell">
+    <div id="app" class="page-shell" aria-busy="true">
       <header class="page-header">
         <div>
           <div class="header-meta">
@@ -37,8 +32,8 @@
               <span class="readiness-status__text">載入必要元件</span>
             </div>
           </div>
-          <h1>CSV / Excel 轉 Big5 定長文字檔</h1>
-          <p>設定規則後，選擇來源檔案。檔案不會上傳。</p>
+          <h1>離線資料轉換</h1>
+          <p>選擇檔案、確認內容，再下載需要的格式。檔案不會上傳。</p>
         </div>
         <div class="header-badges">
           <button
@@ -63,327 +58,192 @@
         </div>
       </noscript>
 
-      <main id="app-content" aria-label="CSV 與 Excel 轉換流程">
-        <section id="profile-step" class="panel" aria-labelledby="profile-heading">
-          <div class="step-heading">
-            <span aria-hidden="true">0</span>
-            <div>
-              <h2 id="profile-heading">設定檔</h2>
-              <p class="help-text">設定會自動儲存，也可上傳或下載設定檔。</p>
-            </div>
-          </div>
-
-          <div class="profile-actions responsive-grid">
-            <button id="load-settings-button" class="secondary-button" type="button">上傳設定檔</button>
-            <input id="settings-file" type="file" accept=".json,application/json" hidden />
-            <button id="save-settings-button" class="secondary-button" type="button">下載設定檔</button>
-            <button id="load-default-button" class="secondary-button" type="button">使用預設設定</button>
-          </div>
-
-          <div id="settings-status" class="profile-status">
-            <span class="status-dot" aria-hidden="true"></span>
-            <div class="profile-status-copy">
-              <strong id="settings-status-title">預設設定</strong>
-              <span id="settings-status-detail">已儲存</span>
-            </div>
-            <button id="revert-valid-settings-button" class="secondary-button profile-status-action" type="button" hidden>
-              復原上次有效設定
-            </button>
-          </div>
-        </section>
-
-        <section id="columns-step" class="panel" aria-labelledby="columns-heading">
-          <div class="section-heading-row">
-            <div class="step-heading">
-              <span aria-hidden="true">1</span>
-              <div>
-                <h2 id="columns-heading">欄位設定</h2>
-                <p class="help-text">設定必填、空值預設與 Big5 欄寬。</p>
+      <main id="app-content" aria-label="離線資料轉換流程" inert>
+        <section id="rules-step" class="panel rules-panel" aria-labelledby="rules-heading">
+          <details id="rules-disclosure">
+            <summary>
+              <span class="step-heading rules-summary-heading">
+                <span aria-hidden="true">0</span>
+                <span>
+                  <strong id="rules-heading" class="section-title">欄位規則</strong>
+                  <small>固定 15 欄／208 bytes</small>
+                </span>
+              </span>
+              <span class="schema-summary" aria-label="固定規格摘要">
+                <span><strong>15</strong> 欄</span>
+                <span><strong>208</strong> bytes／筆</span>
+              </span>
+            </summary>
+            <div class="rules-content">
+              <p class="help-text">展開查看各欄位的寬度與格式。</p>
+              <div class="table-scroll" tabindex="0" aria-label="固定欄位規則表格，可左右捲動">
+                <table class="rules-table">
+                  <caption class="visually-hidden">固定 15 欄的 Big5 位元組寬度與驗證規則</caption>
+                  <thead><tr><th scope="col">欄位</th><th scope="col">寬度</th><th scope="col">格式</th><th scope="col">額外規則</th></tr></thead>
+                  <tbody>
+                    <tr><th scope="row">欄位1</th><td>1</td><td><code>^[AB]$</code></td><td>必填</td></tr>
+                    <tr><th scope="row">欄位2</th><td>2</td><td><code>^[0-9]{2}$</code></td><td>必填；保留前置零</td></tr>
+                    <tr><th scope="row">欄位3</th><td>1</td><td><code>^[1-6]$</code></td><td>必填</td></tr>
+                    <tr><th scope="row">欄位4</th><td>10</td><td><code>^[0-9]{10}$</code></td><td>必填；不自動補零</td></tr>
+                    <tr><th scope="row">欄位5</th><td>10</td><td><code>^[a-z0-9]{5,10}$</code></td><td>轉大寫；證號無效時提醒，性別不符時錯誤</td></tr>
+                    <tr><th scope="row">欄位6</th><td>8</td><td><code>^[0-9]{8}$</code></td><td>真實日期且早於今天</td></tr>
+                    <tr><th scope="row">欄位7</th><td>12</td><td><code>^.+$</code></td><td>可安全轉為 Big5</td></tr>
+                    <tr><th scope="row">欄位8</th><td>1</td><td><code>^[12]$</code></td><td>有效證號時與欄位5比對性別</td></tr>
+                    <tr><th scope="row">欄位9</th><td>120</td><td><code>^.+$</code></td><td>必填；可安全轉為 Big5</td></tr>
+                    <tr><th scope="row">欄位10</th><td>15</td><td><code>^[0-9()+#-]{1,15}$</code></td><td>來源可空；空值明確補為 0000000000</td></tr>
+                    <tr><th scope="row">欄位11</th><td>10</td><td><code>^[A-Z][12][0-9]{8}$</code></td><td>身分證檢查碼</td></tr>
+                    <tr><th scope="row">欄位12</th><td>1</td><td><code>^[ABCD]$</code></td><td>必填</td></tr>
+                    <tr><th scope="row">欄位13</th><td>8</td><td><code>^[0-9]{8}$</code></td><td>真實日期且早於今天</td></tr>
+                    <tr><th scope="row">欄位14</th><td>8</td><td><code>^(?:[0-9]{8})?$</code></td><td>晚於欄位13且早於今天</td></tr>
+                    <tr><th scope="row">欄位15</th><td>1</td><td><code>^[1-4]?$</code></td><td>與欄位14同時有值或同時空白</td></tr>
+                  </tbody>
+                </table>
               </div>
             </div>
-            <div class="schema-summary">
-              <span><strong id="field-count-summary">15</strong> 欄</span>
-              <span><strong id="record-width-summary">208</strong> 位元組／筆</span>
-            </div>
-          </div>
-          <div class="option-guide responsive-grid">
-            <div id="required-help" class="compact-card"><strong>不可空白</strong><span>空值會報錯；此欄不能設定空值預設。</span></div>
-            <div id="default-help" class="compact-card"><strong>空值預設</strong><span>來源值經空白處理後為空時套用。</span></div>
-            <div id="width-help" class="compact-card"><strong>欄寬</strong><span>以 Big5 位元組計；超出時報錯。</span></div>
-          </div>
-          <div class="table-scroll" tabindex="0" aria-label="欄位設定表格，可左右捲動">
-            <table>
-              <caption class="visually-hidden">各欄位的不可空白、空值預設、Big5 位元組欄寬與累計寬度設定</caption>
-              <thead>
-                <tr>
-                  <th scope="col">欄位</th>
-                  <th scope="col">不可空白</th>
-                  <th scope="col">空值預設</th>
-                  <th scope="col">欄寬（位元組）</th>
-                  <th scope="col">累計寬度</th>
-                </tr>
-              </thead>
-              <tbody id="column-settings-body">
-                <tr>
-                  <th scope="row">欄位1</th>
-                  <td class="center-cell"><input id="required-0" class="required-input" type="checkbox" aria-label="欄位1不可空白" aria-describedby="required-help" /></td>
-                  <td><input id="default-0" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位1空值預設" aria-describedby="default-help" /></td>
-                  <td><input id="width-0" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="1" aria-label="欄位1欄寬" aria-describedby="width-help" /></td>
-                  <td class="number-cell cumulative-width">1</td>
-                </tr>
-                <tr>
-                  <th scope="row">欄位2</th>
-                  <td class="center-cell"><input id="required-1" class="required-input" type="checkbox" aria-label="欄位2不可空白" aria-describedby="required-help" /></td>
-                  <td><input id="default-1" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位2空值預設" aria-describedby="default-help" /></td>
-                  <td><input id="width-1" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="2" aria-label="欄位2欄寬" aria-describedby="width-help" /></td>
-                  <td class="number-cell cumulative-width">3</td>
-                </tr>
-                <tr>
-                  <th scope="row">欄位3</th>
-                  <td class="center-cell"><input id="required-2" class="required-input" type="checkbox" aria-label="欄位3不可空白" aria-describedby="required-help" /></td>
-                  <td><input id="default-2" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位3空值預設" aria-describedby="default-help" /></td>
-                  <td><input id="width-2" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="1" aria-label="欄位3欄寬" aria-describedby="width-help" /></td>
-                  <td class="number-cell cumulative-width">4</td>
-                </tr>
-                <tr>
-                  <th scope="row">欄位4</th>
-                  <td class="center-cell"><input id="required-3" class="required-input" type="checkbox" aria-label="欄位4不可空白" aria-describedby="required-help" /></td>
-                  <td><input id="default-3" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位4空值預設" aria-describedby="default-help" /></td>
-                  <td><input id="width-3" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="10" aria-label="欄位4欄寬" aria-describedby="width-help" /></td>
-                  <td class="number-cell cumulative-width">14</td>
-                </tr>
-                <tr>
-                  <th scope="row">欄位5</th>
-                  <td class="center-cell"><input id="required-4" class="required-input" type="checkbox" aria-label="欄位5不可空白" aria-describedby="required-help" /></td>
-                  <td><input id="default-4" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位5空值預設" aria-describedby="default-help" /></td>
-                  <td><input id="width-4" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="10" aria-label="欄位5欄寬" aria-describedby="width-help" /></td>
-                  <td class="number-cell cumulative-width">24</td>
-                </tr>
-                <tr>
-                  <th scope="row">欄位6</th>
-                  <td class="center-cell"><input id="required-5" class="required-input" type="checkbox" aria-label="欄位6不可空白" aria-describedby="required-help" /></td>
-                  <td><input id="default-5" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位6空值預設" aria-describedby="default-help" /></td>
-                  <td><input id="width-5" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="8" aria-label="欄位6欄寬" aria-describedby="width-help" /></td>
-                  <td class="number-cell cumulative-width">32</td>
-                </tr>
-                <tr>
-                  <th scope="row">欄位7</th>
-                  <td class="center-cell"><input id="required-6" class="required-input" type="checkbox" aria-label="欄位7不可空白" aria-describedby="required-help" /></td>
-                  <td><input id="default-6" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位7空值預設" aria-describedby="default-help" /></td>
-                  <td><input id="width-6" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="12" aria-label="欄位7欄寬" aria-describedby="width-help" /></td>
-                  <td class="number-cell cumulative-width">44</td>
-                </tr>
-                <tr>
-                  <th scope="row">欄位8</th>
-                  <td class="center-cell"><input id="required-7" class="required-input" type="checkbox" aria-label="欄位8不可空白" aria-describedby="required-help" /></td>
-                  <td><input id="default-7" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位8空值預設" aria-describedby="default-help" /></td>
-                  <td><input id="width-7" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="1" aria-label="欄位8欄寬" aria-describedby="width-help" /></td>
-                  <td class="number-cell cumulative-width">45</td>
-                </tr>
-                <tr>
-                  <th scope="row">欄位9</th>
-                  <td class="center-cell"><input id="required-8" class="required-input" type="checkbox" aria-label="欄位9不可空白" aria-describedby="required-help" /></td>
-                  <td><input id="default-8" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位9空值預設" aria-describedby="default-help" /></td>
-                  <td><input id="width-8" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="120" aria-label="欄位9欄寬" aria-describedby="width-help" /></td>
-                  <td class="number-cell cumulative-width">165</td>
-                </tr>
-                <tr>
-                  <th scope="row">欄位10</th>
-                  <td class="center-cell"><input id="required-9" class="required-input" type="checkbox" aria-label="欄位10不可空白" aria-describedby="required-help" /></td>
-                  <td><input id="default-9" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位10空值預設" aria-describedby="default-help" /></td>
-                  <td><input id="width-9" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="15" aria-label="欄位10欄寬" aria-describedby="width-help" /></td>
-                  <td class="number-cell cumulative-width">180</td>
-                </tr>
-                <tr>
-                  <th scope="row">欄位11</th>
-                  <td class="center-cell"><input id="required-10" class="required-input" type="checkbox" aria-label="欄位11不可空白" aria-describedby="required-help" /></td>
-                  <td><input id="default-10" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位11空值預設" aria-describedby="default-help" /></td>
-                  <td><input id="width-10" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="10" aria-label="欄位11欄寬" aria-describedby="width-help" /></td>
-                  <td class="number-cell cumulative-width">190</td>
-                </tr>
-                <tr>
-                  <th scope="row">欄位12</th>
-                  <td class="center-cell"><input id="required-11" class="required-input" type="checkbox" aria-label="欄位12不可空白" aria-describedby="required-help" /></td>
-                  <td><input id="default-11" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位12空值預設" aria-describedby="default-help" /></td>
-                  <td><input id="width-11" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="1" aria-label="欄位12欄寬" aria-describedby="width-help" /></td>
-                  <td class="number-cell cumulative-width">191</td>
-                </tr>
-                <tr>
-                  <th scope="row">欄位13</th>
-                  <td class="center-cell"><input id="required-12" class="required-input" type="checkbox" aria-label="欄位13不可空白" aria-describedby="required-help" /></td>
-                  <td><input id="default-12" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位13空值預設" aria-describedby="default-help" /></td>
-                  <td><input id="width-12" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="8" aria-label="欄位13欄寬" aria-describedby="width-help" /></td>
-                  <td class="number-cell cumulative-width">199</td>
-                </tr>
-                <tr>
-                  <th scope="row">欄位14</th>
-                  <td class="center-cell"><input id="required-13" class="required-input" type="checkbox" aria-label="欄位14不可空白" aria-describedby="required-help" /></td>
-                  <td><input id="default-13" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位14空值預設" aria-describedby="default-help" /></td>
-                  <td><input id="width-13" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="8" aria-label="欄位14欄寬" aria-describedby="width-help" /></td>
-                  <td class="number-cell cumulative-width">207</td>
-                </tr>
-                <tr>
-                  <th scope="row">欄位15</th>
-                  <td class="center-cell"><input id="required-14" class="required-input" type="checkbox" aria-label="欄位15不可空白" aria-describedby="required-help" /></td>
-                  <td><input id="default-14" class="default-input" type="text" autocomplete="off" placeholder="選填" aria-label="欄位15空值預設" aria-describedby="default-help" /></td>
-                  <td><input id="width-14" class="width-input" type="number" min="1" step="1" inputmode="numeric" value="1" aria-label="欄位15欄寬" aria-describedby="width-help" /></td>
-                  <td class="number-cell cumulative-width">208</td>
-                </tr>
-              </tbody>
-              <tfoot>
-                <tr>
-                  <th colspan="4" scope="row">每筆總寬度</th>
-                  <td id="total-width" class="number-cell">208</td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
+          </details>
         </section>
 
-        <section id="global-step" class="panel" aria-labelledby="global-heading">
+        <section id="input-step" class="panel" aria-labelledby="input-heading">
+          <div class="step-heading">
+            <span aria-hidden="true">1</span>
+            <div>
+              <h2 id="input-heading">輸入檔案</h2>
+              <p class="help-text">支援 CSV、XLS、XLSX、Big5 TXT 與 ZIP；再次選取會加入目前工作區。</p>
+            </div>
+          </div>
+
+          <div id="source-file-picker" class="file-picker source-file-picker" data-tone="neutral">
+            <div class="file-status-copy">
+              <div id="file-status" class="file-status-line">
+                <span class="file-status">
+                  <span id="source-file-name" class="file-status-name">工作區尚無檔案</span>
+                  <span id="source-file-meta" class="file-status-meta" hidden></span>
+                </span>
+                <span class="file-processing-slot" aria-hidden="true">
+                  <span id="file-processing-indicator" class="busy-spinner" hidden></span>
+                </span>
+              </div>
+              <p class="help-text">檔案只在這個頁面中處理；ZIP 內支援的檔案會加入下方清單。</p>
+            </div>
+            <div class="file-picker-actions">
+              <button id="select-source-button" class="primary-button" type="button">選擇檔案</button>
+              <button id="clear-workspace-button" class="secondary-button" type="button" disabled>全部清除</button>
+            </div>
+            <input id="source-file" type="file" accept=".csv,.xls,.xlsx,.txt,.zip" multiple hidden />
+          </div>
+
+          <div id="source-file-error" class="notice error-notice source-file-error" role="alert" hidden></div>
+
+          <div id="workspace-empty" class="notice info-notice workspace-empty">
+            <strong>工作區尚無檔案</strong>
+            <span>選取一個或多個檔案後，會在這裡建立清單與內容預覽。</span>
+          </div>
+
+          <div id="workspace-results" hidden>
+            <div class="workspace-layout">
+              <aside class="file-tree-pane" aria-labelledby="file-tree-heading">
+                <div class="file-tree-heading-row">
+                  <h3 id="file-tree-heading">工作區檔案</h3>
+                  <span id="file-tree-count" class="file-tree-count"></span>
+                </div>
+                <p id="file-tree-help" class="visually-hidden">上下方向鍵可切換檔案；每列右側按鈕只會從工作區移除該檔案。</p>
+                <ul id="file-tree" class="file-tree" role="tree" aria-describedby="file-tree-help"></ul>
+              </aside>
+
+              <div id="data-workspace" class="data-workspace" hidden>
+                <dl class="validation-summary responsive-grid" aria-label="目前檔案摘要">
+                  <div><dt>資料列</dt><dd id="source-row-summary">—</dd></div>
+                  <div><dt>輸出列</dt><dd id="included-row-summary">—</dd></div>
+                  <div><dt>空白列</dt><dd id="blank-row-summary">—</dd></div>
+                  <div><dt>錯誤</dt><dd id="error-summary">—</dd></div>
+                  <div><dt>提醒</dt><dd id="warning-summary">—</dd></div>
+                  <div><dt>修改</dt><dd id="modified-summary">—</dd></div>
+                </dl>
+
+                <div class="subsection-heading data-toolbar">
+                  <div>
+                    <h3>資料預覽</h3>
+                    <p>將游標移到標記的欄位，或用鍵盤聚焦，即可查看說明。</p>
+                  </div>
+                  <label class="filter-control" for="row-filter">顯示
+                    <select id="row-filter">
+                      <option value="all">全部</option>
+                      <option value="error">錯誤</option>
+                      <option value="warning">提醒</option>
+                      <option value="valid">有效</option>
+                      <option value="modified">已修改</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div class="table-scroll data-table-scroll" tabindex="0" aria-label="資料預覽，可左右捲動">
+                  <table class="data-table">
+                    <caption class="visually-hidden">目前檔案的 15 欄資料預覽</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col" aria-label="來源列">列</th><th scope="col">狀態</th><th scope="col">輸出</th>
+                        <th scope="col" aria-label="欄位1">1</th><th scope="col" aria-label="欄位2">2</th><th scope="col" aria-label="欄位3">3</th><th scope="col" aria-label="欄位4">4</th><th scope="col" aria-label="欄位5">5</th>
+                        <th scope="col" aria-label="欄位6">6</th><th scope="col" aria-label="欄位7">7</th><th scope="col" aria-label="欄位8">8</th><th scope="col" aria-label="欄位9">9</th><th scope="col" aria-label="欄位10">10</th>
+                        <th scope="col" aria-label="欄位11">11</th><th scope="col" aria-label="欄位12">12</th><th scope="col" aria-label="欄位13">13</th><th scope="col" aria-label="欄位14">14</th><th scope="col" aria-label="欄位15">15</th>
+                      </tr>
+                    </thead>
+                    <tbody id="data-table-body"></tbody>
+                  </table>
+                </div>
+                <div class="page-navigation">
+                  <p id="data-page-status" class="page-status"></p>
+                  <div class="page-actions">
+                    <button id="previous-page-button" class="secondary-button" type="button" disabled>上一頁</button>
+                    <button id="next-page-button" class="secondary-button" type="button" disabled>下一頁</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="cell-tooltip" class="cell-tooltip" role="tooltip" hidden></div>
+        </section>
+
+        <section id="output-step" class="panel" aria-labelledby="output-heading">
           <div class="step-heading">
             <span aria-hidden="true">2</span>
             <div>
-              <h2 id="global-heading">全域設定</h2>
+              <h2 id="output-heading">輸出格式</h2>
+              <p class="help-text">選擇下載格式。</p>
             </div>
           </div>
-          <div class="global-options responsive-grid">
-            <div class="control-group">
-              <label for="expected-rows">預期資料筆數</label>
-              <input id="expected-rows" type="number"
-                min="1" step="1" inputmode="numeric" value="200"
-                aria-describedby="expected-rows-help" />
-              <small id="expected-rows-help">筆數須完全相同；第一列也算資料。</small>
+          <fieldset class="output-format-grid responsive-grid">
+            <legend class="visually-hidden">選擇輸出格式</legend>
+            <label class="format-option">
+              <input type="radio" name="output-format" value="big5-txt" checked />
+              <span><strong>Big5 TXT</strong><small>固定 208 bytes／筆。</small></span>
+            </label>
+            <label class="format-option">
+              <input type="radio" name="output-format" value="xlsx" />
+              <span><strong>XLSX</strong><small>15 欄文字資料，不含標題列。</small></span>
+            </label>
+          </fieldset>
+          <div class="download-bar">
+            <div>
+              <strong id="download-status-title">尚未準備下載</strong>
+              <span id="download-status-detail">請先選擇並完成驗證。</span>
             </div>
-            <div class="control-group">
-              <label for="alignment">輸出對齊方式</label>
-              <select id="alignment" aria-describedby="alignment-help">
-                <option value="left">靠左</option>
-                <option value="right">靠右</option>
-              </select>
-              <small id="alignment-help">不足欄寬時，以半形空格補齊。</small>
-            </div>
-            <div class="control-group">
-              <label for="remove-whitespace">來源空白字元處理</label>
-              <select id="remove-whitespace" aria-describedby="remove-whitespace-help">
-                <option value="remove" selected>移除</option>
-                <option value="preserve">保留</option>
-              </select>
-              <small id="remove-whitespace-help">套用空值預設與驗證前處理；保留時會在預覽標示。</small>
-            </div>
+            <button id="download-button" class="primary-button" type="button" disabled>下載 Big5 TXT</button>
           </div>
         </section>
 
-        <section id="source-step" class="panel" aria-labelledby="file-heading">
+        <section id="advanced-step" class="panel" aria-labelledby="advanced-heading">
           <div class="step-heading">
             <span aria-hidden="true">3</span>
             <div>
-              <h2 id="file-heading">選擇來源檔案</h2>
-              <p class="help-text">選擇後立即驗證；每筆須有 <strong id="source-contract-count">15</strong> 欄。</p>
+              <h2 id="advanced-heading">進階輸出</h2>
+              <p class="help-text">整理後 XLSX。</p>
             </div>
           </div>
-          <div class="source-options">
-            <div id="source-file-picker" class="file-picker source-file-picker">
-              <div class="file-picker-actions">
-                <button id="select-source-button" class="primary-button" type="button" aria-describedby="source-file-help">選擇來源檔案</button>
-                <input id="source-file" type="file" accept=".csv,.xls,.xlsx" hidden />
-                <button id="deselect-source-button" class="secondary-button" type="button" disabled>取消選擇</button>
-              </div>
-              <div class="file-status-copy">
-                <p class="file-status-line">
-                  <span id="file-status" class="file-status">
-                    <span id="file-status-name" class="file-status-name">尚未選擇檔案</span>
-                    <span id="file-status-meta" class="file-status-meta" hidden></span>
-                  </span>
-                  <span class="file-processing-slot" aria-hidden="true">
-                    <span id="file-processing-indicator" class="busy-spinner" hidden></span>
-                  </span>
-                </p>
-                <p id="source-file-help" class="help-text">支援 CSV、XLS 與 XLSX；檔案上限 25 MiB。</p>
-                <p id="encoding-status" class="help-text status-line">尚未判斷</p>
-              </div>
-            </div>
-            <div class="source-encoding control-group">
-              <label for="source-encoding">CSV 來源編碼</label>
-              <select id="source-encoding" aria-describedby="source-encoding-help" disabled>
-                <option value="auto">自動判斷（預設）</option>
-                <option value="utf-8">UTF-8</option>
-                <option value="utf-16">UTF-16</option>
-                <option value="big5">Big5</option>
-              </select>
-              <small id="source-encoding-help">只供目前的 CSV 使用，不存入設定檔；Excel 不使用。</small>
-            </div>
-          </div>
-          <div id="source-file-error" class="notice error-notice source-file-error"
-            role="alert" hidden></div>
+          <p class="coming-soon">功能尚未開放。</p>
         </section>
 
-        <section id="results-step" class="panel" aria-labelledby="preview-heading">
-          <div class="section-heading-row">
-            <div class="step-heading">
-              <span aria-hidden="true">4</span>
-              <div>
-                <h2 id="preview-heading">驗證、預覽與下載</h2>
-                <p class="help-text">設定變更後會重新驗證；通過後即可下載。</p>
-              </div>
-            </div>
-          </div>
-          <dl class="validation-summary responsive-grid" aria-label="驗證摘要">
-            <div><dt>預期欄數</dt><dd id="expected-column-summary">15</dd></div>
-            <div><dt>預期筆數</dt><dd id="expected-row-summary">200</dd></div>
-            <div><dt>實際筆數</dt><dd id="actual-row-summary">—</dd></div>
-            <div><dt>正確筆數</dt><dd id="valid-row-summary">—</dd></div>
-            <div><dt>錯誤筆數</dt><dd id="invalid-row-summary">—</dd></div>
-            <div><dt>空白提醒</dt><dd id="whitespace-warning-summary">—</dd></div>
-          </dl>
-
-          <div class="subsection-heading">
-            <div><h3 id="issues-heading">問題清單</h3><p>錯誤會阻止下載；提醒不會修改內容。</p></div>
-          </div>
-          <div id="issue-results" class="table-scroll issue-scroll" tabindex="0" aria-labelledby="issues-heading">
-            <table class="error-table">
-              <caption class="visually-hidden">來源資料與設定的驗證問題</caption>
-              <thead>
-                <tr><th scope="col">資料列</th><th scope="col">欄位</th><th scope="col">類型</th><th scope="col">問題</th></tr>
-              </thead>
-              <tbody id="issue-table-body">
-                <tr><td colspan="4" class="empty-table-message">尚未驗證</td></tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div class="subsection-heading preview-subsection-heading">
-            <div><h3 id="preview-output-heading">輸出預覽</h3><p>欄寬以 Big5 位元組計。</p></div>
-            <div class="preview-options">
-              <label class="preview-row-count" for="preview-row-limit">
-                <span>預覽筆數</span>
-                <select id="preview-row-limit">
-                  <option value="all" selected>全部</option>
-                  <option value="20">20 筆</option>
-                  <option value="50">50 筆</option>
-                  <option value="100">100 筆</option>
-                  <option value="200">200 筆</option>
-                </select>
-              </label>
-            </div>
-          </div>
-          <p class="whitespace-legend">
-            <span class="legend-line">橘底標示內容中的空白：半形 <code>·</code>、全形 <code>□</code>、定位字元 <code>→</code>、換行 <code>↵</code>、不換行空格 <code>⍽</code>。</span>
-            <span class="legend-line"><span class="padding-key">藍底圓點 <span aria-hidden="true">·</span></span>為輸出補齊空格。</span>
-          </p>
-          <div id="preview-results" class="preview-results" role="region" aria-labelledby="preview-output-heading">
-            <div class="notice info-notice">
-              <strong>尚未驗證</strong>
-              <span>選擇來源檔案。</span>
-            </div>
-          </div>
-          <div class="download-bar">
-            <div><strong>輸出檔案</strong><span id="download-help">下載與來源檔同名的 Big5 .txt。</span></div>
-            <button id="convert-button" class="primary-button" type="button" aria-describedby="download-help" disabled>下載 Big5 TXT</button>
-          </div>
-        </section>
-
-        <p id="app-status" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></p>
+        <p id="app-status" class="visually-hidden" role="status" aria-live="polite"></p>
       </main>
     </div>
     <script type="module" src="/src/bootstrap.ts"></script>

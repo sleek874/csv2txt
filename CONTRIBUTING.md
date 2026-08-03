@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for helping improve CSV to Fixed-Width Big5 Converter.
+Thank you for helping improve Offline Data Conversion.
 
 ## Before implementation
 
@@ -46,7 +46,7 @@ commit the resulting `package-lock.json` change with `package.json`.
 - Add synthetic tests for conversion logic and regressions.
 - Never commit real or sensitive CSV/TXT data.
 - Include byte-level expected output for Big5 conversion changes.
-- Update documentation when settings or the output contract changes.
+- Update documentation when the fixed profile, validation, or output contract changes.
 - Verify that no runtime dependency sends network requests or telemetry.
 
 ## Issues

@@ -1,4 +1,8 @@
-export function createUnloadGuard() {
+export interface UnloadGuard {
+  setPendingFile(pending: boolean): void;
+}
+
+export function createUnloadGuard(): UnloadGuard {
   let hasPendingFile = false;
 
   function handleBeforeUnload(event: BeforeUnloadEvent): void {

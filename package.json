@@ -1,9 +1,9 @@
 {
-  "name": "csv2txt",
-  "version": "0.1.0",
+  "name": "offline-data-conversion",
+  "version": "1.0.0-alpha.0",
   "private": true,
   "type": "module",
-  "description": "Privacy-first browser conversion from CSV and Excel to fixed-width Big5 text with a default 15-column profile.",
+  "description": "Privacy-first offline browser conversion between tabular files and a fixed 208-byte Big5 record format.",
   "scripts": {
     "dev": "vite",
     "check": "tsc --noEmit",
@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "buffer": "^6.0.3",
+    "fflate": "^0.8.3",
     "iconv-lite": "^0.7.3",
     "papaparse": "^5.5.4",
     "string_decoder": "^1.3.0",
@@ -27,7 +28,7 @@
   },
   "devDependencies": {
     "@types/papaparse": "^5.5.2",
-    "typescript": "^5.9.3",
-    "vite": "^7.1.7"
+    "typescript": "^7.0.2",
+    "vite": "^8.2.0"
   }
 }

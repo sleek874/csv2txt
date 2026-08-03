@@ -26,6 +26,21 @@ test("CSV promotes the font without waiting to parse", async () => {
   await priority.fullyPrepared;
 });
 
+test("Big5 TXT shares the lightweight font-first path", async () => {
+  const events = [];
+  const priority = prioritizeSourceResources("txt", {
+    async prepareExcel() {
+      events.push("excel");
+    },
+    async prepareFont() {
+      events.push("font");
+    },
+  });
+  await priority.readyForParsing;
+  await priority.fullyPrepared;
+  assert.deepEqual(events, ["font"]);
+});
+
 test("Excel completes before the font starts", async () => {
   const events = [];
   let releaseExcel;

@@ -1,1110 +1,271 @@
-# CSV / Excel to Fixed-Width Big5 Converter — Design Specification
-
-A privacy-first browser application that converts CSV, XLS, and XLSX files into
-a 15-column, fixed-width Big5 text format. All file reading, validation,
-conversion, and download generation happen in the user's browser. No source
-data is uploaded to a server.
-
-> **Project status:** the conversion core, browser workflow, recoverable version
-> 3 settings, offline preparation, and production build contracts are
-> implemented. External byte compatibility, browser-matrix evidence, and
-> performance measurements remain release-hardening work.
-
-## Contents
-
-- [Problem statement](#problem-statement)
-- [Goals and non-goals](#goals-and-non-goals)
-- [Key decisions](#key-decisions)
-- [Legacy Office compatibility risks](#legacy-office-compatibility-risks)
-- [User experience](#user-experience)
-- [Functional requirements](#functional-requirements)
-- [Default 15-column profile](#default-15-column-profile)
-- [Data model](#data-model)
-- [Conversion rules](#conversion-rules)
-- [Encoding detection](#encoding-detection)
-- [Validation and errors](#validation-and-errors)
-- [Settings persistence](#settings-persistence)
-- [Visual system](#visual-system)
-- [Architecture](#architecture)
-- [Privacy and security](#privacy-and-security)
-- [Browser and offline behavior](#browser-and-offline-behavior)
-- [Accessibility and compatibility](#accessibility-and-compatibility)
-- [Testing strategy](#testing-strategy)
-- [Implementation status and next release plan](#implementation-status-and-next-release-plan)
-- [Acceptance criteria](#acceptance-criteria)
-- [Open decisions](#open-decisions)
-
-## Problem statement
-
-The existing workflow converts CSV to XLS and then uses Microsoft Office/Access
-to export fixed-width text. That approach is manual and makes it difficult to
-guarantee consistent validation, byte widths, character encoding, and privacy.
-
-The replacement must:
-
-1. Accept a CSV encoded as UTF-8, UTF-16, or Big5, or an XLS/XLSX workbook.
-2. Read exactly 15 positional source columns and write exactly 15 output fields
-   in the same order.
-3. Substitute user-configured defaults when corresponding input cells are empty
-   after the selected source-whitespace policy.
-4. Reject missing values for required output fields.
-5. Format every field to a predefined, user-editable Big5 byte width.
-6. Download a Big5 fixed-width text file without sending source data anywhere.
-7. Remember non-sensitive preferences where the browser provides reliable
-   persistent storage.
-
-## Goals and non-goals
-
-### Goals
-
-- Run as a static site on GitHub Pages.
-- Perform all sensitive-data processing locally in the browser.
-- Support CSV input decoded as UTF-8, UTF-16, or Big5 and the first worksheet
-  of XLS/XLSX workbooks.
-- Produce exactly 15 output fields in a deterministic order.
-- Require exactly 200 parsed data records by default, with an editable expected
-  record count in global settings.
-- Measure fixed widths in encoded Big5 bytes.
-- Validate required values, byte overflow, malformed CSV, and characters that
-  cannot be represented safely in Big5.
-- Present the entire user interface in Traditional Chinese (`zh-Hant`).
-- Label fields only as `欄位1` through `欄位15`; these are UI labels and
-  are never emitted as a header or read from the source data.
-- Let users edit fallback values, required flags, and widths, with one alignment
-  setting applied to all fields.
-- Transparently auto-save the current converter settings in browser storage and
-  support explicit portable JSON load/save.
-- Provide row- and field-specific error messages before download.
-- Keep the application small, framework-free, and maintainable.
-
-### Non-goals for the first release
-
-- Server-side file storage or conversion.
-- User accounts or cloud synchronization.
-- Spreadsheet output.
-- Automatic transliteration of characters unavailable in Big5.
-- Supporting arbitrary output schemas beyond the predefined 15 fields.
-- Silently truncating overlong values.
-- Guaranteeing charset detection without user confirmation.
-- Reproducing unspecified Office/Access behavior that is not present in an
-  approved sample output file.
-
-## Key decisions
-
-| Area | Decision | Reason |
-|---|---|---|
-| Fixed width | Count Big5 bytes | Legacy consumers usually address byte positions; Chinese characters normally occupy two Big5 bytes while ASCII occupies one. |
-| Overflow | Block conversion | Silent truncation can corrupt identifiers and must not be the default. |
-| Unencodable text | Block conversion | Replacing characters with `?` would cause undetected data loss. |
-| Default trigger | An empty cell after the selected whitespace policy | With removal enabled, a whitespace-only source cell becomes empty and may use its default. |
-| Required check | Must contain a non-whitespace character after defaults and whitespace handling | Required output cannot be blank. |
-| Charset detection | Best effort plus user override | Some byte streams, especially ASCII, are valid in both UTF-8 and Big5. |
-| Processing | Browser only | Source files contain sensitive data. |
-| Settings | Browser autosave plus explicit JSON load/save | Prevents accidental session loss while keeping portable settings files clearly distinct from source and output data. |
-| UI stack | TypeScript and DOM APIs, no UI framework | The workflow is small and does not need a framework runtime. |
-| CSV parser | Papa Parse | Correct handling of quoted fields, embedded delimiters, and multiline values. |
-| XLS/XLSX parser | SheetJS Community Edition | Browser-local parsing of both modern and legacy Excel formats into the common string-row model. |
-| Big5 encoder | `iconv-lite` bundled locally | Browser `TextEncoder` only produces UTF-8. |
-| UI language | Traditional Chinese only | The target users are Traditional Chinese readers. |
-| Output labels | `欄位1`–`欄位15` | Business names and subtitles are intentionally unnecessary. |
-| Field association | Fixed one-to-one position | Source column 1 becomes `欄位1`, source column 2 becomes `欄位2`, and so on. No mapping control is needed. |
-| Alignment | One global setting, default left | The same padding direction applies to all 15 fields. |
-| Record count | Exactly 200 by default | The expected number is a positive integer editable in global settings. |
-| Output newline | CRLF (`\r\n`) | The target workflow is Windows-oriented; LFCR (`\n\r`) is invalid. |
-| Final newline | Included | Every output record, including the last, ends with CRLF. |
-| Source whitespace | Remove by default; optionally preserve and highlight | The global setting makes the transformation explicit and preview markers remain automatic when whitespace is preserved. |
-
-## Legacy Office compatibility risks
-
-The old `CSV → XLS/XLSX → Access → TXT` process has two independent type-
-inference stages and cannot be reproduced safely from its wizard screenshots
-alone.
-
-### Known risks
-
-- Excel can convert leading-zero identifiers to numbers, long numbers to
-  limited-precision/scientific values, date-like text to dates, and values such
-  as `1E10` to scientific notation. The exact result depends on how the CSV was
-  opened, the Office version, automatic-conversion settings, and locale.
-- Excel Power Query enables automatic type detection for CSV and other
-  unstructured sources unless the user overrides the column type.
-- When Access imports an Excel worksheet into a new table, it examines the
-  first eight rows of each column to suggest a field type. Mixed values later
-  in the file can consequently be lost or converted incorrectly.
-- Access export settings such as YMD, date separator `/`, and time separator
-  `:` affect values that have become Date/Time fields. They do not establish
-  that any particular source column was a date, and should not transform text
-  fields.
-- Boolean, null, number, and date formatting may therefore differ from the raw
-  CSV even when the final fixed-width layout is correct.
-
-References: [Excel automatic data conversions](https://support.microsoft.com/en-US/Excel/data-import-and-analysis-options-in-excel),
-[preserving leading zeros and long numbers](https://support.microsoft.com/en-US/Excel/keeping-leading-zeros-and-large-numbers),
-and [Access importing from Excel](https://support.microsoft.com/en-US/Access/import-or-link-to-data-in-an-excel-workbook).
-
-### Safe behavior without production data
-
-The browser converter treats all 15 source values as text and performs no
-automatic number, boolean, date, or time conversion. It preserves leading
-zeros, punctuation, spacing, and date-like strings. Any future transformation
-must be explicit, profile-driven, and covered by a byte-level fixture; it must
-never be introduced as a heuristic.
-
-Development can validate parsing, encoding, padding, row counts, and error
-handling with synthetic data. It cannot claim compatibility with the external
-system until at least one of these evidence sources exists:
-
-1. A written external-system format specification.
-2. A sanitized source CSV and accepted TXT pair.
-3. A synthetic 15-column CSV processed by the old Office workflow, with its
-   resulting TXT used as a golden fixture.
-
-A synthetic characterization fixture should contain values such as `00123`,
-`20260102`, `01/02/2026`, `12:30`, `1E10`, a number longer than 15 digits,
-`TRUE`, empty values, ASCII spaces, full-width spaces, and Big5 edge cases.
-
-When real data can only be processed by an authorized user, a future local
-diagnostic mode may export content-free statistics: encoding result, record and
-column counts, empty counts, min/max byte lengths, overflow counts,
-unencodable-character counts, output size, and a SHA-256 hash. A local old/new
-TXT comparison should report size, hash, and first differing record/field
-without uploading either file.
-
-Until a golden fixture is accepted, releases must be described as compatibility
-candidates rather than certified replacements for the Office workflow.
-
-## User experience
-
-The application is a settings-first single-page workflow with stages 0–4.
-
-### 0. Settings file
-
-- Clearly distinguish settings JSON from CSV/XLS/XLSX source data and Big5 TXT
-  output.
-- `上傳設定檔` selects and validates a local JSON settings file before applying it.
-- `下載設定檔` downloads the last valid field and global settings as JSON. When
-  the screen contains invalid edits, the button and status text explicitly say
-  that the last valid settings will be downloaded.
-- `使用預設設定` applies the built-in profile.
-- Restore the last valid browser-autosaved settings on startup, falling back to
-  the built-in profile when none are usable.
-- Show a compact status banner with the settings kind and persistence state.
-- Never include source data, filenames, previews, validation results, or output
-  content in a settings file.
-- Auto-save only valid converter settings; invalid edits must not overwrite the
-  last valid browser copy.
-- Keep the last valid settings in memory for the whole page session and show
-  `復原上次有效設定` beside the status while the screen contains invalid edits.
-
-### 1. Configure fields
-
-Render one row for every output field with:
-
-| Control | Behavior |
-|---|---|
-| Output field | Read-only `欄位1` through `欄位15` |
-| Width | Positive integer measured in Big5 bytes |
-| Required | `不可空白` checkbox; an empty or whitespace-only resolved value blocks download, and this field cannot have a default |
-| Default value | For an optional field, used only when the corresponding source cell is empty after whitespace handling |
-| Accumulated width | Read-only running total recalculated whenever a width changes |
-
-Display the current field count and total Big5 record width. Explain required,
-default, and byte-width behavior immediately above the table.
-
-### 2. Configure global conversion behavior
-
-- Let the user set the expected positive record count, defaulting to `200`.
-- Let one alignment dropdown apply `靠左` or `靠右` to every output field.
-- Provide an `空白字元處理` dropdown. Its default `移除所有空白字元` option
-  removes every whitespace character from each source cell before defaults and
-  validation; `保留空白字元` preserves the original cell text.
-- Explain each option inline and include the expected count, alignment, and
-  whitespace policy in settings JSON.
-
-### 3. Select source data
-
-- Choose one `.csv`, `.xls`, or `.xlsx` file. Reject every other extension.
-- Place the CSV encoding selector beside file selection. Let the user select
-  `自動判斷（預設）`, `UTF-8`, `UTF-16`, or `Big5`; enable it only for CSV and
-  do not persist it in converter settings.
-- Read the file with the browser File API, display its name and byte size, and
-  never persist its contents.
-- Repeat the currently expected field count before selection.
-- Parse and validate automatically after selection. Replacing settings while a
-  file is loaded reparses or revalidates that file.
-- Display selection, reading, decoding, and parser errors directly beneath the
-  source controls. Do not duplicate these file-level errors in the problem list
-  or output preview.
-- Announce each file-level error once through that source-area alert; do not
-  repeat it through the application status region.
-- `取消選擇` discards only browser-held file-derived state and preserves current
-  settings. It never modifies or deletes the source file.
-
-### 4. Validate, preview, and download
-
-- Resolve required rules and defaults for every record.
-- Validate all 15 fields.
-- Require the parsed record count to equal the configured expected count.
-- Display expected, actual, valid, and invalid record counts.
-- Display a separate whitespace-warning count.
-- Display row/field validation issues with source record number, output field,
-  severity, and reason.
-- Identify empty records and whitespace-only records explicitly instead of
-  silently skipping them.
-- Show all valid record previews by default, let the user choose a smaller
-  preview count, and use one horizontal scrollbar for the entire preview block.
-  Show all validation errors, with a sensible display cap for extremely invalid
-  files.
-- Automatically mark whitespace that remains in resolved preview content:
-  ASCII space as `·`, full-width space as `□`, tab as `→`, and embedded line
-  break as `↵`. Source whitespace remains only when removal is disabled; default
-  values are not rewritten by the source-whitespace policy.
-- Visually distinguish content whitespace from padding added by the
-  fixed-width formatter.
-- Preview fixed-width output using a monospace font, while clearly noting that
-  the authoritative measurement is byte length rather than visual width.
-
-### 5. Download
-
-- Show the issue list before the output preview so blocking problems are easier
-  to find.
-- Enable `下載 Big5 TXT` only when the full input passes validation.
-- Generate a Big5 byte array in memory.
-- Download a `.txt` file with CRLF after every record, including the last.
-- Keep download actions visually and textually distinct from settings JSON save.
-
-## Functional requirements
-
-### File input
-
-- **FR-001:** Accept exactly one file per conversion.
-- **FR-002:** Read the file as bytes, not with `File.text()`, so decoding remains
-  under application control.
-- **FR-003:** Reject an empty file.
-- **FR-004:** Enforce a configurable file-size limit. Initial proposal: 25 MiB.
-- **FR-005:** Never store the source byte array in persistent browser storage.
-
-### CSV decoding and parsing
-
-- **FR-010:** Detect a UTF-8 BOM when present.
-- **FR-011:** Detect UTF-16LE and UTF-16BE BOMs when present.
-- **FR-012:** Validate UTF-8 strictly before treating input as UTF-8.
-- **FR-013:** Flag ambiguous detection for preview review and allow a manual
-  override; reject invalid input.
-- **FR-014:** Parse quoted delimiters, escaped quotes, and embedded line breaks.
-- **FR-015:** Report malformed CSV rather than attempting a partial export.
-- **FR-016:** Preserve parsed cell text until the shared whitespace policy is
-  applied during conversion.
-- **FR-017:** Treat every parsed row, including the first, as source data.
-- **FR-018:** Attempt strict Big5 decoding when Unicode validation fails.
-- **FR-019:** For BOM-less UTF-16, use a conservative null-byte heuristic and
-  flag the decoded preview for review.
-- **FR-019A:** Parse with empty-line skipping disabled so blank records remain
-  available for validation.
-
-### XLS/XLSX parsing
-
-- **FR-019B:** Select CSV, XLS, or XLSX parsing from the case-insensitive file
-  extension and reject every other extension before reading the file.
-- **FR-019C:** Parse the first worksheet directly into the common `string[][]`
-  row model without generating intermediate CSV text.
-- **FR-019D:** Use formatted display strings, fill absent cells through column 15
-  with `""`, and preserve populated columns beyond column 15 for validation.
-- **FR-019E:** Normalize locale-sensitive built-in date formats to `yyyy/mm/dd`.
-- **FR-019F:** Use cached formula results and block conversion when a formula has
-  no saved result.
-
-### Field validation and defaults
-
-- **FR-020:** Always create exactly 15 output fields in profile order.
-- **FR-021:** Require every source row to contain exactly 15 parsed cell values.
-- **FR-022:** Map source column N directly to output field N.
-- **FR-023:** Apply the default only when the source value equals `""` after
-  the configured whitespace policy.
-- **FR-024:** Validate defaults with the same control-character, Big5, and
-  byte-width rules as source values. Do not apply the source-whitespace policy
-  to configured defaults, and do not allow a non-empty default on a required
-  field.
-- **FR-025:** Reject rows with fewer or more than 15 values.
-- **FR-026:** Require the number of parsed data records to equal the configured
-  expected count, defaulting to 200.
-- **FR-027:** Do not treat a single final record terminator as an extra blank
-  record.
-- **FR-028:** Apply source-whitespace handling before classifying records. With
-  removal enabled, an all-whitespace row becomes an empty row; with preservation
-  enabled, report it as whitespace-only. Report one row-level cause and do not
-  add a redundant column-count error. A line break inside a properly quoted CSV
-  field is not a record boundary.
-
-### Whitespace handling
-
-- **FR-029:** Remove every whitespace character from every source cell by
-  default, including spaces, full-width spaces, tabs, and embedded line breaks.
-- **FR-029A:** When removal is disabled, preserve source whitespace exactly and
-  always mark it in preview without a separate preview option.
-- **FR-029B:** When removal is disabled, warn on leading or trailing whitespace.
-- **FR-029C:** When removal is disabled, warn on full-width space (`U+3000`),
-  non-breaking space (`U+00A0`), and other non-ASCII whitespace.
-- **FR-029D:** After source whitespace handling and non-empty-row classification,
-  apply an optional field default when that field is exactly `""`, then apply
-  the required check.
-- **FR-029E:** When removal is disabled, preserve optional whitespace-only values
-  and display a warning instead of applying the empty-value default.
-- **FR-029F:** Reject any tab, carriage return, line feed, or other unsupported
-  control character that remains after source whitespace handling, including
-  control characters in configured defaults.
-- **FR-029G:** Count preserved source whitespace as part of the encoded field
-  width before adding output padding.
-- **FR-029H:** Emit only the dominant issue for an empty record, whitespace-only
-  record, missing required value, or unsupported control character. Do not add
-  lower-priority whitespace warnings for the same content.
-
-### Fixed-width Big5 output
-
-- **FR-030:** Encode values with the project's selected Big5/CP950 mapping.
-- **FR-031:** Measure each resolved value after Big5 encoding.
-- **FR-032:** Reject values whose encoded length exceeds the configured width.
-- **FR-033:** Pad short values with ASCII space bytes (`0x20`).
-- **FR-034:** Append padding on the right for left alignment and on the left for
-  right alignment.
-- **FR-035:** Concatenate the 15 encoded fields with no delimiter.
-- **FR-036:** Use CRLF (`\r\n`, bytes `0D 0A`) after each output record; this is
-  not exposed as a global option.
-- **FR-037:** Append CRLF after the final output record.
-- **FR-038:** Download the exact generated bytes without a UTF-8 BOM.
-- **FR-039:** Recalculate and display cumulative width after every width edit;
-  the preset total is 208 Big5 bytes.
-
-### Settings
-
-- **FR-040:** Load predefined settings on first use.
-- **FR-041:** Debounce and auto-save valid converter settings under a versioned
-  browser-storage key.
-- **FR-042:** Recover gracefully from invalid or outdated settings JSON without
-  replacing the current in-memory settings.
-- **FR-043:** Support explicit JSON load and save.
-- **FR-044:** Validate loaded settings before applying them.
-- **FR-045:** Never include uploaded filenames, previews, rows, or output content
-  in settings JSON or browser storage.
-- **FR-046:** When an uploaded settings file is invalid, leave the active
-  settings and status areas unchanged, and show an immediate dialog with the
-  specific validation failure.
-
-## Default 15-column profile
-
-The output labels and initial byte widths are fixed below. Widths remain
-editable by the user. `累計寬度` means the one-based end position of that field
-in the output record. The preset record width is 208 Big5 bytes.
-
-Required flags default to unchecked and are selected by the user. Global
-alignment defaults to left.
-
-| Position | UI label | Preset width (bytes) | Accumulated width (bytes) |
-|---:|---|---:|---:|
-| 1 | 欄位1 | 1 | 1 |
-| 2 | 欄位2 | 2 | 3 |
-| 3 | 欄位3 | 1 | 4 |
-| 4 | 欄位4 | 10 | 14 |
-| 5 | 欄位5 | 10 | 24 |
-| 6 | 欄位6 | 8 | 32 |
-| 7 | 欄位7 | 12 | 44 |
-| 8 | 欄位8 | 1 | 45 |
-| 9 | 欄位9 | 120 | 165 |
-| 10 | 欄位10 | 15 | 180 |
-| 11 | 欄位11 | 10 | 190 |
-| 12 | 欄位12 | 1 | 191 |
-| 13 | 欄位13 | 8 | 199 |
-| 14 | 欄位14 | 8 | 207 |
-| 15 | 欄位15 | 1 | 208 |
-
-These labels exist only in the interface. They are not source headers and must
-not appear in the output bytes. The implemented profile must be tested against
-an approved CSV and Access-generated TXT fixture.
-
-## Data model
-
-```ts
-type Alignment = "left" | "right";
-
-interface ColumnSetting {
-  required: boolean;
-  defaultValue: string;
-  widthBytes: number;
-}
-
-interface ConverterSettings {
-  version: 3;
-  removeWhitespace: boolean;
-  alignment: Alignment;
-  expectedRows: number;
-  columns: ColumnSetting[];
-}
-
-type ValidationSeverity = "error" | "warning";
-
-interface ValidationIssue {
-  severity: ValidationSeverity;
-  code:
-    | "MISSING_REQUIRED"
-    | "INVALID_COLUMN_COUNT"
-    | "INVALID_RECORD_COUNT"
-    | "EMPTY_RECORD"
-    | "WHITESPACE_ONLY_RECORD"
-    | "WHITESPACE_ONLY_FIELD"
-    | "LEADING_WHITESPACE"
-    | "TRAILING_WHITESPACE"
-    | "NON_ASCII_WHITESPACE"
-    | "UNSUPPORTED_CONTROL_CHARACTER"
-    | "UNENCODABLE_BIG5"
-    | "WIDTH_OVERFLOW";
-  sourceRow?: number;
-  fieldId?: string;
-  message: string;
-}
-```
-
-Runtime validation is still required because TypeScript types do not validate
-JSON loaded from browser storage or a user-selected settings file.
-
-## Conversion rules
-
-The source-whitespace policy applies only to parsed source cells. It does not
-rewrite configured defaults. For each source row:
+# 離線資料轉換 — 固定資料與產品規格
+
+## 1. 目的與狀態
+
+本工具在瀏覽器內提供單一、批次、離線資料工作區：
+
+- 同一個檔案選擇區接受 CSV、XLS、XLSX、Big5 TXT 及 ZIP。
+- 每個支援檔案由自動選定的 input adapter 解析為共用內部表示。
+- 使用者完成驗證與修改後，才為整批選擇 Big5 TXT 或 XLSX 輸出。
+
+本文件定義下一個主要版本的固定契約。它不承諾舊設定檔、舊 localStorage、舊 UI 控制或舊行為相容。實作會依 [ROADMAP.md](ROADMAP.md) 分階段落地；尚未完成的能力不得在 UI、README 或部署說明中宣稱已完成。
+
+## 2. 核心原則
+
+1. 所有敏感資料只在使用者瀏覽器記憶體中處理。
+2. 資料格式固定，不提供使用者修改欄寬、對齊、空白策略或必填規則。
+3. 解析、驗證、修改、序列化是不同階段，不把資料修正藏在 parser 或 writer 裡。
+4. 任何修改都必須可追蹤，並在輸出前再次驗證。
+5. 不靜默截斷、補零、更名、跳過錯誤或改變路徑。
+6. UI 只顯示欄位編號，不顯示業務欄位名稱。
+7. 大型批次只呈現目前需要的摘要與分頁資料，不一次渲染全部內容。
+8. 來源格式只決定 input adapter，不建立方向模式、分頁或平行工作流程。
+9. 輸出格式只決定 serializer；相同最終資料必須可交給任一輸出 adapter。
+
+## 3. 固定 208-byte profile
+
+| 欄位 | 寬度 | 主要規則 | 額外驗證與輸出規則 |
+|---:|---:|---|---|
+| 1 | 1 | `^[AB]$` | 必填 |
+| 2 | 2 | `^[0-9]{2}$` | 必填；保留前置零 |
+| 3 | 1 | `^[1-6]$` | 必填 |
+| 4 | 10 | `^[0-9]{10}$` | 必填；視為文字，不自動補零 |
+| 5 | 10 | `^[a-z0-9]{5,10}$` | 不分大小寫；移除空白後轉大寫；不是有效國民身分證或新式外來人口統一證號時顯示警告；若有效，性別與欄位8不符時顯示錯誤 |
+| 6 | 8 | `^[0-9]{8}$` | 必填；真實西元日期且嚴格早於臺北當地今天 |
+| 7 | 12 | `^.+$` | 可安全轉為 Big5；不得超過 12 bytes |
+| 8 | 1 | `^[12]$` | 必填；欄位5為有效證號時，以 `1↔8`、`2↔9` 對應性別；不一致時錯誤 |
+| 9 | 120 | `^.+$` | 必填；須安全轉為 Big5 且不得超過 120 bytes |
+| 10 | 15 | `^[0-9()+#-]{1,15}$` | 來源可空；在輸出修改階段補為 `0000000000`；最終值必須通過規則 |
+| 11 | 10 | `^[A-Z][12][0-9]{8}$` | 必填；移除空白後轉大寫；必須通過臺灣身分證檢查碼 |
+| 12 | 1 | `^[ABCD]$` | 必填 |
+| 13 | 8 | `^[0-9]{8}$` | 必填；真實西元日期且嚴格早於臺北當地今天 |
+| 14 | 8 | `^(?:[0-9]{8})?$` | 有值時須為真實日期、早於今天且晚於欄位13 |
+| 15 | 1 | `^[1-4]?$` | 與欄位14同時有值或同時空白 |
+
+寬度陣列固定為：
 
 ```text
-cellValues = source row values after configured whitespace removal or preservation
-
-if every cellValue is exactly "":
-    add one EMPTY_RECORD error
-    stop processing this row
-
-if whitespace is preserved and every cellValue has no non-whitespace character:
-    add one WHITESPACE_ONLY_RECORD error
-    stop processing this row
-
-if the source column count is not the configured column count:
-    add one INVALID_COLUMN_COUNT error
-    stop processing this row
+[1, 2, 1, 10, 10, 8, 12, 1, 120, 15, 10, 1, 8, 8, 1]
 ```
 
-For each field in a remaining row:
-
-```text
-sourceValue = source row value at the same one-based position
-cellValue = sourceValue after configured source-whitespace handling
-resolvedValue = cellValue
-
-if cellValue is exactly "" and defaultValue is not "":
-    resolvedValue = defaultValue
-
-if required and resolvedValue contains no non-whitespace characters:
-    add MISSING_REQUIRED error
-    stop processing this field
-
-if resolvedValue contains an unsupported control character:
-    add UNSUPPORTED_CONTROL_CHARACTER error
-    stop processing this field
-
-if resolvedValue contains only whitespace:
-    add one WHITESPACE_ONLY_FIELD warning
-else:
-    add applicable leading, trailing, or non-ASCII whitespace warnings
-
-encodedValue = encode resolvedValue as Big5
-
-if encoding is lossy or cannot round-trip safely:
-    add UNENCODABLE_BIG5 error
-    stop processing this field
-
-if encodedValue.length > widthBytes:
-    add WIDTH_OVERFLOW error
-    stop processing this field
-
-padding = ASCII spaces repeated (widthBytes - encodedValue.length)
-outputField = encodedValue + padding when settings.alignment is left
-outputField = padding + encodedValue when settings.alignment is right
-```
-
-After all fields pass, concatenate them in ascending position and append the
-bytes `0D 0A` after every record, including the last.
-
-With the presets, a successful 200-record file has a deterministic size:
-
-```text
-record bytes     = 208
-CRLF bytes       = 2
-bytes per record = 210
-total bytes      = 200 × 210 = 42,000
-```
-
-Without a final CRLF the file would be 41,998 bytes, but that is not this
-project's output contract.
-
-### Big5 safety check
-
-`iconv-lite` may replace unavailable characters rather than throw. The encoder
-adapter must detect loss. The initial approach is:
-
-1. Encode the Unicode value to Big5.
-2. Decode those bytes back to Unicode.
-3. Compare the decoded value to the original under the project's documented
-   normalization policy.
-4. Reject the value if it differs.
-
-No normalization should be performed implicitly in the first release. Test
-fixtures must cover mappings that decode to multiple Unicode code points.
-
-## Encoding detection
-
-Detection is advisory, never authoritative.
-
-```text
-if bytes start with EF BB BF:
-    result = UTF-8
-else if bytes start with FF FE:
-    result = UTF-16LE
-else if bytes start with FE FF:
-    result = UTF-16BE
-else if strict UTF-8 decoding succeeds:
-    if bytes are ASCII-only:
-        result = ambiguous (UTF-8 or Big5)
-    else:
-        result = likely UTF-8
-else if byte distribution strongly indicates BOM-less UTF-16:
-    result = likely UTF-16LE or UTF-16BE; flag preview for review
-else if strict Big5 decoding succeeds:
-    result = likely Big5
-else:
-    result = invalid or unsupported
-```
-
-Some non-ASCII streams can also be valid under both encodings. The interface
-therefore flags ambiguity, shows the decoded preview, and provides a manual
-selector. Changing the selector must re-decode and re-parse the original byte
-array.
-
-## Validation and errors
-
-### Blocking errors
-
-- Empty or oversized input file
-- Unsupported or invalid input encoding
-- Malformed CSV
-- Unreadable, encrypted, or empty Excel workbook
-- Excel formula without a saved calculation result
-- Parsed record count different from the configured expected count
-- Empty or whitespace-only source record
-- Source row with fewer or more than 15 values
-- Missing or whitespace-only required output value
-- Tab, embedded CR/LF, or other unsupported control character inside a field
-- Invalid field width
-- Big5-unencodable or lossy value
-- Encoded value wider than its configured field
-- Invalid imported settings
-
-### Error presentation
-
-- Show file selection, byte-reading, decoding, CSV parsing, and workbook parsing
-  errors only in the alert beneath the source controls.
-- Show invalid uploaded settings only in the settings-file dialog; leave active
-  settings status unchanged.
-- Show conversion validation issues in the problem table. Do not put file-level
-  or settings-file errors in that table.
-- Keep the output preview neutral when a file-level error prevents validation;
-  do not repeat the error there.
-- Show expected, actual, valid, and invalid record counts above the preview.
-- Show a whitespace-warning count without including warnings in the error count.
-- Number parsed data records from 1 in source order. When quoted multiline CSV
-  fields make physical line numbers different, include the physical line or
-  line range as additional context when available.
-- Name the output field and show its position.
-- Do not expose complete sensitive rows unnecessarily.
-- Display the offending value only while the file remains loaded, and consider
-  masking it in a future high-privacy mode.
-- Render source values with DOM `textContent`, never by inserting untrusted
-  source text as HTML.
-- Use one live region for each event: the source-area alert for file-level
-  errors, and the application status region for conversion and action results.
-
-Whitespace removal happens before empty-row detection, defaults, and field
-validation. A whitespace-only cell can therefore trigger its default when
-removal is enabled. A complete row that becomes empty is still an empty-record
-error and does not use field defaults. When removal is disabled, whitespace
-warnings do not alter source values. Required-value and unsupported-control
-errors take precedence over whitespace warnings for the same field.
-
-The problem table already identifies the source row and field, so its message
-column does not repeat those coordinates. Example Traditional Chinese messages:
-
-```text
-資料筆數錯誤：預期 200 筆，實際 198 筆。
-整列為空。
-整列只有空白字元。
-共有 14 欄，應為 15 欄。
-未提供必填值。
-內容只有空白字元。
-需要 122 位元組，超過欄寬 120。
-前方含有空白字元。
-含有非一般空格的空白字元。
-```
-
-## Settings persistence
-
-Valid converter settings are automatically persisted under the versioned key
-`csv2txt.settings.v3`. On startup, the app restores this value before falling
-back to the built-in profile. The app always retains the last complete valid
-settings snapshot in memory. Valid edits update that snapshot immediately and
-schedule a debounced browser write; invalid edits remain visible but do not
-replace either the in-memory snapshot or the last browser copy.
-
-`下載設定檔` always downloads the in-memory valid snapshot as a portable versioned
-JSON document. When the screen contains invalid edits, the UI labels this action
-`下載上次有效設定` and offers `復原上次有效設定`. The downloaded file contains:
-
-- Schema version `3`
-- Field widths
-- Required flags
-- Defaults
-- Global alignment
-- Source whitespace policy
-- Expected record count
-
-### Never stored
-
-- Source or output file bytes
-- CSV rows or previews
-- Validation values
-- Uploaded filenames or local paths
-- Per-file CSV encoding preference
-
-The settings status banner classifies the screen as `預設設定`, `自訂設定`, or
-`無效設定`, and concisely reports `已儲存`, `儲存中…`, or
-`無法自動儲存`. Source filenames, bytes,
-parsed rows, previews, validation results, and generated output are never
-written to browser storage. JSON settings-file upload/download provides
-portability and recovery. Loaded JSON must have a supported version, at least
-one column, a Boolean whitespace policy, a known alignment, a positive expected
-row count, positive integer widths, no unknown properties, and no executable
-content. Removed fields such as `sourceEncoding` are rejected rather than
-ignored or carried into a later download. The current fixed field editor also
-requires the loaded settings to match its visible field count; variable-length
-editing is a separate future change.
-
-## Visual system
-
-The interface uses one semantic palette from `styles/foundation.css`. Neutral
-slate surfaces establish hierarchy; sky blue is reserved for primary actions,
-focus, and informational progress. Green means success only. Warning amber and
-error red are shared by settings state, invalid controls, source-file feedback,
-validation summaries, issue rows, and preview notices. Preview field boundaries
-retain their separate cyan/orange data colors so semantic state and byte layout
-are not confused.
-
-Components consume `neutral`, `info`, `success`, `warning`, and `error` tokens
-for foregrounds, backgrounds, and borders. Component styles do not define color
-literals or use `!important`. Cascade layers preserve the order foundation,
-bootstrap, results, then workflow components without specificity escalation.
-The same light/dark token declaration uses the active `color-scheme`, and the
-early boot asset restores a saved manual theme before the stylesheet paints.
-
-Buttons, dialogs, panels, sections, cards, notices, form controls, table
-containers, and preview containers share one 10 px UI radius, one-pixel border
-primitives, control-height primitives, and reusable surface/dialog shadows.
-Only controls whose geometry carries meaning use a different shape: switch
-tracks are pills, while step badges, status dots, and spinners are circles.
-Preview field boundaries and notice accents use explicit shared emphasis-width
-tokens rather than component-local border measurements.
-
-Responsive behavior follows the same shared system. Repeating card and summary
-layouts use one auto-fitting grid primitive with a component-provided minimum
-column width. Workflow panels establish inline-size containers, so source-file
-controls, status actions, headings, notices, and download actions reflow from
-their available panel width rather than from viewport width alone. Flex and grid
-children share a zero minimum inline size so long translated labels, filenames,
-and validation messages shrink or wrap inside their own surface.
-
-Content with an intrinsic horizontal relationship is not compressed into an
-unreadable mobile layout. The column editor, issue table, and fixed-width output
-preview remain inside bounded, keyboard-focusable horizontal scrollers. The
-preview keeps its row labels sticky and reduces only the label gutter on narrow
-panels. Horizontal-only table scrollers do not reserve a vertical scrollbar
-gutter, so header and footer surfaces reach the container edge; the preview
-retains a stable gutter because its vertical scrollbar changes with row count.
-Dynamic filename metadata uses one-line truncation at comfortable widths and a
-reserved, two-line filename plus metadata slot on narrow panels; the trailing
-processing indicator always occupies a fixed slot, so loading does not change
-text alignment or panel height.
-
-The readiness message always occupies one fixed transparent text slot. Loading
-states use a slow, low-contrast shimmer clipped to the text; the container has
-no bounding box, background, shadow, or glow. Ready, limited, and error states
-are static semantic colors. Reduced-motion and forced-color users receive static
-informational text.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    A[User-selected CSV bytes] --> B[Encoding detector]
-    B --> C[UTF-8, UTF-16, or Big5 decoder]
-    C --> D[CSV parser]
-    X[User-selected XLS/XLSX bytes] --> Y[Excel parser]
-    D --> N[Common string row model]
-    Y --> N
-    N --> W[Configured whitespace handling]
-    S[Validated settings] --> W
-    W --> E[15-field positional defaults]
-    E --> F[Required-field validator]
-    F --> G[Big5 encoder and round-trip check]
-    G --> H[Byte-width validator and padding]
-    H --> I[Blob download]
-    L[Browser autosave or user-selected settings JSON] --> S
-    S --> J[Downloaded settings JSON]
-```
-
-Recommended source boundaries:
-
-```text
-build/vite/            CSP and offline-service-worker build plugins
-public/                Agent discovery files copied without runtime bundling
-src/
-  app/
-    column-editor.ts   Field controls, validity, and cumulative widths
-    resource-priority.ts
-                       CSV/Excel first-use resource ordering
-    results-view.ts    Preview and issue rendering
-    settings-controller.ts
-                       Settings summaries, persistence, import, and recovery
-    spreadsheet-loader.ts
-                       Retrying dynamic Excel import
-  browser/             DOM helpers, theme, offline preparation, and unload guard
-  settings/            Built-in profile and settings-state helpers
-  core/
-    encoding.ts        Detection, decoding, and Big5 encoding adapter
-    csv.ts             Papa Parse adapter
-    source.ts          Filename-extension source type detection
-    spreadsheet.ts     XLS/XLSX adapter and cell normalization
-    whitespace.ts      Shared source-cell whitespace policy
-    fixed-width.ts     Validation, byte padding, and record assembly
-  styles/
-    bootstrap.css      Boot, readiness, and embedded-page states
-    foundation.css     Tokens, themes, loading, and shared controls
-    results.css        Validation, issue, and preview presentation
-    preview-font.css   Dynamically loaded local preview font
-  main.ts              Thin application coordinator
-  styles.css           Workflow styles and style-module imports
-tests/
-  fixtures/            Synthetic, non-sensitive CSV/XLS/XLSX samples
-scripts/
-  verify-build.mjs     Manifest, accessibility, discovery, and size assertions
-```
-
-Core modules must not depend on DOM APIs. Keeping byte conversion pure makes it
-possible to unit-test the most safety-critical behavior. Invariant headings,
-controls, help text, and empty states live in `index.html`; JavaScript hydrates
-that semantic shell instead of generating the whole application.
-
-## Privacy and security
-
-### Data flow guarantees
-
-- File input uses an explicit user gesture.
-- The browser only exposes the selected file to the page.
-- Processing stays in memory.
-- The application has no upload endpoint.
-- Production assets are bundled; runtime CDNs are forbidden.
-- Analytics, trackers, error-reporting SDKs, and remote fonts are forbidden.
-- Settings contain converter settings only.
-
-### Content Security Policy target
-
-The deployed application should use a policy equivalent to:
-
-```text
-default-src 'self';
-script-src 'self';
-style-src 'self';
-img-src 'self' data:;
-connect-src 'none';
-font-src 'self';
-object-src 'none';
-base-uri 'none';
-form-action 'none';
-frame-ancestors 'none';
-```
-
-GitHub Pages cannot set arbitrary response headers. A CSP `<meta>` element can
-cover most directives, but directives unsupported in meta delivery must be
-documented. If strict header control becomes mandatory, deploy the same static
-assets on a host that supports response headers.
-
-Dependencies are locked with `package-lock.json`, reviewed, and updated by
-small pull requests. CI uses `npm ci` for reproducible installs.
-
-## Browser and offline behavior
-
-### GitHub Pages
-
-GitHub Pages is the primary runtime:
-
-- Stable HTTPS origin
-- Normal ES-module and asset loading
-- No server-side access to files selected in the browser
-- A tiny precached boot marker makes the static workflow inert only when
-  JavaScript runs. The complete workflow and its 15 deterministic field rows
-  remain visible at their final geometry while the main coordinator initializes.
-  A persistent header indicator moves from loading core modules to optional
-  offline preparation without inserting or removing a loading panel. Its fixed
-  text slot and the source-file spinner slot reserve their final geometry across
-  every loading state.
-- A production service worker precaches only the base application shell. Excel
-  parsing and preview-font resources use separate generated resource groups.
-  Vite's production manifest is the canonical graph for all three groups; the
-  worker follows static `imports` but does not pull optional `dynamicImports`
-  into the base group. Its application-cache build ID is a SHA-256 digest of the
-  emitted manifest, final static HTML, and early boot asset, so changes to any
-  startup resource install a new complete cache without a hand-maintained
-  version hash.
-  With no selection, idle preparation caches Excel first and the font second.
-  CSV selection promotes the font immediately without blocking parsing; Excel
-  selection loads the Excel chunk before the font. The UI reports offline
-  readiness only after every group is cached, after which the page can be
-  reloaded and used without a network connection.
-- Native browser refresh controls are not intercepted. When a source file is
-  held in memory, the browser's standard leave-page warning protects it.
-- Updated application versions are installed quietly into a separate complete
-  cache. The open page remains on its current version, and the new worker
-  activates after tabs using the previous version have closed.
-
-Browser autosave is origin-scoped; settings JSON remains portable across
-schemes, hosts, browsers, and devices.
-
-### Double-clicked local HTML
-
-A local page runs under a `file://` URL. The File API and Blob download can work,
-but browsers may block module imports or related-file fetches.
-
-The optional offline release should therefore be one self-contained HTML file
-with bundled classic JavaScript, CSS, encoding tables, and CSV/Excel parsers. It
-must make no network requests and must retain JSON settings load/save as the
-portable persistence mechanism.
-
-Serving the normal development build from `localhost` is not the same as
-uploading data; it provides a stable local origin while conversion remains in
-the browser.
-
-## Accessibility and compatibility
-
-- Target current stable Chrome, Edge, Firefox, and Safari.
-- Use named landmarks, stable section IDs, semantic form controls, and actual
-  tables with captions.
-- Associate every control with a visible label or table header and connect
-  concise help through `aria-describedby`.
-- Do not add `aria-label` to non-interactive groups whose visible text already
-  provides the same description.
-- Do not announce one error through multiple live regions or combine
-  `role="alert"` with forced focus for the same event.
-- Make all actions keyboard accessible.
-- Do not communicate validity through color alone.
-- Keep live regions concise; do not announce the entire generated preview.
-- Announce the concise validation outcome after file selection without moving
-  focus away from the initiating control.
-- Meet WCAG 2.2 AA contrast and focus-visible requirements.
-- Use responsive layout without hiding configuration columns; smaller screens
-  may present one output field as a card.
-- Publish canonical metadata, `robots.txt`, `sitemap.xml`, and a concise
-  Traditional Chinese `llms.txt` so crawlers and browsing agents can discover
-  the workflow and privacy boundary without executing the application.
-
-## Performance limits
-
-The initial release targets files up to 25 MiB. Parsing and validation should
-not freeze the page for longer than a perceptible interaction interval.
-
-Implementation order:
-
-1. Use in-memory processing for correctness and simplicity.
-2. Measure realistic files on supported browsers.
-3. Move parsing/conversion to a Web Worker if the UI becomes unresponsive.
-4. Consider chunked output only after profiling; do not complicate encoding
-   boundaries prematurely.
-
-## Testing strategy
-
-All fixtures must be synthetic and contain no production data.
-
-### Current automated coverage
-
-- `tests/encoding.test.mjs` covers Unicode BOM handling, ASCII ambiguity,
-  explicit decoding, Big5 round trips, and lossy rejection.
-- `tests/csv.test.mjs` covers quoted commas, escaped quotes, embedded CRLF,
-  empty cells, terminal-line handling, and translated malformed-quote errors.
-- `tests/fixed-width.test.mjs` covers exact Big5 output, left/right padding,
-  final CRLF, default ordering, preserved-whitespace warnings, blocking errors,
-  and the 200-record/208-byte preset contract.
-- `tests/settings.test.mjs` covers settings-state classification, strict version
-  3 validation, and rejection of removed or unknown properties.
-- `tests/spreadsheet.test.mjs` covers source extension detection, XLS/XLSX
-  formatted values, blank cells, formula errors, and CSV fixture parity.
-- `tests/whitespace.test.mjs` covers removal and preservation policy primitives.
-- `tests/resources.test.mjs` covers CSV/Excel optional-resource ordering and
-  retry after transient spreadsheet import failure.
-- `tests/register-typescript.mjs` keeps the production extensionless import
-  convention while resolving those imports to TypeScript source during Node
-  tests.
-- `scripts/verify-build.mjs` covers the production CSP, service-worker manifest
-  groups, base JavaScript budget, semantic/ARIA references, responsive/style
-  invariants, discovery files, and removed legacy hooks.
-
-### Coverage requirements and backlog
-
-The following lists define the intended contract. Items already represented in
-the automated files above remain here because they are acceptance requirements;
-the unimplemented items form the browser/performance backlog.
-
-#### Unit and conversion coverage
-
-- UTF-8 BOM and strict UTF-8 validation
-- UTF-16LE/BE BOM and conservative BOM-less detection
-- Valid, invalid, ambiguous, and ASCII-only charset cases
-- Big5 decode and encode round trips
-- ASCII one-byte and Chinese two-byte width accounting
-- Unencodable Unicode, emoji, and uncommon Han characters
-- Required/default resolution
-- Empty string versus whitespace-only value
-- Default removal of all source-cell whitespace
-- Default application after source-whitespace handling
-- Leading, trailing, repeated, full-width, and non-breaking spaces
-- Whitespace-only optional and required fields
-- Tab, embedded CR/LF, and unsupported control characters
-- Dominant-issue precedence without redundant row or field issues
-- Source whitespace distinguished from generated padding
-- Left and right padding
-- Exact width and one-byte overflow
-- Settings validation and version rejection
-- CRLF ordering and mandatory final CRLF
-
-#### CSV coverage
-
-- First CSV row treated as data
-- Commas inside quotes
-- Escaped quotes
-- Embedded CRLF inside a quoted cell
-- Empty cells and trailing empty cells
-- Empty and whitespace-only records with exact source positions
-- Whitespace markers and Traditional Chinese warning messages
-- Rows with fewer or more than 15 values
-- Malformed quotations
-- File-level parse errors shown only beneath source selection
-
-#### Spreadsheet coverage
-
-- Case-insensitive CSV/XLS/XLSX extension detection and rejection of other types
-- XLS and XLSX formatted strings, dates, percentages, booleans, and Chinese text
-- Missing-cell padding through column 15 and preservation of populated extras
-- Cached formula results and rejection of formulas without saved results
-- First worksheet selection and preservation of leading blank rows
-
-#### Integration and browser coverage
-
-- UTF-8 CSV to expected Big5 TXT bytes
-- UTF-16LE and UTF-16BE CSV to expected Big5 TXT bytes
-- Big5 CSV to expected Big5 TXT bytes
-- Fifteen fields in exact order and preset total length of 208 bytes
-- Live cumulative widths of 1, 3, 4, 14, 24, 32, 44, 45, 165, 180, 190,
-  191, 199, 207, and 208
-- One global alignment setting applied to all fields
-- Default expected count of 200 and configurable positive-integer counts
-- Exactly 200 preset records produce 42,000 bytes
-- CRLF after every record, including the final record
-- A terminal CRLF does not create a 201st empty record during input validation
-- Preferences save/restore and JSON round trip
-- Version 3 settings omit the per-file CSV encoding choice
-- Download blocked when any record is invalid
-- Whitespace removal changes source values before default and width handling
-- Disabling removal preserves source whitespace and reports warnings
-
-### External compatibility gate
-
-Obtain one owner-approved source CSV and its Access-generated TXT output,
-sanitize the values, and commit the sanitized pair as fixtures. The browser
-output must match the expected TXT byte-for-byte. Until that evidence exists,
-the project must describe its output as the documented Big5/CRLF contract, not
-as proven legacy-system compatibility.
-
-## Implementation status and next release plan
-
-### Milestone 0 — external compatibility contract (not complete)
-
-- Supply a sanitized source/output fixture pair.
-- Run the synthetic Office characterization fixture and document all observed
-  conversions.
-- Confirm the external system accepts the documented CRLF and final-CRLF
-  contract.
-
-### Milestone 1 — pure conversion core (complete)
-
-- Implement settings validation.
-- Implement positional validation and default rules.
-- Implement Big5 safety checks and byte-width output.
-- Add unit and byte-for-byte fixture tests.
-
-### Milestone 2 — browser workflow (complete)
-
-- Implement file selection, detection, CSV parsing, preview, configuration, and
-  validation UI.
-- Add accessible error handling and downloads.
-- Add browser settings autosave plus explicit JSON settings load/save.
-
-### Milestone 3 — release hardening (in progress)
-
-- Cross-browser and accessibility verification.
-- File-size and responsiveness testing.
-- Strict CSP verification.
-- GitHub Pages deployment.
-- Optional self-contained offline artifact.
-
-## Acceptance criteria
-
-The first production release is accepted when:
-
-1. A supported UTF-8, UTF-16, or Big5 CSV or XLS/XLSX workbook can be processed
-   without runtime network requests.
-2. Exactly 15 configured fields are emitted in order.
-3. Defaults are applied only to source values that are empty after the selected
-   whitespace policy, in the same field position.
-4. Resolved required values containing no non-whitespace character block
-   download with one row/field error.
-5. Every field occupies exactly its configured number of Big5 bytes.
-6. Overflow and lossy Big5 encoding block download.
-7. Output matches the approved legacy fixture byte-for-byte.
-8. Ambiguous encoding is visibly flagged and can be overridden.
-9. Valid settings auto-save and restore on the same browser origin and also
-   survive explicit JSON save/load.
-10. Uploaded and generated data are absent from persistent browser storage.
-11. CI type-checks and builds the project successfully.
-12. Keyboard-only operation completes the full workflow.
-13. Every visible UI label and message is Traditional Chinese.
-14. Preset widths total 208 bytes and cumulative widths update live after edits.
-15. One global alignment choice controls all 15 fields.
-16. The default validation requires exactly 200 parsed data records.
-17. Empty records are reported with their source positions.
-18. Output uses `\r\n`, never `\n\r`, after all records including the last.
-19. Source whitespace is removed by default; disabling that setting preserves
-    and automatically marks it in preview.
-20. With whitespace removal disabled, whitespace-only required fields and
-    unsupported control characters block download while warnings remain visible.
-21. File-level errors appear and are announced only beneath source selection;
-    the problem table contains conversion validation issues only.
-
-## Open decisions
-
-The following block byte-for-byte acceptance:
-
-1. Exact Big5 variant expected by the consumer: WHATWG Big5, CP950, or another
-   vendor-specific mapping.
-2. A sanitized CSV and Access-generated TXT pair for compatibility testing.
-3. Confirmation that the external system accepts the CRLF/final-CRLF contract.
-4. Production file-size expectations.
-5. Project license. No license has been selected; do not assume permission for
-    redistribution until the repository owner adds one.
+總寬度固定為 208 bytes。所有值靠左，右側以半形空白 byte `0x20` 補足欄寬。
+
+## 4. 正規化
+
+### 4.1 CSV／Excel input adapter
+
+CSV、XLS 與 XLSX 每個來源儲存格依序處理：
+
+1. 保留必要的原始值供問題或變更說明使用。
+2. 移除全部 Unicode 空白字元，不只頭尾空白。
+3. 欄位5與欄位11轉成 ASCII 大寫。
+4. 寫入共用內部表示。
+
+不執行數字推斷、日期格式轉換、自動補零或科學記號還原。
+
+### 4.2 Big5 TXT input adapter
+
+1. 以 byte 檢查換行與 record 邊界；空白或只含空白的實體行先移除並計數。
+2. 每個其餘 record 必須在不含 CRLF 時恰為 208 bytes。
+3. 依固定欄寬切成 15 個 byte slice。
+4. 嚴格解碼 Big5 並確認可 round-trip。
+5. 移除右側 `0x20` padding。
+6. 移除剩餘空白字元並寫入共用內部表示。
+
+不得以文字字元位置切割 Big5 固定寬資料。
+
+### 4.3 空白列
+
+正規化後每個儲存格都為空時，該列視為空白列並移除。這包含：
+
+- 完全空白的 CSV 行。
+- 只有半形、全形或其他 Unicode 空白的行。
+- 每個 Excel 儲存格皆空白的列。
+- `,,,` 這類所有解析欄位皆空的 CSV record。
+
+移除的列必須計數並保留原始來源列號資訊；不得因後續欄位10補值而復活。
+
+## 5. 內部表示與兩次驗證
+
+所有 input adapter 都產生同一種 15 欄邏輯資料。每一列至少保留：
+
+- 原始來源列號。
+- 是否保留於輸出。
+- 15 個正規化值。
+- 欄位與列層級 issue。
+- 修改前後差異與原因。
+
+處理順序固定為：
+
+1. 來源結構與欄位驗證。
+2. 明確的列篩選與值修改。
+3. 對保留資料執行最終驗證。
+4. 只有最終驗證通過才能序列化。
+
+欄位10補 `0000000000` 是來源驗證後、最終驗證前的內建修改，不是 parser default。這項修改套用於共用內部表示，與來源格式及最後選擇的輸出格式無關，並必須留下 before、after 與 reason。
+
+## 6. 嚴重程度
+
+- `error`：該列預設不輸出；使用者可在預覽中明確勾選後強制納入。無法歸屬資料列的檔案層級 error 仍阻止輸出。
+- `warning`：該列預設不輸出；使用者可在預覽中明確勾選後納入，並必須在檔案樹、摘要及預覽中可見。
+- `valid`：沒有 error 或 warning。
+- `modified`：獨立狀態標記，不等同 warning。
+- `excluded`：使用者或固定檔案篩選明確排除，不算 error，但必須計數。
+
+欄位5不是有效國民身分證或新式外來人口統一證號時為 warning，與欄位8性別不一致時為 error；欄位11仍只接受國民身分證，格式或檢查碼錯誤時為 error。
+
+## 7. 日期與證號
+
+### 日期
+
+- 嚴格接受八位 ASCII 數字 `YYYYMMDD`。
+- 驗證真實 Gregorian calendar date，包括閏年。
+- 以批次開始時固定的臺北當地日期比較，不逐檔重新取得今天。
+- 欄位6、13及非空欄位14都必須嚴格 `< 今天`。
+- 非空欄位14另須 `> 欄位13`。
+
+### 國民身分證與新式外來人口統一證號
+
+共用純函式模組負責：
+
+1. ASCII 大寫化。
+2. 欄位5接受 `[A-Z][1289][0-9]{8}`；欄位11只接受 `[A-Z][12][0-9]{8}`。
+3. 首碼地區代碼轉換。
+4. 檢查碼。
+5. 欄位5第二碼 `1/8` 對應欄位8的 `1`，第二碼 `2/9` 對應欄位8的 `2`。
+
+檢查碼只能驗證邏輯格式，不能證明該人或證件真實存在。
+
+## 8. 自動 decoder
+
+不提供手動 decoder 或 encoding 選項。每個檔案獨立決定：
+
+1. ZIP、XLS、XLSX 先以安全內容 signature 與副檔名判斷。
+2. CSV 依 BOM、嚴格 UTF-8、UTF-16 byte pattern、嚴格 Big5 的固定順序判斷。
+3. `.txt` 必須通過嚴格 Big5 round-trip、換行及 208-byte record 檢查。
+4. 使用的 decoder 與可信狀態存入內部檔案 metadata，但不作為一般 UI 模式或固定資訊區。
+5. 只有副檔名與內容衝突、可信度不足或無安全 decoder 時，才在該檔案的 issue 中說明判定結果。
+
+## 9. 批次、ZIP 與路徑
+
+### 支援輸入
+
+同一個 file picker 接受 `.csv`、`.xls`、`.xlsx`、`.txt` 與 `.zip`。輸入格式不建立不同 tab、步驟或操作模式。
+
+所有支援的 regular file 預設保留；使用者可用每個檔案右側的移除按鈕將它從目前工作區排除，也可一次全部清除。這些操作不修改原始檔案。普通多檔選擇沒有原始資料夾資訊，因此置於批次根目錄；ZIP 內安全相對路徑會保留。
+
+### ZIP 安全限制
+
+- ZIP 巢狀深度上限 5。
+- 虛擬資料夾深度上限 5，批次根目錄不計。
+- 不追蹤、解壓或輸出 symbolic link。
+- 拒絕絕對路徑、磁碟機前綴、NUL、控制字元及 `..`。
+- 限制 entry 數、單檔展開大小、整批累計展開大小及實際輸出 bytes。
+- 不只信任 ZIP header 宣告的大小。
+- 不支援或加密的 archive 顯示 error。
+- 任何輸出路徑碰撞都顯示 error，不自動重新命名。
+
+ZIP 與資料夾依子節點聚合嚴重程度：`error > warning > valid`。
+
+## 10. 四區工作流程
+
+頁面不使用方向 tabs，依固定順序呈現四個 section。
+
+### Section 0 — 欄位規則
+
+- 顯示固定 15 欄、寬度、regex 與額外 validation hook，不提供編輯控制。
+- 頁面初始時收合，只顯示「15 欄／208 bytes」摘要與展開提示。
+- 使用原生或等效的 disclosure control；點擊、Enter 或 Space 可展開及再次收合。
+- 展開後顯示欄位1至欄位15；regex 直接可見，額外 hook 可由 hover、focus 及觸控開啟說明。
+- 不顯示業務欄位名稱、真實範例值或使用者資料。
+
+### Section 1 — 輸入檔案
+
+- 提供單一 multiple file picker，接受 CSV、XLS、XLSX、Big5 TXT 與 ZIP。
+- 再次選取會追加至目前工作區，不覆蓋已載入的檔案。
+- 每個檔案右側提供清楚標示的移除按鈕，操作只影響瀏覽器記憶體；另提供「全部清除」。
+- 選取後立即建立安全虛擬目錄樹，並開始 inventory、decoder、IR、validation pipeline。
+- Tree node 顯示 include state 與 `error > warning > valid` 聚合狀態；不只使用顏色。
+- 點選 regular file 後，在同一區顯示該檔案的 IR preview、摘要及 error／warning。
+- 預覽不因 input adapter 改變版面，也不建立來源格式資訊 panel。
+
+#### IR preview
+
+檔案樹保留安全目錄順序。選取單一檔案後，以 15 欄表格顯示共用內部表示：
+
+- 預設順序為 error、warning、valid；同級依原始來源列號。
+- 每頁最多 100 列，不提供一次顯示全部。
+- 可篩選全部、錯誤、警告、有效、已修改、已排除。
+- 每列顯示「輸出」核取方塊；有 error 或 warning 時預設不勾選，使用者可明確勾選以強制納入。
+- 只請求並渲染目前頁面。
+- Error cell 使用紅色狀態；warning cell 使用黃色狀態；modified 使用獨立標記。
+- 不只使用顏色，必須同時提供圖示、文字或邊框。
+- Hover、focus 與觸控都可開啟 issue 或修改說明。
+- Error／warning 清單以完整邏輯資料列為單位，不把同一列拆成 15 筆 cell issue table；有問題的 cell 仍在該列中標色並提供說明。
+- UI 只顯示欄位編號。
+- 除非發生 decoder issue，預覽不另設來源格式或轉換方向資訊區。
+
+### Section 2 — 輸出格式
+
+- 為整批選擇 Big5 TXT 或 XLSX，不能逐檔混用格式。
+- 選擇只切換 output adapter，不重新解析來源或建立第二份 IR。
+- 可在驗證完成前選擇格式；未歸屬資料列的檔案層級 error 仍停用下載並顯示阻擋摘要。
+- Error／warning 列依預覽中的逐列勾選決定是否輸出；output ZIP 保留安全虛擬目錄。
+
+### Section 3 — 進階輸出
+
+本區預留一條獨立的進階 XLSX 整理流程。初步邊界如下：
+
+- 使用者在本區另選一個參照 Excel workbook；它不是 Section 1 的批次來源，不加入來源檔案樹。
+- 進階流程只讀取已通過最終驗證的 IR，不回寫或改變 Section 1／2 的資料、issue 或標準輸出。
+- 實作時以有順序的一個或多個 join／lookup step 執行；預設輸出已解析值。若需要在 workbook 中保留 VLOOKUP 公式，另行定義為明確輸出選項。
+- 目標是產生另一份整理後 XLSX，並保留 lookup 摘要、未命中、重複 key 與變更資訊供檢視。
+- Primary batch 有 error 時進階輸出不可執行；reference／lookup error 只阻止進階 XLSX，不阻止 Section 2 的標準輸出。
+- 參照 workbook 與 lookup 結果同樣只保留在目前瀏覽器記憶體中。
+- 在 lookup key、參照 worksheet、比對正規化、重複值、未命中 severity、輸出欄位／順序、跨檔合併、worksheet 及檔名規則確認前，本區只列為未實作能力，不顯示可操作但無作用的控制。
+
+## 11. 輸出
+
+使用者在下載階段為整批選擇一種輸出格式：Big5 TXT 或 XLSX。這個選擇只決定 output adapter，不改變正規化、修改、欄位規則或 error／warning 結果；輸入與輸出格式相同時，仍會產生經驗證及明確修改後的標準化檔案。
+
+### Big5 TXT
+
+- 每列固定 208 bytes。
+- 所有值靠左，右側以 `0x20` 補齊。
+- 每列後接 CRLF，包括最後一列。
+- 任何值無法安全 round-trip Big5 或超出 byte 寬度時為 error。
+
+### XLSX
+
+- 每個邏輯值以文字寫入。
+- 不加入標題列。
+- 保留前置零，不轉為數字、日期或布林值。
+
+### Batch ZIP
+
+- 每列都有是否輸出的明確決策；有 error 或 warning 的列預設不輸出，使用者可在預覽勾選後強制納入。
+- 無法歸屬資料列的檔案層級 error 仍阻止下載；至少須勾選一列才可下載。
+- 被排除或不支援的檔案不包含在 ZIP，並在摘要中計數。
+- 所有保留檔案的輸出副檔名依批次輸出選擇統一改為 `.txt` 或 `.xlsx`。
+- 保留安全虛擬目錄；巢狀 ZIP 名稱保留為資料夾 segment。
+- 不保留來源權限、symlink 或不必要的時間 metadata。
+
+## 12. 隱私、安全與可及性
+
+- 不建立 upload endpoint、帳號、遙測或第三方 runtime connection。
+- 正式資源全部由同源提供並可離線使用。
+- 不把檔案內容、路徑、issue、內部表示或輸出放入 localStorage、IndexedDB、URL 或 log。
+- 預覽僅呈現目前選取檔案及分頁資料。
+- 狀態變化以簡潔事件訊息回報，不逐列在 live region 宣告。
+- 樹狀清單、分頁、tooltip/popover、水平捲動與下載必須可用鍵盤操作。
+- 動畫遵守 reduced-motion，狀態不只以顏色表達。
+
+## 13. 不做的事
+
+- 舊設定 JSON 或 settings v3 migration。
+- 可編輯欄寬、必填、預設值、對齊或空白策略。
+- 手動 decoder 選擇。
+- 任意 schema designer。
+- 靜默輸出部分成功檔案。
+- 靜默截斷、補零、修正 checksum、改名或路徑展平。
+- 伺服器端處理或雲端同步。

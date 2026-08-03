@@ -23,6 +23,10 @@ const resultStyles = readFileSync(
   new URL("../src/styles/results.css", import.meta.url),
   "utf8",
 );
+const workspaceViewSource = readFileSync(
+  new URL("../src/app/workspace-view.ts", import.meta.url),
+  "utf8",
+);
 const manifestSource = readFileSync(new URL(".vite/manifest.json", distUrl), "utf8");
 const manifest = JSON.parse(manifestSource);
 
@@ -48,6 +52,20 @@ function collectManifestGroup(roots) {
   return files;
 }
 
+function collectNamedChunks(names) {
+  const files = new Set();
+  for (const chunk of Object.values(manifest)) {
+    if (!chunk.name || !names.includes(chunk.name)) {
+      continue;
+    }
+    files.add(chunk.file);
+    chunk.css?.forEach((file) => files.add(file));
+    chunk.assets?.forEach((file) => files.add(file));
+  }
+  assert.ok(files.size > 0, `Vite manifest is missing named chunks: ${names.join(", ")}`);
+  return files;
+}
+
 function relativePaths(files) {
   return Array.from(files, (fileName) => `./${fileName}`).sort();
 }
@@ -67,7 +85,7 @@ function verifyHtmlReferences(html) {
   );
   const knownIds = new Set(ids);
   const ariaReferenceGroups = Array.from(
-    html.matchAll(/\s(?:aria-describedby|aria-labelledby)="([^"]+)"/gu),
+    html.matchAll(/\s(?:aria-controls|aria-describedby|aria-labelledby)="([^"]+)"/gu),
     (match) => match[1].split(/\s+/u),
   );
   ariaReferenceGroups.forEach((group) => {
@@ -98,17 +116,24 @@ function verifyHtmlReferences(html) {
 
 const precachePaths = readPathGroup("PRECACHE_PATHS");
 const excelPaths = readPathGroup("EXCEL_PATHS");
+const archivePaths = readPathGroup("ARCHIVE_PATHS");
 const fontPaths = readPathGroup("FONT_PATHS");
+const expectedBaseFiles = collectManifestGroup(["index.html", "src/main.ts"]);
 const expectedExcelFiles = collectManifestGroup(["src/core/spreadsheet.ts"]);
+const expectedArchiveFiles = collectNamedChunks(["archive"]);
 const expectedFontFiles = collectManifestGroup([
   "src/styles/preview-font.css",
   "src/assets/fonts/SarasaMonoTC-Regular.woff2",
 ]);
-const expectedBaseFiles = collectManifestGroup(["index.html", "src/main.ts"]);
-expectedExcelFiles.forEach((file) => expectedBaseFiles.delete(file));
+expectedBaseFiles.forEach((file) => expectedExcelFiles.delete(file));
+expectedArchiveFiles.forEach((file) => {
+  expectedBaseFiles.delete(file);
+  expectedExcelFiles.delete(file);
+});
 expectedFontFiles.forEach((file) => {
   expectedBaseFiles.delete(file);
   expectedExcelFiles.delete(file);
+  expectedArchiveFiles.delete(file);
 });
 
 assert.deepEqual(
@@ -120,6 +145,11 @@ assert.deepEqual(
   excelPaths,
   relativePaths(expectedExcelFiles),
   "Excel resources must match the Vite manifest graph.",
+);
+assert.deepEqual(
+  archivePaths,
+  relativePaths(expectedArchiveFiles),
+  "Archive resources must match the Vite manifest graph.",
 );
 assert.deepEqual(
   fontPaths,
@@ -144,7 +174,7 @@ assert.match(
   "Application cache version must derive from the Vite manifest and final HTML.",
 );
 
-for (const path of [...precachePaths, ...excelPaths, ...fontPaths]) {
+for (const path of [...precachePaths, ...excelPaths, ...archivePaths, ...fontPaths]) {
   if (path === "./") {
     continue;
   }
@@ -155,96 +185,119 @@ for (const path of [...precachePaths, ...excelPaths, ...fontPaths]) {
 }
 
 assert.ok(excelPaths.length >= 2, "Excel module and dependency chunks must be grouped.");
+assert.ok(archivePaths.length >= 1, "Archive dependency chunk must be grouped.");
 assert.ok(fontPaths.some((path) => path.endsWith(".woff2")), "Preview font must be grouped.");
 assert.ok(
   excelPaths.every((path) => !precachePaths.includes(path)),
   "Excel resources must not be part of the base precache.",
 );
 assert.ok(
+  archivePaths.every((path) => !precachePaths.includes(path)),
+  "Archive resources must not be part of the base precache.",
+);
+assert.ok(
   fontPaths.every((path) => !precachePaths.includes(path)),
   "Font resources must not be part of the base precache.",
 );
-assert.match(
-  serviceWorker,
-  /prepareExcel\(\)\.then\(prepareFonts\)/u,
-  "Idle preparation must preserve Excel-before-font ordering.",
-);
+assert.match(serviceWorker, /prepareExcel\(\)[\s\S]*?prepareArchive\(\)[\s\S]*?prepareFonts/u);
 assert.match(serviceWorker, /event\.data\?\.type !== "PREPARE_RESOURCES"/u);
 assert.doesNotMatch(serviceWorker, /PREPARE_(?:FONT|OPTIONAL_RESOURCES)|fonts-v1/u);
 
 verifyHtmlReferences(indexHtml);
-assert.match(indexHtml, /<h1>CSV \/ Excel 轉 Big5 定長文字檔<\/h1>/u);
+assert.match(indexHtml, /<h1>離線資料轉換<\/h1>/u);
 assert.match(indexHtml, /id="noscript-heading"/u);
 assert.match(indexHtml, /<script[^>]*src="\.\/boot\.js"[^>]*><\/script>/u);
-assert.match(indexHtml, /id="settings-file"[^>]*\shidden(?:\s|>)/u);
 assert.match(indexHtml, /id="source-file"[^>]*\shidden(?:\s|>)/u);
+assert.match(indexHtml, /id="source-file"[^>]*accept="\.csv,\.xls,\.xlsx,\.txt,\.zip"/u);
+assert.match(indexHtml, /id="source-file"[^>]*\smultiple(?:\s|>)/u);
 assert.doesNotMatch(indexHtml, /id="app"[^>]*\shidden(?:\s|>)/u);
 assert.match(indexHtml, /<html[^>]*class="no-js"/u);
 assert.doesNotMatch(indexHtml, /noscript\.css/u);
-assert.doesNotMatch(
+assert.match(
   indexHtml,
   /<main id="app-content"[^>]*\sinert>/u,
-  "The no-script document must not be permanently inert.",
+  "The application must stay inert until its controller is ready.",
 );
-assert.doesNotMatch(indexHtml, /workflow-nav/u);
 for (const sectionId of [
-  "profile-step",
-  "columns-step",
-  "global-step",
-  "source-step",
-  "results-step",
+  "rules-step",
+  "input-step",
+  "output-step",
+  "advanced-step",
 ]) {
   assert.match(indexHtml, new RegExp(`<section id="${sectionId}"`, "u"));
 }
+assert.ok(
+  ["rules-step", "input-step", "output-step", "advanced-step"]
+    .map((id) => indexHtml.indexOf(`id="${id}"`))
+    .every((position, index, positions) => index === 0 || position > (positions[index - 1] ?? -1)),
+  "The four workflow sections must preserve their fixed order.",
+);
 assert.match(
   indexHtml,
   /<link rel="canonical" href="https:\/\/sleek874\.github\.io\/csv2txt\/"\s*\/?>/u,
 );
-assert.doesNotMatch(indexHtml, /id="settings-file"[^>]*aria-label=/u);
 assert.doesNotMatch(indexHtml, /id="source-file"[^>]*aria-label=/u);
 assert.match(
   indexHtml,
-  /id="load-settings-button"[^>]*>上傳設定檔<\/button>/u,
+  /<details id="rules-disclosure">[\s\S]*?<summary>[\s\S]*?15[\s\S]*?208[\s\S]*?<\/summary>/u,
+  "Fixed rules must start as a native collapsed disclosure with a compact summary.",
+);
+assert.equal(
+  Array.from(indexHtml.matchAll(/<th scope="row">欄位(?:[1-9]|1[0-5])<\/th>/gu)).length,
+  15,
+  "The fixed profile disclosure must contain all 15 fields.",
+);
+for (const [fieldIndex, pattern] of [
+  [5, "^[a-z0-9]{5,10}$"],
+  [7, "^.+$"],
+  [9, "^.+$"],
+  [14, "^(?:[0-9]{8})?$"],
+  [15, "^[1-4]?$"],
+]) {
+  assert.ok(
+    indexHtml.includes(`<th scope="row">欄位${fieldIndex}</th>`) && indexHtml.includes(`<code>${pattern}</code>`),
+    `Field ${fieldIndex} must expose one complete regex instead of mixed format prose.`,
+  );
+}
+assert.match(
+  indexHtml,
+  /欄位5[\s\S]*?證號無效時提醒，性別不符時錯誤[\s\S]*?欄位8[\s\S]*?有效證號時與欄位5比對性別/u,
+  "Field 5 and field 8 must describe the shared national and new-resident ID behavior.",
 );
 assert.match(
   indexHtml,
-  /id="save-settings-button"[^>]*>下載設定檔<\/button>/u,
+  /name="output-format" value="big5-txt" checked/u,
 );
+assert.match(indexHtml, /name="output-format" value="xlsx"/u);
+assert.match(indexHtml, /id="row-filter"[\s\S]*?value="modified"/u);
 assert.match(
   indexHtml,
-  /id="load-default-button"[^>]*>使用預設設定<\/button>/u,
+  /<th scope="col">輸出<\/th>/u,
+  "The preview must expose the per-row output decision column.",
 );
-assert.match(indexHtml, /<label for="source-encoding">CSV 來源編碼<\/label>/u);
-assert.match(indexHtml, /<label for="expected-rows">預期資料筆數<\/label>/u);
-assert.match(indexHtml, /<label for="alignment">輸出對齊方式<\/label>/u);
-assert.match(indexHtml, /<option value="left">靠左<\/option>/u);
-assert.match(indexHtml, /<option value="right">靠右<\/option>/u);
+assert.doesNotMatch(indexHtml, /settings-file|settings-status|source-encoding|workflow-tab/u);
+assert.doesNotMatch(indexHtml, /正向轉換|反向轉換|全域設定|欄位設定/u);
+assert.doesNotMatch(indexHtml, /內部資料|adapter|pipeline|正規化/u);
 assert.match(
   indexHtml,
-  /<label for="remove-whitespace">來源空白字元處理<\/label>/u,
+  /id="file-tree"[^>]*role="tree"[^>]*aria-describedby="file-tree-help"/u,
+  "The batch file tree must expose keyboard guidance.",
 );
-assert.match(
-  indexHtml,
-  /<option value="remove" selected>移除<\/option>/u,
-);
-assert.match(indexHtml, /<option value="preserve">保留<\/option>/u);
-assert.match(indexHtml, /來源值經空白處理後為空時套用。/u);
-assert.match(
-  indexHtml,
-  /id="remove-whitespace-help">套用空值預設與驗證前處理；保留時會在預覽標示。/u,
-);
-assert.doesNotMatch(indexHtml, /id="show-whitespace"/u);
-assert.doesNotMatch(indexHtml, /id="settings-status"[^>]*aria-label=/u);
-assert.doesNotMatch(
-  indexHtml,
-  /id="settings-status"[^>]*(?:role|aria-live)=/u,
-  "Autosave progress must not be announced after every edit.",
-);
+assert.match(indexHtml, /id="data-workspace"[^>]*\shidden(?:\s|>)/u);
+assert.match(indexHtml, /id="cell-tooltip"[^>]*role="tooltip"[^>]*hidden/u);
+assert.doesNotMatch(indexHtml, /file-issue-list|問題與修改/u);
+for (let fieldIndex = 1; fieldIndex <= 15; fieldIndex += 1) {
+  assert.match(
+    indexHtml,
+    new RegExp(`<th scope="col" aria-label="欄位${fieldIndex}">${fieldIndex}<\\/th>`, "u"),
+    `Preview field ${fieldIndex} must use a compact visual index and an accessible label.`,
+  );
+}
 assert.doesNotMatch(indexHtml, /id="source-file-picker"[^>]*aria-describedby=/u);
 assert.doesNotMatch(
   indexHtml,
-  /id="preview-results"[^>]*aria-live/u,
-  "Large preview updates must not be exposed as a live region.",
+  /id="(?:data-table-body|workspace-results)"[^>]*aria-live/u,
+  "Large data updates must not be exposed as a live region.",
 );
 assert.match(
   indexHtml,
@@ -257,11 +310,6 @@ assert.doesNotMatch(
 );
 assert.doesNotMatch(indexHtml, /readiness-status__indicator/u);
 assert.doesNotMatch(indexHtml, /id="app-loading"/u);
-assert.equal(
-  Array.from(indexHtml.matchAll(/id="width-\d+"/gu)).length,
-  15,
-  "The initial HTML must reserve all 15 column-editor rows.",
-);
 assert.match(indexHtml, /id="app-status" class="visually-hidden"/u);
 assert.match(
   indexHtml,
@@ -280,23 +328,23 @@ assert.match(
 );
 assert.match(
   indexHtml,
-  /id="file-status"[\s\S]*?id="file-status-name"[\s\S]*?id="file-status-meta"/u,
+  /id="file-status"[\s\S]*?id="source-file-name"[\s\S]*?id="source-file-meta"/u,
   "Filename and file-size metadata must remain independently responsive.",
 );
 assert.match(
   indexHtml,
-  /id="deselect-source-button"[^>]*>取消選擇<\/button>/u,
-  "Deselecting a source must not imply deleting the user's file.",
+  /id="clear-workspace-button"[^>]*>全部清除<\/button>/u,
+  "Clearing the in-memory workspace must be explicit.",
 );
 assert.doesNotMatch(
   indexHtml,
-  /start-over-button|清除檔案/u,
+  /deselect-source-button|start-over-button|清除檔案/u,
   "Legacy destructive-sounding source actions must not return.",
 );
 assert.match(
   indexHtml,
-  /class="profile-actions responsive-grid"/u,
-  "Repeated action groups must consume the shared responsive-grid primitive.",
+  /class="output-format-grid responsive-grid"/u,
+  "Output choices must consume the shared responsive-grid primitive.",
 );
 assert.match(
   indexHtml,
@@ -308,6 +356,11 @@ assert.match(
   /id="source-file-error"[^>]*role="alert"[^>]*hidden/u,
 );
 assert.doesNotMatch(indexHtml, /id="source-file-error"[^>]*tabindex=/u);
+assert.match(
+  indexHtml,
+  /id="advanced-step"[\s\S]*?尚未開放[\s\S]*?<\/section>/u,
+  "The deferred advanced section must explain its state without fake controls.",
+);
 const baseCss = precachePaths
   .filter((path) => path.endsWith(".css"))
   .map((path) => readFileSync(
@@ -385,10 +438,17 @@ assert.match(
   /\.theme-toggle\{[^}]*width:100%[^}]*height:var\(--control-height-compact\)/u,
   "The theme capsule must fill the reserved header width.",
 );
+const headerMetaRule = baseCss.match(/\.header-meta\{[^}]*\}/u)?.[0];
+assert.ok(headerMetaRule, "The header metadata rule must exist.");
 assert.match(
-  baseCss,
-  /\.header-meta\{[^}]*display:flex[^}]*min-height:1\.5rem/u,
-  "The eyebrow and readiness status must share one stable line.",
+  headerMetaRule,
+  /display:flex/u,
+  "The eyebrow and readiness status must share one flex line.",
+);
+assert.match(
+  headerMetaRule,
+  /min-height:1\.5rem/u,
+  "The eyebrow and readiness status must reserve one stable line.",
 );
 assert.match(
   baseCss,
@@ -434,8 +494,8 @@ assert.match(
 );
 assert.match(
   componentStyles,
-  /@container panel \(max-width:\s*54rem\)[\s\S]*?\.source-options\s*\{[\s\S]*?grid-template-columns:\s*1fr/u,
-  "Source controls must reflow from panel width before they overflow.",
+  /@container panel \(max-width:\s*36rem\)[\s\S]*?\.rules-panel details > summary\s*\{[\s\S]*?flex-direction:\s*column/u,
+  "The rules disclosure must reflow from panel width before it overflows.",
 );
 assert.match(
   componentStyles,
@@ -451,9 +511,85 @@ assert.doesNotMatch(
 );
 assert.match(
   resultStyles,
-  /\.preview-chunk\s*\{[^}]*scrollbar-gutter:\s*stable/u,
-  "Dynamic previews must retain their stable vertical scrollbar gutter.",
+  /\.data-table\s*\{[^}]*width:\s*max-content[^}]*min-width:\s*100%/u,
+  "The preview table must expand from intrinsic fixed-field widths.",
 );
+assert.match(
+  resultStyles,
+  /\.data-table :is\(th, td\):nth-child\(12\)\s*\{[^}]*--preview-field-width:\s*120ch/u,
+  "Field 9 must reserve its complete 120-byte display width.",
+);
+assert.match(
+  resultStyles,
+  /\.data-table thead th\s*\{[^}]*position:\s*sticky[^}]*top:\s*0/u,
+  "Preview headers must remain visible while rows scroll.",
+);
+assert.match(
+  resultStyles,
+  /\.data-table thead th:nth-child\(n \+ 4\)\s*\{[^}]*text-align:\s*left/u,
+  "Preview field indexes 1 through 15 must align with left-aligned cell content.",
+);
+assert.match(
+  workspaceViewSource,
+  /const FILTERABLE_ROW_STATES:[\s\S]*?function syncRowFilterOptions\(file: InternalFile\): void \{[\s\S]*?option\.disabled = !file\.rows\.some\(\(row\) => rowMatches\(row, filter\)\);[\s\S]*?rowFilter\.value = "all";/u,
+  "Filters without matching rows must be disabled, with a safe fallback to all rows.",
+);
+assert.match(
+  resultStyles,
+  /\.data-table-scroll\s*\{[^}]*height:[^;]+;[^}]*min-height:[^;]+;[^}]*overflow:\s*auto[^}]*scrollbar-gutter:\s*stable/u,
+  "The preview viewport must keep a stable height and its horizontal scrollbar at the bottom.",
+);
+assert.match(
+  resultStyles,
+  /\.data-table\s*\{[^}]*--preview-row-height:\s*2\.4rem[^}]*width:\s*max-content/u,
+  "The preview table must own one reusable natural row-height value.",
+);
+assert.doesNotMatch(
+  resultStyles,
+  /\.data-table\s*\{[^}]*height:\s*100%/u,
+  "The preview table must not stretch short result sets to fill the viewport.",
+);
+assert.match(
+  resultStyles,
+  /\.data-table tbody tr\s*\{[^}]*height:\s*var\(--preview-row-height\)/u,
+  "Real, empty, and placeholder preview rows must share one stable row height.",
+);
+assert.match(
+  resultStyles,
+  /\.preview-placeholder-row\s*>\s*td\s*\{[^}]*padding-block:\s*0[^}]*pointer-events:\s*none/u,
+  "Short preview results must retain non-interactive blank cellular rows.",
+);
+assert.match(
+  workspaceViewSource,
+  /const PREVIEW_ROW_SLOTS = 14;[\s\S]*?placeholderRow\.className = "preview-placeholder-row";[\s\S]*?placeholderRow\.setAttribute\("aria-hidden", "true"\)/u,
+  "The preview must pad short or empty result sets with hidden blank rows.",
+);
+assert.match(
+  resultStyles,
+  /\.filter-control\s*\{[^}]*white-space:\s*nowrap/u,
+  "The preview filter label must not collapse into vertical text.",
+);
+assert.match(
+  resultStyles,
+  /\.data-cell-value\s*\{[^}]*font-family:\s*"Sarasa Mono TC"/u,
+  "Preview cells must use the deferred fixed-width font when it is ready.",
+);
+assert.match(
+  componentStyles,
+  /\.step-heading\s*>\s*span:first-child\s*\{/u,
+  "Only the first step-heading child may receive the numbered circle treatment.",
+);
+assert.match(
+  componentStyles,
+  /:where\(\[hidden\]\)\s*\{[^}]*display:\s*none/u,
+  "Component display rules must not override the hidden attribute.",
+);
+assert.match(
+  resultStyles,
+  /\[hidden\]\s*\{[^}]*display:\s*none/u,
+  "Result components must not display empty hidden notices.",
+);
+assert.doesNotMatch(resultStyles, /\.issue-(?:list|card)/u);
 assert.doesNotMatch(
   baseCss,
   /readiness-status--(?:settled|ready|error)/u,

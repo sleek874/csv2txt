@@ -1,5 +1,14 @@
 # Third-party notices
 
+## fflate
+
+fflate -- https://101arrowz.github.io/fflate/
+
+Copyright (c) 2026 Arjun Barrett
+
+Licensed under the MIT License. The library is bundled as a lazy browser chunk
+for ZIP reading. See [licenses/fflate-MIT.txt](licenses/fflate-MIT.txt).
+
 ## SheetJS Community Edition
 
 SheetJS Community Edition -- https://sheetjs.com/

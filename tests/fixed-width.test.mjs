@@ -1,105 +1,210 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { parseCsv } from "../src/core/csv.ts";
-import { encodeBig5 } from "../src/core/encoding.ts";
-import { convertRows } from "../src/core/fixed-width.ts";
-import { createDefaultSettings } from "../src/settings/profile.ts";
+import { createInternalFile } from "../src/core/conversion-pipeline.ts";
+import {
+  FIXED_FIELDS,
+  FIXED_RECORD_WIDTH_BYTES,
+  FIXED_WIDTHS,
+} from "../src/core/fixed-profile.ts";
+import { serializeFixedWidthBig5 } from "../src/core/fixed-width.ts";
+import { parseFixedWidthBig5 } from "../src/core/fixed-width-inverse.ts";
+import {
+  isValidNewResidentId,
+  isValidTaiwanNationalId,
+} from "../src/core/validation.ts";
 
-function createSettings(widths, overrides = {}) {
-  return {
-    version: 3,
-    removeWhitespace: true,
-    alignment: "left",
-    expectedRows: 1,
-    columns: widths.map((widthBytes) => ({
-      required: false,
-      defaultValue: "",
-      widthBytes,
-    })),
-    ...overrides,
-  };
+function validRow(overrides = {}) {
+  const row = [
+    "A", "01", "1", "0000000001", "A123456789",
+    "20000101", "中文", "1", "台北", "",
+    "A123456789", "A", "20200101", "", "",
+  ];
+  Object.entries(overrides).forEach(([fieldIndex, value]) => {
+    row[Number(fieldIndex) - 1] = value;
+  });
+  return row;
 }
 
-test("emits exact Big5 bytes with global left or right padding and final CRLF", () => {
-  const chinese = encodeBig5("中");
-  assert.ok(chinese);
+function issuesFor(file) {
+  return [
+    ...file.issues,
+    ...file.rows.flatMap((row) => [
+      ...row.issues,
+      ...row.cells.flatMap((cell) => cell.issues),
+    ]),
+  ];
+}
 
-  const left = convertRows([["A", "中"]], createSettings([4, 4]));
-  assert.deepEqual(
-    left.outputBytes,
-    new Uint8Array([0x41, 0x20, 0x20, 0x20, ...chinese, 0x20, 0x20, 0x0d, 0x0a]),
-  );
-  assert.equal(left.recordWidthBytes, 8);
-
-  const right = convertRows(
-    [["A", "中"]],
-    createSettings([4, 4], { alignment: "right" }),
-  );
-  assert.deepEqual(
-    right.outputBytes,
-    new Uint8Array([0x20, 0x20, 0x20, 0x41, 0x20, 0x20, ...chinese, 0x0d, 0x0a]),
-  );
-});
-
-test("applies defaults after whitespace removal without masking an empty record", () => {
-  const settings = createSettings([2, 1]);
-  settings.columns[0].defaultValue = "中";
-
-  const resolved = convertRows([[" \t", "A"]], settings);
-  assert.equal(resolved.rows[0]?.fields[0]?.resolvedValue, "中");
-  assert.equal(resolved.rows[0]?.fields[0]?.usedDefault, true);
-  assert.ok(resolved.outputBytes);
-
-  const empty = convertRows([[" \t", " "]], settings);
-  assert.equal(empty.outputBytes, null);
-  assert.deepEqual(empty.issues.map((issue) => issue.code), ["EMPTY_RECORD"]);
-});
-
-test("preserved source whitespace remains valid but visible as a warning", () => {
-  const result = convertRows(
-    [[" A"]],
-    createSettings([3], { removeWhitespace: false }),
+test("normalizes one shared row, records the telephone change, and emits 208-byte Big5 records", () => {
+  const file = createInternalFile(
+    "file-1",
+    "sample.csv",
+    { rows: [[...validRow(), "ignored"], ["　", " "]] },
+    "20260803",
   );
 
-  assert.ok(result.outputBytes);
-  assert.equal(result.warningCount, 1);
-  assert.deepEqual(result.issues.map((issue) => issue.code), ["LEADING_WHITESPACE"]);
-  assert.equal(result.rows[0]?.fields[0]?.resolvedValue, " A");
-});
+  assert.equal(file.summary.sourceRows, 2);
+  assert.equal(file.summary.excludedBlankRows, 1);
+  assert.equal(file.summary.errorCount, 1, "the extra source column remains a visible error");
+  assert.equal(file.rows[0]?.included, false);
+  assert.throws(() => serializeFixedWidthBig5(file), /尚未選擇任何輸出列/u);
 
-test("any required, width, control, or Big5 error blocks the complete download", () => {
-  const settings = createSettings([1, 1, 2, 2], { removeWhitespace: false });
-  settings.columns[0].required = true;
-
-  const result = convertRows([["", "AB", "\tA", "😀"]], settings);
-
-  assert.equal(result.outputBytes, null);
-  assert.deepEqual(
-    result.issues.map((issue) => issue.code),
-    [
-      "MISSING_REQUIRED",
-      "WIDTH_OVERFLOW",
-      "UNSUPPORTED_CONTROL_CHARACTER",
-      "UNENCODABLE_BIG5",
-    ],
+  const validFile = createInternalFile(
+    "file-2",
+    "sample.csv",
+    { rows: [[" A ", ...validRow().slice(1)]] },
+    "20260803",
   );
-  assert.equal(result.invalidRows, 1);
-});
+  assert.equal(validFile.summary.errorCount, 0);
+  assert.equal(validFile.summary.modifiedCount, 1);
+  assert.equal(validFile.rows[0]?.included, true);
+  assert.equal(validFile.rows[0]?.cells[9]?.finalValue, "0000000000");
 
-test("the 200-row preset fixture produces 208-byte records plus CRLF", () => {
-  const csvText = readFileSync(
-    new URL("./fixtures/synthetic-valid-200.utf8.csv", import.meta.url),
-    "utf8",
-  );
-  const parsed = parseCsv(csvText);
-  const result = convertRows(parsed.rows, createDefaultSettings());
+  const bytes = serializeFixedWidthBig5(validFile);
+  assert.equal(bytes.length, FIXED_RECORD_WIDTH_BYTES + 2);
+  assert.deepEqual(bytes.slice(-2), new Uint8Array([0x0d, 0x0a]));
 
+  const parsed = parseFixedWidthBig5(bytes, FIXED_WIDTHS);
   assert.deepEqual(parsed.errors, []);
-  assert.deepEqual(result.issues, []);
-  assert.equal(result.validRows, 200);
-  assert.equal(result.recordWidthBytes, 208);
-  assert.equal(result.outputBytes?.length, 200 * (208 + 2));
-  assert.deepEqual(result.outputBytes?.slice(-2), new Uint8Array([0x0d, 0x0a]));
+  assert.deepEqual(parsed.rows[0], validRow({ 10: "0000000000" }));
+});
+
+test("blocks checksum, date, cross-field, width, and Big5 failures without hidden correction", () => {
+  const file = createInternalFile(
+    "file-1",
+    "invalid.xlsx",
+    {
+      rows: [validRow({
+        5: "ABCDE",
+        6: "20260230",
+        7: "😀",
+        8: "2",
+        11: "A123456788",
+        13: "20210101",
+        14: "20200101",
+        15: "",
+      })],
+    },
+    "20260803",
+  );
+  const issues = issuesFor(file);
+
+  assert.ok(issues.some((issue) => issue.code === "OPTIONAL_ID_INVALID" && issue.severity === "warning"));
+  assert.ok(issues.some((issue) => issue.code === "UNENCODABLE_BIG5"));
+  assert.ok(issues.some((issue) => issue.code === "REQUIRED_ID_INVALID"));
+  assert.ok(issues.some((issue) => issue.code === "INVALID_DATE"));
+  assert.ok(issues.some((issue) => issue.code === "OPTIONAL_FIELDS_MISMATCH"));
+  assert.ok(issues.some((issue) => issue.code === "DATE_ORDER_INVALID"));
+  assert.equal(file.summary.errorCount > 0, true);
+});
+
+test("uses regex alone for field format and empty-value acceptance", () => {
+  const expectedPatterns = new Map([
+    [5, "^[a-z0-9]{5,10}$"],
+    [7, "^.+$"],
+    [9, "^.+$"],
+    [14, "^(?:[0-9]{8})?$"],
+    [15, "^[1-4]?$"],
+  ]);
+  expectedPatterns.forEach((pattern, fieldIndex) => {
+    assert.equal(FIXED_FIELDS[fieldIndex - 1]?.pattern.source, pattern);
+  });
+
+  const validFile = createInternalFile(
+    "regex-valid",
+    "regex-valid.csv",
+    { rows: [validRow({ 5: "ab123", 7: "中", 9: "台北", 14: "", 15: "" })] },
+    "20260803",
+  );
+  assert.equal(validFile.summary.errorCount, 0, "only the field 14/15 pair may be empty");
+
+  const invalidFile = createInternalFile(
+    "regex-invalid",
+    "regex-invalid.csv",
+    { rows: [validRow({ 5: "AB-12", 7: "", 9: "", 14: "2020", 15: "9" })] },
+    "20260803",
+  );
+  const formatIssues = issuesFor(invalidFile)
+    .filter((issue) => issue.code === "PATTERN_MISMATCH");
+  assert.deepEqual(
+    [...new Set(formatIssues.map((issue) => issue.fieldIndex))].sort((left, right) => left - right),
+    [5, 7, 9, 14, 15],
+  );
+  assert.equal(issuesFor(invalidFile).some((issue) => issue.code === "MISSING_REQUIRED"), false);
+});
+
+test("accepts valid new resident IDs in field 5 and maps their sex code", () => {
+  assert.equal(isValidTaiwanNationalId("A123456789"), true);
+  assert.equal(isValidNewResidentId("A800000014"), true);
+  assert.equal(isValidNewResidentId("A900000016"), true);
+  assert.equal(isValidNewResidentId("A800000015"), false);
+
+  for (const [residentId, field8] of [
+    ["A800000014", "1"],
+    ["A900000016", "2"],
+  ]) {
+    const file = createInternalFile(
+      `resident-${field8}`,
+      "resident.csv",
+      { rows: [validRow({ 5: residentId, 8: field8 })] },
+      "20260803",
+    );
+    const issues = issuesFor(file);
+    assert.equal(issues.some((issue) => issue.code === "OPTIONAL_ID_INVALID"), false);
+    assert.equal(issues.some((issue) => issue.code === "ID_GENDER_MISMATCH"), false);
+  }
+
+  const mismatchFile = createInternalFile(
+    "resident-mismatch",
+    "resident-mismatch.csv",
+    { rows: [validRow({ 5: "A800000014", 8: "2" })] },
+    "20260803",
+  );
+  const mismatchIssues = issuesFor(mismatchFile);
+  assert.equal(mismatchIssues.some((issue) => issue.code === "OPTIONAL_ID_INVALID"), false);
+  const genderMismatch = mismatchIssues.find((issue) => issue.code === "ID_GENDER_MISMATCH");
+  assert.equal(genderMismatch?.severity, "error");
+  assert.equal(mismatchFile.summary.errorCount, 1);
+  assert.equal(mismatchFile.rows[0]?.included, false);
+
+  const invalidFile = createInternalFile(
+    "resident-invalid",
+    "resident-invalid.csv",
+    { rows: [validRow({ 5: "A800000015", 8: "1" })] },
+    "20260803",
+  );
+  assert.equal(
+    issuesFor(invalidFile).some((issue) => issue.code === "OPTIONAL_ID_INVALID"),
+    true,
+  );
+  assert.equal(invalidFile.summary.warningCount, 1);
+  assert.equal(invalidFile.summary.errorCount, 0);
+  assert.equal(invalidFile.rows[0]?.included, false);
+});
+
+test("defaults issue rows to excluded and serializes them only after an explicit row decision", () => {
+  const file = createInternalFile(
+    "row-output-decisions",
+    "row-output-decisions.csv",
+    {
+      rows: [
+        validRow(),
+        validRow({ 5: "A123456789", 8: "2", 9: "" }),
+      ],
+    },
+    "20260803",
+  );
+
+  assert.deepEqual(file.rows.map((row) => row.included), [true, false]);
+  assert.equal(file.summary.includedRows, 1);
+  assert.equal(issuesFor(file).some((issue) => issue.code === "ID_GENDER_MISMATCH"), true);
+  assert.equal(
+    issuesFor(file).some((issue) => issue.code === "PATTERN_MISMATCH" && issue.fieldIndex === 9),
+    true,
+  );
+  assert.equal(serializeFixedWidthBig5(file).length, FIXED_RECORD_WIDTH_BYTES + 2);
+
+  file.rows[1].included = true;
+  assert.equal(serializeFixedWidthBig5(file).length, (FIXED_RECORD_WIDTH_BYTES + 2) * 2);
 });

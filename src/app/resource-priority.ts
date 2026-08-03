@@ -14,7 +14,7 @@ export function prioritizeSourceResources(
   sourceType: SourceFileType,
   tasks: ResourceTasks,
 ): ResourcePriority {
-  if (sourceType === "csv") {
+  if (sourceType === "csv" || sourceType === "txt") {
     return {
       fullyPrepared: tasks.prepareFont(),
       readyForParsing: Promise.resolve(),

@@ -3,8 +3,8 @@ import { defineConfig } from "vite";
 import {
   developmentContentSecurityPolicy,
   productionContentSecurityPolicy,
-} from "./build/vite/content-security-policy";
-import { offlineServiceWorker } from "./build/vite/offline-service-worker";
+} from "./build/vite/content-security-policy.ts";
+import { offlineServiceWorker } from "./build/vite/offline-service-worker.ts";
 
 export default defineConfig({
   base: "./",
@@ -24,13 +24,18 @@ export default defineConfig({
     emptyOutDir: true,
     manifest: true,
     sourcemap: false,
-    chunkSizeWarningLimit: 850,
+    chunkSizeWarningLimit: 950,
     rollupOptions: {
       output: {
         manualChunks(id) {
-          return id.replaceAll("\\", "/").includes("/node_modules/xlsx/")
-            ? "excel"
-            : undefined;
+          const normalizedId = id.replaceAll("\\", "/");
+          if (normalizedId.includes("/node_modules/xlsx/")) {
+            return "excel";
+          }
+          if (normalizedId.includes("/node_modules/fflate/")) {
+            return "archive";
+          }
+          return undefined;
         },
       },
     },

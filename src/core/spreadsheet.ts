@@ -3,6 +3,7 @@ import {
   read,
   set_cptable,
   utils,
+  write,
   type CellObject,
   type WorkSheet,
 } from "xlsx";
@@ -16,6 +17,16 @@ export interface ParsedSpreadsheet {
   rows: string[][];
   errors: string[];
   sheetName: string;
+}
+
+export function createSpreadsheet(rows: readonly (readonly string[])[]): Uint8Array {
+  const sheet = utils.aoa_to_sheet(rows.map((row) => [...row]));
+  const workbook = utils.book_new(sheet, "資料");
+  return new Uint8Array(write(workbook, {
+    type: "array",
+    bookType: "xlsx",
+    compression: true,
+  }));
 }
 
 function populatedCell(cell: CellObject | undefined): cell is CellObject {

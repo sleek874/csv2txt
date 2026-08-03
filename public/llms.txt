@@ -1,23 +1,41 @@
-# CSV / Excel 轉 Big5 定長文字檔
+# 離線資料轉換
 
-瀏覽器本機工具，可將 CSV、XLS、XLSX 轉換為固定欄寬的 Big5 文字檔。
+隱私優先的瀏覽器本機工具。所有來源資料、預覽、驗證與輸出只在目前瀏覽器記憶體處理，不會上傳。
 
-## 使用流程
+## 目前部署能力
 
-0. 載入或確認設定檔。
-1. 設定 15 個欄位的必填規則、空值預設與 Big5 位元組寬度。
-2. 設定預期筆數、輸出對齊方式與來源空白字元處理。
-3. 選擇本機 CSV、XLS 或 XLSX 檔案；CSV 可另選目前檔案的來源編碼。
-4. 檢查驗證結果與預覽，再下載 Big5 TXT。
+- CSV、XLS、XLSX 轉固定寬 Big5 TXT。
+- Big5 TXT 解析與 XLSX 輸出的單檔流程已在開發分支驗證。
+- 15 欄、208-byte 固定寬核心、Big5 round-trip、CRLF、離線快取與延遲 Excel 資源。
+- 目前部署頁面仍可能顯示舊設定式 workflow；不要把下列主要版本目標誤認為已完成。
 
-## 隱私與限制
+## 下一個主要版本
 
-- 來源檔案只在目前瀏覽器分頁的記憶體中處理，不會上傳。
-- 網站沒有分析、追蹤或遠端字型。
-- JavaScript 必須啟用，轉換功能才能使用。
-- CSV、XLS、XLSX 檔案上限為 25 MiB。
+- 網站名稱：離線資料轉換。
+- 單一通用檔案選擇區接受 CSV、XLS、XLSX、Big5 TXT 與 ZIP，不使用方向 tabs。
+- 固定 15 欄、每筆 208 bytes，不提供設定檔或欄寬修改。
+- 多檔案與遞迴 ZIP 批次處理。
+- 自動 decoder，不提供手動 encoding 選項。
+- 安全虛擬目錄、檔案篩選、狀態樹與 100-row 分頁內部資料表。
+- Source validation、明確 modification、final validation 後才輸出。
+- 下載階段為整批選擇 Big5 TXT 或 XLSX；輸出選擇不改變 IR 的驗證與修改。
+- UI 分為：0 收合式欄位規則、1 檔案樹與 IR preview、2 標準輸出格式、3 未來進階 XLSX 輸出。
+- 進階輸出將使用另一個參照 workbook 對 final IR 執行明確 lookup；詳細規則尚未定義，也尚未實作。
+- Error／warning 列預設不輸出；使用者可在預覽逐列勾選後強制納入，檔案層級 error 仍阻止輸出。
+
+## 固定行為摘要
+
+- 所有來源 cell 移除全部空白。
+- 完全空白列與 `,,,` 類全空 record 被移除並計數。
+- 所有 TXT 值靠左，右補 `0x20`。
+- 欄位10空值在共用 IR 的修改階段補為 `0000000000`，與來源及輸出格式無關。
+- ZIP 與虛擬資料夾深度上限 5，不跟隨 symbolic link。
+- UI 只顯示欄位1至欄位15，不顯示業務名稱。
 
 ## 連結
 
 - 工具：https://sleek874.github.io/csv2txt/
 - 原始碼：https://github.com/sleek874/csv2txt
+- 規格：docs/DESIGN.md
+- 架構：docs/ARCHITECTURE.md
+- Roadmap：docs/ROADMAP.md

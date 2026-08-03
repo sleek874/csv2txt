@@ -5,18 +5,38 @@ import test from "node:test";
 import { utils, write } from "xlsx";
 
 import { parseCsv } from "../src/core/csv.ts";
-import { detectSourceFileType } from "../src/core/source.ts";
-import { parseSpreadsheet } from "../src/core/spreadsheet.ts";
+import { detectInputFileType, detectSourceFileType } from "../src/core/source.ts";
+import {
+  createSpreadsheet,
+  parseSpreadsheet,
+} from "../src/core/spreadsheet.ts";
 
 const fixtureDirectory = new URL("./fixtures/", import.meta.url);
 
-test("source type detection only accepts CSV, XLS, and XLSX extensions", () => {
+test("creates an XLSX with text cells and no added header row", () => {
+  const rows = [["00123", "中文", ""], ["00002", "A", "尾端"]];
+  const bytes = createSpreadsheet(rows);
+  const parsed = parseSpreadsheet(bytes, 3);
+
+  assert.equal(parsed.sheetName, "資料");
+  assert.deepEqual(parsed.rows, rows);
+  assert.deepEqual(parsed.errors, []);
+});
+
+test("source type detection accepts the four single-file adapters", () => {
   assert.equal(detectSourceFileType("data.csv"), "csv");
   assert.equal(detectSourceFileType("DATA.XLS"), "xls");
   assert.equal(detectSourceFileType("report.final.XLSX"), "xlsx");
+  assert.equal(detectSourceFileType("records.TXT"), "txt");
   assert.equal(detectSourceFileType("data.xlsm"), null);
-  assert.equal(detectSourceFileType("data.csv.txt"), null);
+  assert.equal(detectSourceFileType("data.csv.txt"), "txt");
   assert.equal(detectSourceFileType("csv"), null);
+});
+
+test("input type detection adds ZIP without treating it as a row adapter", () => {
+  assert.equal(detectInputFileType("batch.ZIP"), "zip");
+  assert.equal(detectInputFileType("data.csv"), "csv");
+  assert.equal(detectSourceFileType("batch.zip"), null);
 });
 
 for (const bookType of ["xlsx", "biff8"]) {

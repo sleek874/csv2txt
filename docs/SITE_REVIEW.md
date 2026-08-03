@@ -1,5 +1,12 @@
 # Site-wide implementation review
 
+> **Historical baseline:** this review describes the last settings-driven,
+> single-file implementation before the fresh-start "離線資料轉換" work. Keep
+> it as verification evidence for reusable conversion, global-style, offline,
+> resource-loading, accessibility, and build contracts. It is not the target
+> product specification; see [DESIGN.md](DESIGN.md),
+> [ARCHITECTURE.md](ARCHITECTURE.md), and [ROADMAP.md](ROADMAP.md).
+
 Review date: 2026-07-30
 Scope: application shell, browser workflow, conversion core, settings, styles,
 offline/build integration, documentation, and automated tests.
