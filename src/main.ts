@@ -9,6 +9,7 @@ import {
   type OfflineCacheState,
 } from "./browser/offline-cache";
 import { createUnloadGuard } from "./browser/unload-guard";
+import { installWorkflowTabs } from "./browser/workflow-tabs";
 import { parseCsv } from "./core/csv";
 import { decodeSource } from "./core/encoding";
 import { convertRows } from "./core/fixed-width";
@@ -38,6 +39,8 @@ function renderNotice(
   notice.append(strong, description);
   container.replaceChildren(notice);
 }
+
+installWorkflowTabs();
 
 const columnEditor = createColumnEditor(
   requireElement<HTMLTableSectionElement>("#column-settings-body"),

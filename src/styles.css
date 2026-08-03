@@ -162,6 +162,43 @@ h3 {
   box-shadow: var(--shadow-ui);
 }
 
+.workflow-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+  padding: 0.4rem;
+  border: var(--border-ui);
+  border-radius: var(--radius-ui);
+  background: var(--color-surface-muted);
+}
+
+.workflow-tabs [role="tab"] {
+  border-color: transparent;
+  color: var(--color-text-muted);
+  background: transparent;
+}
+
+.workflow-tabs [role="tab"]:hover {
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+}
+
+.workflow-tabs [role="tab"][aria-selected="true"] {
+  border-color: var(--color-accent-border);
+  color: var(--color-accent-text);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-ui);
+}
+
+.workflow-panel[hidden] {
+  display: none;
+}
+
+.workflow-panel > .panel:last-child {
+  margin-bottom: 0;
+}
+
 .compact-card {
   padding: 0.8rem 0.85rem;
   background: var(--color-surface-soft);

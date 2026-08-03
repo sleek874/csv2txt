@@ -67,7 +67,7 @@ function verifyHtmlReferences(html) {
   );
   const knownIds = new Set(ids);
   const ariaReferenceGroups = Array.from(
-    html.matchAll(/\s(?:aria-describedby|aria-labelledby)="([^"]+)"/gu),
+    html.matchAll(/\s(?:aria-controls|aria-describedby|aria-labelledby)="([^"]+)"/gu),
     (match) => match[1].split(/\s+/u),
   );
   ariaReferenceGroups.forEach((group) => {
@@ -188,6 +188,13 @@ assert.doesNotMatch(
   "The no-script document must not be permanently inert.",
 );
 assert.doesNotMatch(indexHtml, /workflow-nav/u);
+assert.match(indexHtml, /id="forward-workflow-tab"[^>]*role="tab"[^>]*aria-selected="true"/u);
+assert.match(indexHtml, /id="inverse-workflow-tab"[^>]*role="tab"[^>]*aria-selected="false"/u);
+assert.match(indexHtml, /id="forward-workflow-panel"[^>]*role="tabpanel"/u);
+assert.match(
+  indexHtml,
+  /id="inverse-workflow-panel"[^>]*role="tabpanel"[^>]*hidden/u,
+);
 for (const sectionId of [
   "profile-step",
   "columns-step",

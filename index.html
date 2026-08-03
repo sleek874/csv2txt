@@ -274,6 +274,30 @@
           </div>
         </section>
 
+        <div id="workflow-tabs" class="workflow-tabs" role="tablist" aria-label="轉換方向">
+          <button
+            id="forward-workflow-tab"
+            type="button"
+            role="tab"
+            aria-selected="true"
+            aria-controls="forward-workflow-panel"
+          >正向轉換</button>
+          <button
+            id="inverse-workflow-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="inverse-workflow-panel"
+            tabindex="-1"
+          >反向轉換</button>
+        </div>
+
+        <div
+          id="forward-workflow-panel"
+          class="workflow-panel"
+          role="tabpanel"
+          aria-labelledby="forward-workflow-tab"
+        >
         <section id="source-step" class="panel" aria-labelledby="file-heading">
           <div class="step-heading">
             <span aria-hidden="true">3</span>
@@ -383,9 +407,18 @@
           </div>
         </section>
 
+        </div>
+
+        <div
+          id="inverse-workflow-panel"
+          class="workflow-panel"
+          role="tabpanel"
+          aria-labelledby="inverse-workflow-tab"
+          hidden
+        >
         <section id="inverse-step" class="panel" aria-labelledby="inverse-heading">
           <div class="step-heading">
-            <span aria-hidden="true">5</span>
+            <span aria-hidden="true">3</span>
             <div>
               <h2 id="inverse-heading">Big5 TXT 轉 XLSX</h2>
               <p class="help-text">使用目前的欄寬與對齊方式切回欄位；不加入標題列。</p>
@@ -417,6 +450,7 @@
             <button id="inverse-convert-button" class="primary-button" type="button" aria-describedby="inverse-download-help" disabled>下載 XLSX</button>
           </div>
         </section>
+        </div>
 
         <p id="app-status" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></p>
       </main>
