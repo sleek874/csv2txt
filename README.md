@@ -3,11 +3,11 @@
 [![CI](https://github.com/sleek874/csv2txt/actions/workflows/ci.yml/badge.svg)](https://github.com/sleek874/csv2txt/actions/workflows/ci.yml)
 [![Deploy GitHub Pages](https://github.com/sleek874/csv2txt/actions/workflows/pages.yml/badge.svg)](https://github.com/sleek874/csv2txt/actions/workflows/pages.yml)
 
-一個隱私優先、完全在瀏覽器內處理檔案的通用批次資料工作區。下一個主要版本將以固定 15 欄、每筆 208 bytes 的資料契約為核心，支援：
+一個隱私優先、完全在瀏覽器內處理檔案的通用批次資料工作區。網站以固定 15 欄、每筆 208 bytes 的資料契約為核心，支援：
 
-- 從同一個檔案選擇區載入 CSV、XLS、XLSX、Big5 TXT 或 ZIP
+- 從同一個檔案選擇區載入 CSV、XLS、XLSX、BIG-5E TXT 或 ZIP
 - 將所有支援的來源解析為同一種內部表示
-- 在下載階段選擇整批輸出為 Big5 固定寬 TXT、UTF-8 CSV 或 XLSX
+- 在下載階段選擇整批輸出為臺灣政府 BIG-5E 固定寬 TXT、UTF-8 CSV 或 XLSX
 - 多檔案與遞迴 ZIP 批次處理
 - 唯讀規格預覽、逐檔狀態清單、分頁式內部資料預覽
 - 驗證後的明確篩選與自動修正，再進行最終驗證及輸出
@@ -19,17 +19,17 @@
 
 ## 專案狀態
 
-本分支已完成下一個主要版本的可追加多檔工作區、ZIP 輸入與整批輸出 ZIP。
+目前版本已完成可追加多檔工作區、ZIP 輸入、共同 Unicode IR 與整批輸出。
 
 目前可運作的範圍包括：
 
 - 預設收合的固定 15 欄規則、可追加的多檔案選擇區、共同 IR 預覽與 100 列分頁。
 - ZIP 會延遲載入安全 reader，以可折疊來源／資料夾／檔案樹保留安全虛擬路徑；檔案或整個來源可從工作區移除，也可全部清除。
-- CSV、XLS、XLSX、Big5 TXT 都進入相同的正規化、來源驗證、明確自動修正及最終驗證流程。
-- 在同一份最終 IR 上選擇 Big5 固定寬 TXT、UTF-8 CSV 或 XLSX；單一檔案直接下載，多個檔案保留安全路徑並打包 ZIP。
-- Section 2 顯示整個工作區所有檔案的完整摘要，不受目前預覽檔案影響。
-- 錯誤、警告與自動修正在摘要、資料列及問題清單中分開呈現；有問題的列預設不輸出，可在預覽明確勾選後納入。
-- Big5 round-trip、byte 寬度、CRLF 與前置零處理。
+- CSV、XLS、XLSX、BIG-5E TXT 都進入相同的正規化、來源驗證、明確自動修正及最終驗證流程。
+- 在同一份最終 IR 上選擇臺灣政府 BIG-5E 固定寬 TXT、UTF-8 CSV 或 XLSX；單一檔案直接下載，多個檔案保留安全路徑並打包 ZIP。
+- Section 1 將可折疊檔案樹與整批摘要合為單一表格，依序顯示資料、正確、錯誤、警告、已選列數、目前輸出格式問題與移除；資料夾與壓縮檔列顯示子項目合計。
+- 空白列與可追蹤的自動修正都歸入警告；有問題的列預設不輸出，可逐列或用「輸出」表頭三態核取方塊選取目前篩選結果的當前頁面，hover／focus 說明仍保留全部問題與修改。
+- Section 2 只保留整批格式選擇、簡短下載狀態與下載按鈕；目前格式問題在 Section 1 表格與預覽查看。BIG-5E TXT 以官方 BIG5-2003＋BIG-5E 對照及 byte 寬度檢查勾選列。
 - 本機處理、CSP、iframe 防護與離線快取。
 - Excel 程式碼與預覽字型的延遲載入。
 - 已驗證的全域視覺、響應式與可及性基礎。
@@ -40,18 +40,18 @@
 
 - 15 個位置固定的欄位，只在 UI 顯示 `欄位1` 至 `欄位15`。
 - 欄寬固定為 `[1, 2, 1, 10, 10, 8, 12, 1, 120, 15, 10, 1, 8, 8, 1]`，合計 208 bytes。
-- 所有來源儲存格先移除全部空白字元；完全空白的資料列會被移除並計數。
+- 所有來源儲存格先移除全部空白字元；完全空白的資料列不進入 IR，並以原始列號計為一筆警告。
 - 所有輸出值靠左，右側使用 `0x20` 補足欄寬。
-- Big5 TXT 每筆以 CRLF 結束，包括最後一筆。
+- BIG-5E TXT 每筆以 CRLF 結束，包括最後一筆。
 - 有錯誤或警告的資料列預設不輸出；使用者可在預覽逐列勾選後強制納入。無法歸屬資料列的檔案錯誤仍阻止輸出。
 
 完整欄位規格與驗證規則見 [design specification](docs/DESIGN.md)。
 
-## 目標處理流程
+## 處理流程
 
-0. 以預設收合、可展開的清單檢視固定欄位規則（已完成）。
-1. 可重複選擇多個來源並追加至同一工作區；一般檔案位於頂層，ZIP 以可折疊 archive／folder／file tree 保留安全相對路徑，點選檔案後檢視共同 IR。
-2. 為整個工作區選擇 Big5 TXT、UTF-8 CSV 或 XLSX；單一檔案直接下載，多個檔案以輸出 codec 與台北時間命名 ZIP，並保留安全目錄結構。
+0. 以預設收合、可展開的清單檢視固定欄位規則。
+1. 可重複選擇多個來源並追加至同一工作區；一般檔案位於頂層，ZIP 以可折疊 archive／folder／file tree table 保留安全相對路徑，點選檔案或問題數字後檢視共同 IR。
+2. 為整個工作區選擇 TXT（BIG-5E）、CSV（UTF-8）或 XLSX；單一檔案直接下載，多個檔案以輸出 codec 與台北時間命名 ZIP，並保留安全目錄結構。
 3. 未來可選擇額外參照 Excel，對已驗證 IR 執行明確 lookup，產生另一份整理後 XLSX。
 
 Section 3 的 lookup key、參照 worksheet、重複／未命中規則、輸出欄位與檔名仍待確認；目前只顯示不可操作的未開放說明。
@@ -102,8 +102,9 @@ npm run generate:testdata
 
 - [固定資料與產品規格](docs/DESIGN.md)
 - [架構與資源責任](docs/ARCHITECTURE.md)
+- [BIG-5E 對照來源與重建方式](docs/BIG5E_MAPPING.md)
 - [分階段更新計畫](docs/ROADMAP.md)
-- [上一個可運作版本的站點審查基準](docs/SITE_REVIEW.md)
+- [目前站點健康檢查](docs/SITE_REVIEW.md)
 - [貢獻指南](CONTRIBUTING.md)
 - [安全政策](SECURITY.md)
 - [第三方授權](THIRD_PARTY_NOTICES.md)

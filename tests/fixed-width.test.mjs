@@ -3,7 +3,10 @@ import test from "node:test";
 
 import { createOutputAdapter } from "../src/app/adapters/output-adapter.ts";
 import { createCodecManager } from "../src/app/resources/codec-manager.ts";
-import { createInternalFile } from "../src/core/conversion-pipeline.ts";
+import {
+  createInternalFile,
+  createInternalFileWithRecovery,
+} from "../src/core/conversion-pipeline.ts";
 import {
   FIXED_FIELDS,
   FIXED_RECORD_WIDTH_BYTES,
@@ -40,7 +43,7 @@ function issuesFor(file) {
   ];
 }
 
-test("normalizes one shared row, records the telephone change, and emits 208-byte Big5 records", async () => {
+test("normalizes one shared row, records the telephone change, and emits 208-byte BIG-5E records", async () => {
   const file = createInternalFile(
     "file-1",
     "sample.csv",
@@ -49,8 +52,9 @@ test("normalizes one shared row, records the telephone change, and emits 208-byt
   );
 
   assert.equal(file.summary.sourceRows, 2);
-  assert.equal(file.summary.excludedBlankRows, 1);
   assert.equal(file.summary.errorCount, 1, "the extra source column remains a visible error");
+  assert.equal(file.summary.warningCount, 1, "the blank row contributes one warning");
+  assert.equal(file.summary.outputRows, 0);
   assert.equal(file.rows[0]?.included, false);
   await assert.rejects(outputAdapter.create([file], "big5-txt"), /尚未選擇任何輸出列/u);
 
@@ -61,20 +65,22 @@ test("normalizes one shared row, records the telephone change, and emits 208-byt
     "20260803",
   );
   assert.equal(validFile.summary.errorCount, 0);
-  assert.equal(validFile.summary.modifiedCount, 1);
-  assert.equal(validFile.rows[0]?.included, true);
+  assert.equal(validFile.summary.warningCount, 1);
+  assert.equal(validFile.summary.outputRows, 0);
+  assert.equal(validFile.rows[0]?.included, false);
   assert.equal(validFile.rows[0]?.cells[9]?.finalValue, "0000000000");
 
+  validFile.rows[0].included = true;
   const bytes = (await outputAdapter.create([validFile], "big5-txt")).bytes;
   assert.equal(bytes.length, FIXED_RECORD_WIDTH_BYTES + 2);
   assert.deepEqual(bytes.slice(-2), new Uint8Array([0x0d, 0x0a]));
 
   const parsed = parseBig5Txt(bytes, FIXED_WIDTHS);
-  assert.deepEqual(parsed.errors, []);
+  assert.deepEqual(parsed.issues, []);
   assert.deepEqual(parsed.rows[0], validRow({ 10: "0000000000" }));
 });
 
-test("blocks checksum, date, cross-field, width, and Big5 failures without hidden correction", () => {
+test("keeps semantic validation in the shared IR without applying an output codec", () => {
   const file = createInternalFile(
     "file-1",
     "invalid.xlsx",
@@ -95,7 +101,8 @@ test("blocks checksum, date, cross-field, width, and Big5 failures without hidde
   const issues = issuesFor(file);
 
   assert.ok(issues.some((issue) => issue.code === "OPTIONAL_ID_INVALID" && issue.severity === "warning"));
-  assert.ok(issues.some((issue) => issue.code === "UNENCODABLE_BIG5"));
+  assert.equal(issues.some((issue) => issue.code === "UNENCODABLE_BIG5E"), false);
+  assert.equal(issues.some((issue) => issue.code === "WIDTH_OVERFLOW"), false);
   assert.ok(issues.some((issue) => issue.code === "REQUIRED_ID_INVALID"));
   assert.ok(issues.some((issue) => issue.code === "INVALID_DATE"));
   assert.deepEqual(
@@ -107,6 +114,142 @@ test("blocks checksum, date, cross-field, width, and Big5 failures without hidde
     [13, 14],
   );
   assert.equal(file.summary.errorCount > 0, true);
+});
+
+test("recovers known legacy PUA values and warns for verification", async () => {
+  const privateUse = String.fromCodePoint(0xe808);
+  const file = await createInternalFileWithRecovery(
+    "private-use",
+    "private-use.xlsx",
+    { rows: [validRow({ 7: `王${privateUse}` })] },
+    "20260803",
+  );
+  const issues = issuesFor(file);
+  const warning = issues.find((issue) => issue.code === "PRIVATE_USE_RECOVERED");
+
+  assert.equal(warning?.severity, "warning");
+  assert.equal(warning?.fieldIndex, 7);
+  assert.equal(warning?.message, "請確認字元。");
+  assert.equal(file.rows[0]?.cells[6]?.normalizedValue, `王${privateUse}`);
+  assert.equal(file.rows[0]?.cells[6]?.finalValue, "王堃");
+  assert.deepEqual(file.rows[0]?.changes.find((change) => change.fieldIndex === 7), {
+    kind: "private-use-recovery",
+    sourceRow: 1,
+    fieldIndex: 7,
+    before: `王${privateUse}`,
+    after: "王堃",
+    reason: "已還原舊系統字元",
+  });
+  assert.equal(issues.some((issue) => issue.severity === "error"), false);
+  assert.equal(file.rows[0]?.included, false);
+});
+
+test("recovers an unambiguous CNS character for review before output gating", async () => {
+  const privateUse = String.fromCodePoint(0xf4d1);
+  const file = await createInternalFileWithRecovery(
+    "cns-recovery",
+    "cns-recovery.xlsx",
+    { rows: [validRow({ 7: privateUse })] },
+    "20260803",
+  );
+
+  assert.equal(file.rows[0]?.cells[6]?.normalizedValue, privateUse);
+  assert.equal(file.rows[0]?.cells[6]?.finalValue, "𥠄");
+  assert.equal(issuesFor(file).some((issue) => issue.code === "PRIVATE_USE_RECOVERED"), true);
+  assert.equal(file.summary.errorCount, 0);
+  assert.equal(file.summary.warningCount, 1);
+
+  file.rows[0].included = true;
+  assert.equal((await outputAdapter.create([file], "csv")).filename, "cns-recovery.csv");
+  await assert.rejects(
+    outputAdapter.create([file], "big5-txt"),
+    /儲存格 G1：.*U\+25804.*沒有 BIG-5E 對照/u,
+  );
+});
+
+test("keeps U+E088 unresolved instead of guessing the address character", async () => {
+  const privateUse = String.fromCodePoint(0xe088);
+  const file = await createInternalFileWithRecovery(
+    "unresolved-address",
+    "unresolved-address.xlsx",
+    { rows: [validRow({ 7: `台中市外埔區${privateUse}子路` })] },
+    "20260803",
+  );
+  const issue = issuesFor(file).find((candidate) => candidate.code === "PRIVATE_USE_REMAINS");
+
+  assert.equal(file.rows[0]?.cells[6]?.finalValue, undefined);
+  assert.equal(issue?.severity, "error");
+  assert.equal(issue?.message, "字元無法還原。");
+  assert.equal(file.summary.errorCount, 1);
+  assert.equal(file.summary.warningCount, 0);
+  assert.equal(file.rows[0]?.included, false);
+});
+
+test("keeps unresolved PUA values for review and defers output compatibility", async () => {
+  const privateUse = String.fromCodePoint(0xf0000);
+  const file = await createInternalFileWithRecovery(
+    "private-use-unresolved",
+    "private-use-unresolved.xlsx",
+    { rows: [validRow({ 7: `王${privateUse}` })] },
+    "20260803",
+  );
+  const issues = issuesFor(file);
+  const remaining = issues.find((issue) => issue.code === "PRIVATE_USE_REMAINS");
+
+  assert.equal(remaining?.severity, "error");
+  assert.equal(remaining?.message, "字元無法還原。");
+  assert.equal(file.rows[0]?.cells[6]?.normalizedValue, `王${privateUse}`);
+  assert.equal(file.rows[0]?.cells[6]?.finalValue, undefined);
+  assert.equal(file.rows[0]?.changes.some((change) => change.fieldIndex === 7), false);
+  assert.equal(file.summary.errorCount, 1);
+  assert.equal(file.summary.warningCount, 0);
+  assert.equal(file.rows[0]?.included, false);
+
+  file.rows[0].included = true;
+  assert.equal((await outputAdapter.create([file], "csv")).filename, "private-use-unresolved.csv");
+  await assert.rejects(
+    outputAdapter.create([file], "big5-txt"),
+    /儲存格 G1：.*U\+F0000.*沒有 BIG-5E 對照/u,
+  );
+});
+
+test("records recovered characters and keeps unresolved characters for review", async () => {
+  const recoverable = String.fromCodePoint(0xe808);
+  const unresolved = String.fromCodePoint(0xf0000);
+  const file = await createInternalFileWithRecovery(
+    "private-use-mixed",
+    "private-use-mixed.xlsx",
+    { rows: [validRow({ 7: `王${recoverable}${unresolved}` })] },
+    "20260803",
+  );
+  const issues = issuesFor(file);
+
+  assert.equal(file.rows[0]?.cells[6]?.normalizedValue, `王${recoverable}${unresolved}`);
+  assert.equal(file.rows[0]?.cells[6]?.finalValue, `王堃${unresolved}`);
+  assert.equal(file.rows[0]?.changes.some((change) => change.kind === "private-use-recovery"), true);
+  assert.equal(issues.some((issue) => issue.code === "PRIVATE_USE_RECOVERED"), false);
+  assert.equal(issues.some((issue) => issue.code === "PRIVATE_USE_REMAINS"), true);
+  assert.equal(file.summary.errorCount, 1);
+  assert.equal(file.summary.warningCount, 0);
+  assert.equal(file.rows[0]?.included, false);
+});
+
+test("uses one concise preview warning for Unicode without a BIG5 mapping", async () => {
+  const file = await createInternalFileWithRecovery(
+    "unicode-review",
+    "unicode-review.xlsx",
+    { rows: [validRow({ 7: "台中市外埔區廍子路" })] },
+    "20260803",
+  );
+  const reviewIssues = issuesFor(file).filter(
+    (issue) => issue.code === "CHARACTER_REVIEW_REQUIRED",
+  );
+
+  assert.equal(reviewIssues.length, 1);
+  assert.equal(reviewIssues[0]?.fieldIndex, 7);
+  assert.equal(reviewIssues[0]?.message, "請確認字元。");
+  assert.equal(file.summary.warningCount, 1);
+  assert.equal(file.rows[0]?.included, false);
 });
 
 test("uses regex for the contract but presents friendly format errors", () => {
@@ -221,7 +364,7 @@ test("defaults issue rows to excluded and serializes them only after an explicit
     "row-output-decisions.csv",
     {
       rows: [
-        validRow(),
+        validRow({ 10: "0212345678" }),
         validRow({ 5: "A123456789", 8: "2", 9: "" }),
       ],
     },

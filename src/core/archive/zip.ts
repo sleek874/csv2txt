@@ -8,6 +8,7 @@ import type {
   ArchiveExtraction,
   ArchiveOutputEntry,
   ExtractedSourceFile,
+  SkippedArchiveEntry,
   ZipEntryMetadata,
 } from "./types";
 
@@ -239,9 +240,6 @@ function validateMetadata(entries: readonly ZipEntryMetadata[], quota: ArchiveQu
     if (entry.encrypted) {
       throw new Error(`不支援加密的 ZIP 項目：${entry.name}`);
     }
-    if (entry.isSymlink) {
-      throw new Error(`不支援 symbolic link：${entry.name}`);
-    }
     if (!entry.isDirectory && entry.compression !== 0 && entry.compression !== 8) {
       throw new Error(`ZIP 項目使用不支援的壓縮方式：${entry.name}`);
     }
@@ -274,6 +272,9 @@ function extractEntries(
       }
       const safePath = safeArchivePath(entry.name);
       if (entry.isDirectory) {
+        return;
+      }
+      if (entry.isSymlink) {
         return;
       }
       const supported = detectSourceFileType(safePath) !== null || safePath.toLowerCase().endsWith(".zip");
@@ -339,11 +340,20 @@ async function extractArchive(
   validateMetadata(metadata, quota);
   const extracted = extractEntries(bytes, metadata, quota);
   const files: ExtractedSourceFile[] = [];
-  let skippedEntries = metadata.filter((entry) => (
-    !entry.isDirectory
-    && detectSourceFileType(entry.name) === null
-    && !entry.name.toLowerCase().endsWith(".zip")
-  )).length;
+  const skippedEntries: SkippedArchiveEntry[] = metadata.flatMap((entry) => {
+    if (entry.isDirectory) return [];
+    const reason = entry.isSymlink
+      ? "symlink"
+      : detectSourceFileType(entry.name) === null && !entry.name.toLowerCase().endsWith(".zip")
+        ? "unsupported-type"
+        : null;
+    if (!reason) return [];
+    return [{
+      relativePath: "",
+      reason,
+      virtualPath: safeArchivePath(joinVirtualPath(rootPath, entry.name)),
+    }];
+  });
   for (const [entryPath, entryBytes] of extracted) {
     const virtualPath = joinVirtualPath(rootPath, entryPath);
     if (entryPath.toLowerCase().endsWith(".zip")) {
@@ -357,7 +367,7 @@ async function extractArchive(
         quota,
       );
       files.push(...nested.files);
-      skippedEntries += nested.skippedEntries;
+      skippedEntries.push(...nested.skippedEntries);
       continue;
     }
     const path = safeArchivePath(virtualPath);
@@ -383,6 +393,10 @@ export async function extractZip(fileName: string, bytes: Uint8Array): Promise<A
     files: extraction.files.map((file) => ({
       ...file,
       relativePath: file.virtualPath.slice(rootName.length + 1),
+    })),
+    skippedEntries: extraction.skippedEntries.map((entry) => ({
+      ...entry,
+      relativePath: entry.virtualPath.slice(rootName.length + 1),
     })),
   };
 }

@@ -1,76 +1,103 @@
-import {
-  collectRowIssues,
-  hasBlockingFileIssues,
-  type InternalFile,
-} from "../../../core/internal-model";
+import { outputPath } from "../../../core/file-formats";
+import { hasBlockingFileIssues, type InternalFile } from "../../../core/internal-model";
+import { validateOutput, type OutputIssue } from "../../../core/output-validation";
 import type { WorkspaceSnapshot } from "../../state/workspace-types";
 
-export interface OutputSummary {
-  errorCount: number;
-  excludedBlankRows: number;
-  fileCount: number;
-  includedRows: number;
-  modifiedCount: number;
-  sourceRows: number;
-  warningCount: number;
+export interface OutputScopeSummary {
+  downloadableRows: number;
+  problemCount: number;
+  selectedRows: number;
 }
 
 export interface OutputPlan {
-  blockingFileCount: number;
   canDownload: boolean;
-  emptyFileCount: number;
-  failedFileCount: number;
   files: readonly InternalFile[];
-  forcedRowCount: number;
   omittedRowCount: number;
+  outputIssues: readonly OutputIssue[];
+  problems: readonly string[];
   processingFileCount: number;
-  summary: OutputSummary;
+  selectedLabel: string;
+  selectedSummary: OutputScopeSummary;
+  totalSummary: OutputScopeSummary & { fileCount: number };
 }
 
 export function createOutputPlan(snapshot: WorkspaceSnapshot): OutputPlan {
+  const outputEntries = snapshot.files.filter((item) => item.state !== "ignored");
   const files = snapshot.files.flatMap((item) => item.file ? [item.file] : []);
+  const outputIssues = validateOutput(files, snapshot.outputFormat);
   const processingFileCount = snapshot.files.filter((item) => item.state === "processing").length;
-  const failedFileCount = snapshot.files.filter(
-    (item) => item.state === "error" || (item.state !== "processing" && !item.file),
-  ).length;
-  const blockingFileCount = files.filter(hasBlockingFileIssues).length;
-  const emptyFileCount = files.filter((file) => file.summary.includedRows === 0).length;
-  const summary = files.reduce<OutputSummary>((total, file) => ({
-    errorCount: total.errorCount + file.summary.errorCount,
-    excludedBlankRows: total.excludedBlankRows + file.summary.excludedBlankRows,
-    fileCount: total.fileCount,
-    includedRows: total.includedRows + file.summary.includedRows,
-    modifiedCount: total.modifiedCount + file.summary.modifiedCount,
-    sourceRows: total.sourceRows + file.summary.sourceRows,
-    warningCount: total.warningCount + file.summary.warningCount,
-  }), {
-    errorCount: failedFileCount,
-    excludedBlankRows: 0,
-    fileCount: snapshot.files.length,
-    includedRows: 0,
-    modifiedCount: 0,
-    sourceRows: 0,
-    warningCount: 0,
+  const issueRows = new Map<string, Set<number>>();
+  outputIssues.forEach((issue) => {
+    const rows = issueRows.get(issue.fileId) ?? new Set<number>();
+    rows.add(issue.sourceRow);
+    issueRows.set(issue.fileId, rows);
   });
+  const pathFiles = new Map<string, string[]>();
+  files.forEach((file) => {
+    const path = outputPath(file.virtualPath, snapshot.outputFormat);
+    pathFiles.set(path, [...(pathFiles.get(path) ?? []), file.id]);
+  });
+  const problems = [
+    ...outputEntries.flatMap((item) => (
+      item.state === "error" || (item.state !== "processing" && !item.file)
+        ? [`${item.virtualPath}：無法讀取或解析。`]
+        : []
+    )),
+    ...files.flatMap((file) => file.issues
+      .filter((issue) => issue.severity === "error" && issue.sourceRow === undefined)
+      .map((issue) => `${file.virtualPath}：${issue.message}`)),
+    ...files.flatMap((file) => file.summary.includedRows === 0
+      ? [`${file.virtualPath}：尚未勾選輸出列。`]
+      : []),
+    ...[...pathFiles].flatMap(([path, ids]) => ids.length > 1
+      ? [`輸出路徑重複：${path}`]
+      : []),
+  ];
+
+  function scope(fileIds: ReadonlySet<string>): OutputScopeSummary {
+    const scopeFiles = files.filter((file) => fileIds.has(file.id));
+    const selectedRows = scopeFiles.reduce((total, file) => total + file.summary.includedRows, 0);
+    const blockedRows = scopeFiles.reduce((total, file) => total + (issueRows.get(file.id)?.size ?? 0), 0);
+    const problemKeys = new Set<string>();
+    issueRows.forEach((rows, fileId) => {
+      if (fileIds.has(fileId)) rows.forEach((row) => problemKeys.add(`row:${fileId}:${row}`));
+    });
+    outputEntries.filter((item) => fileIds.has(item.id)).forEach((item) => {
+      if (item.state === "error" || (item.state !== "processing" && !item.file)) {
+        problemKeys.add(`failed:${item.id}`);
+      } else if (item.file) {
+        if (hasBlockingFileIssues(item.file)) problemKeys.add(`file:${item.id}`);
+        if (item.file.summary.includedRows === 0) problemKeys.add(`empty:${item.id}`);
+      }
+    });
+    [...pathFiles].filter(([, ids]) => ids.length > 1 && ids.some((id) => fileIds.has(id)))
+      .forEach(([path]) => problemKeys.add(`path:${path}`));
+    return {
+      downloadableRows: Math.max(0, selectedRows - blockedRows),
+      problemCount: problemKeys.size,
+      selectedRows,
+    };
+  }
+
+  const allIds = new Set(outputEntries.map((item) => item.id));
+  const selected = outputEntries.find((item) => item.id === snapshot.selectedFileId);
+  const selectedIds = new Set(selected ? [selected.id] : []);
 
   return {
-    blockingFileCount,
-    canDownload: snapshot.files.length > 0
+    canDownload: outputEntries.length > 0
       && processingFileCount === 0
-      && failedFileCount === 0
-      && blockingFileCount === 0
-      && emptyFileCount === 0,
-    emptyFileCount,
-    failedFileCount,
+      && problems.length === 0
+      && outputIssues.length === 0,
     files,
-    forcedRowCount: files.reduce((total, file) => total + file.rows.filter(
-      (row) => row.included && collectRowIssues(row).length > 0,
-    ).length, 0),
     omittedRowCount: files.reduce(
       (total, file) => total + file.rows.length - file.summary.includedRows,
       0,
     ),
+    outputIssues,
+    problems,
     processingFileCount,
-    summary,
+    selectedLabel: selected?.virtualPath.split("/").at(-1) ?? "尚未選擇檔案",
+    selectedSummary: scope(selectedIds),
+    totalSummary: { ...scope(allIds), fileCount: outputEntries.length },
   };
 }

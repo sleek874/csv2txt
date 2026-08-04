@@ -5,7 +5,7 @@
   "fixedRecordWidthBytes": 208,
   "maximumRowsPerFile": 6000,
   "maximumDistinctDataFiles": 300,
-  "generatedDataFileCount": 44,
+  "generatedDataFileCount": 45,
   "fieldNames": [
     {
       "field": 1,
@@ -97,10 +97,9 @@
       "expectedSummary": {
         "sourceRows": 1,
         "includedRows": 1,
-        "excludedBlankRows": 0,
+        "outputRows": 1,
         "errorCount": 0,
-        "warningCount": 0,
-        "modifiedCount": 0
+        "warningCount": 0
       }
     },
     {
@@ -110,10 +109,9 @@
       "expectedSummary": {
         "sourceRows": 25,
         "includedRows": 25,
-        "excludedBlankRows": 0,
+        "outputRows": 25,
         "errorCount": 0,
-        "warningCount": 0,
-        "modifiedCount": 0
+        "warningCount": 0
       }
     },
     {
@@ -123,10 +121,9 @@
       "expectedSummary": {
         "sourceRows": 250,
         "includedRows": 250,
-        "excludedBlankRows": 0,
+        "outputRows": 250,
         "errorCount": 0,
-        "warningCount": 0,
-        "modifiedCount": 0
+        "warningCount": 0
       }
     },
     {
@@ -136,10 +133,9 @@
       "expectedSummary": {
         "sourceRows": 6000,
         "includedRows": 6000,
-        "excludedBlankRows": 0,
+        "outputRows": 6000,
         "errorCount": 0,
-        "warningCount": 0,
-        "modifiedCount": 0
+        "warningCount": 0
       }
     },
     {
@@ -149,10 +145,9 @@
       "expectedSummary": {
         "sourceRows": 4,
         "includedRows": 4,
-        "excludedBlankRows": 0,
+        "outputRows": 4,
         "errorCount": 0,
-        "warningCount": 0,
-        "modifiedCount": 0
+        "warningCount": 0
       }
     },
     {
@@ -161,11 +156,10 @@
       "category": "modified",
       "expectedSummary": {
         "sourceRows": 30,
-        "includedRows": 30,
-        "excludedBlankRows": 0,
+        "includedRows": 0,
+        "outputRows": 0,
         "errorCount": 0,
-        "warningCount": 0,
-        "modifiedCount": 30
+        "warningCount": 30
       }
     },
     {
@@ -175,10 +169,9 @@
       "expectedSummary": {
         "sourceRows": 40,
         "includedRows": 0,
-        "excludedBlankRows": 0,
+        "outputRows": 0,
         "errorCount": 0,
-        "warningCount": 40,
-        "modifiedCount": 0
+        "warningCount": 40
       }
     },
     {
@@ -188,10 +181,9 @@
       "expectedSummary": {
         "sourceRows": 40,
         "includedRows": 0,
-        "excludedBlankRows": 0,
-        "errorCount": 43,
-        "warningCount": 0,
-        "modifiedCount": 0
+        "outputRows": 0,
+        "errorCount": 40,
+        "warningCount": 0
       }
     },
     {
@@ -200,11 +192,10 @@
       "category": "mixed",
       "expectedSummary": {
         "sourceRows": 200,
-        "includedRows": 171,
-        "excludedBlankRows": 0,
-        "errorCount": 13,
-        "warningCount": 17,
-        "modifiedCount": 25
+        "includedRows": 146,
+        "outputRows": 146,
+        "errorCount": 12,
+        "warningCount": 42
       }
     },
     {
@@ -213,11 +204,10 @@
       "category": "mixed",
       "expectedSummary": {
         "sourceRows": 1200,
-        "includedRows": 1097,
-        "excludedBlankRows": 0,
-        "errorCount": 45,
-        "warningCount": 61,
-        "modifiedCount": 85
+        "includedRows": 1012,
+        "outputRows": 1012,
+        "errorCount": 42,
+        "warningCount": 146
       }
     }
   ],
@@ -319,6 +309,26 @@
           "path": "batch/d/mixed.txt",
           "format": "txt",
           "dataset": "modified-phone-default"
+        }
+      ]
+    }
+  ],
+  "exclusionArchives": [
+    {
+      "name": "excluded-entries.zip",
+      "acceptedEntry": {
+        "path": "accepted/clean-single.csv",
+        "format": "csv",
+        "dataset": "clean-single"
+      },
+      "excludedEntries": [
+        {
+          "path": "excluded/notes.md",
+          "reason": "unsupported-type"
+        },
+        {
+          "path": "excluded/link.csv",
+          "reason": "symlink"
         }
       ]
     }

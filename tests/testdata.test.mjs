@@ -28,13 +28,13 @@ function rowsFor(format, name, bytes) {
   }
   if (format === "txt") {
     const parsed = parseBig5Txt(bytes);
-    assert.deepEqual(parsed.errors, []);
+    assert.deepEqual(parsed.issues, []);
     assert.equal(parsed.recordWidthBytes, FIXED_RECORD_WIDTH_BYTES);
     return parsed.rows;
   }
   const parsed = parseSpreadsheet(bytes, 15);
   assert.equal(parsed.sheetName, "資料");
-  assert.deepEqual(parsed.errors, []);
+  assert.deepEqual(parsed.issues, []);
   return parsed.rows;
 }
 
@@ -42,7 +42,9 @@ test("mock data stays within the requested file and row limits", () => {
   assert.ok(manifest.generatedDataFileCount <= manifest.maximumDistinctDataFiles);
   assert.equal(
     manifest.generatedDataFileCount,
-    manifest.datasets.length * manifest.formats.length + manifest.archives.length,
+    manifest.datasets.length * manifest.formats.length
+      + manifest.archives.length
+      + manifest.exclusionArchives.length,
   );
   assert.equal(Math.max(...manifest.datasets.map((dataset) => dataset.rowCount)), 6_000);
   assert.ok(manifest.datasets.every((dataset) => dataset.rowCount <= 6_000));
@@ -91,7 +93,7 @@ for (const archive of manifest.archives) {
       archive.name,
       readFileSync(new URL(`zip/${archive.name}`, testdataDirectory)),
     );
-    assert.equal(extraction.skippedEntries, 0);
+    assert.deepEqual(extraction.skippedEntries, []);
     assert.equal(extraction.files.length, archive.entries.length);
     const extensions = new Set(extraction.files.map((file) => extname(file.relativePath).slice(1)));
     assert.ok(extensions.size > 1);
@@ -107,5 +109,23 @@ for (const archive of manifest.archives) {
       );
       assert.deepEqual(rowsFor(format, basename(file.relativePath), file.bytes), expected);
     }
+  });
+}
+
+for (const archive of manifest.exclusionArchives) {
+  test(`${archive.name} keeps supported data and reports each excluded entry`, async () => {
+    const bytes = readFileSync(new URL(`zip/${archive.name}`, testdataDirectory));
+    const extraction = await extractZip(archive.name, bytes);
+    assert.deepEqual(
+      extraction.files.map((file) => file.relativePath),
+      [archive.acceptedEntry.path],
+    );
+    assert.deepEqual(
+      extraction.skippedEntries.map((entry) => ({
+        path: entry.virtualPath.slice(archive.name.replace(/\.zip$/u, "").length + 1),
+        reason: entry.reason,
+      })),
+      archive.excludedEntries,
+    );
   });
 }

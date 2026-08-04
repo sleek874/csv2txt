@@ -36,10 +36,11 @@ export function parseCsvText(text: string): ParsedRows {
 
   return {
     rows,
-    errors: result.errors.map((error) => {
-      const rowLabel = typeof error.row === "number" ? `資料列 ${error.row + 1}：` : "";
-      return `${rowLabel}${translatedError(error.code)}`;
-    }),
+    issues: result.errors.map((error) => ({
+      message: translatedError(error.code),
+      severity: "error",
+      ...(typeof error.row === "number" ? { sourceRow: error.row + 1 } : {}),
+    })),
   };
 }
 

@@ -1,5 +1,16 @@
 # Third-party notices
 
+## CNS11643 mapping data
+
+The generated BIG-5E and private-use recovery tables are derived from the
+Ministry of Digital Affairs CNS11643 full character set mapping archive:
+<https://www.cns11643.gov.tw/opendata/MapingTables.zip>.
+
+Source version `20260505`, pinned by SHA-256 in
+[`docs/BIG5E_MAPPING.md`](docs/BIG5E_MAPPING.md), is used under the Taiwan
+Government Open Data License, Version 1.0:
+<https://data.gov.tw/license>.
+
 ## fflate
 
 fflate -- https://101arrowz.github.io/fflate/

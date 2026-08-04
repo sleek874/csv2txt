@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#f8fafc" />
     <meta
       name="description"
-      content="在瀏覽器內驗證 CSV、XLS、XLSX、Big5 TXT 與 ZIP，並輸出固定格式資料；檔案不會上傳。"
+      content="在瀏覽器內驗證 CSV、XLS、XLSX、BIG-5E TXT 與 ZIP，並輸出固定格式資料；檔案不會上傳。"
     />
     <meta name="robots" content="index, follow" />
     <meta
@@ -82,7 +82,7 @@
             <div class="rules-content">
               <div class="table-scroll" tabindex="0" aria-label="固定欄位規則表格，可左右捲動">
                 <table class="rules-table">
-                  <caption class="visually-hidden">固定 15 欄的 Big5 位元組寬度與驗證規則</caption>
+                  <caption class="visually-hidden">固定 15 欄的 BIG-5E 位元組寬度與驗證規則</caption>
                   <thead><tr><th scope="col">欄位</th><th scope="col">寬度</th><th scope="col">格式</th><th scope="col">額外規則</th></tr></thead>
                   <tbody id="fixed-rules-body"></tbody>
                 </table>
@@ -96,7 +96,7 @@
             <span aria-hidden="true">1</span>
             <div>
               <h2 id="input-heading">輸入檔案</h2>
-              <p class="help-text">支援 CSV、XLS、XLSX、Big5 TXT 與 ZIP；再次選取會加入目前工作區。</p>
+              <p class="help-text">加入 CSV、Excel、BIG-5E TXT 或 ZIP；可分次新增。</p>
             </div>
           </div>
 
@@ -104,63 +104,60 @@
             <div class="file-status-copy">
               <div id="file-status" class="file-status-line">
                 <span class="file-status">
-                  <span id="source-file-name" class="file-status-name">工作區尚無檔案</span>
-                  <span id="source-file-meta" class="file-status-meta" hidden></span>
+                  <span id="source-file-name" class="file-status-name">尚未加入檔案</span>
                 </span>
                 <span class="file-processing-slot" aria-hidden="true">
                   <span id="file-processing-indicator" class="busy-spinner" hidden></span>
                 </span>
               </div>
-              <p class="help-text">可分次新增檔案；工作區中既有的檔案會保留，所有內容只在這個頁面中處理。</p>
+              <p class="help-text">先前加入的檔案會保留；所有處理都在此頁完成，檔案不會上傳。</p>
             </div>
             <div class="file-picker-actions">
+              <button id="mark-all-viewed-button" class="secondary-button" type="button" hidden>全部標示為已查看</button>
               <button id="select-source-button" class="primary-button" type="button">新增檔案</button>
-              <button id="clear-workspace-button" class="secondary-button" type="button" disabled>全部清除</button>
+              <button id="clear-workspace-button" class="secondary-button" type="button" disabled>清空清單</button>
             </div>
             <input id="source-file" type="file" accept=".csv,.xls,.xlsx,.txt,.zip" multiple hidden />
           </div>
 
-          <div id="source-file-error" class="notice error-notice source-file-error" role="alert" hidden></div>
+          <div id="source-file-message" class="notice source-file-message" hidden></div>
 
-          <div id="workspace-empty" class="notice info-notice workspace-empty">
-            <strong>工作區尚無檔案</strong>
-            <span>選取一個或多個檔案後，會在這裡建立清單與內容預覽。</span>
-          </div>
-
-          <div id="workspace-results" hidden>
+          <div id="workspace-results">
             <div class="workspace-layout">
-              <aside class="file-tree-pane" aria-labelledby="file-tree-heading">
-                <div class="file-tree-heading-row">
-                  <h3 id="file-tree-heading">工作區檔案</h3>
-                  <span id="file-tree-count" class="file-tree-count"></span>
-                </div>
-                <p id="file-tree-help" class="visually-hidden">上下方向鍵可移動，左右方向鍵可展開或收合；來源右側按鈕會從工作區移除該來源及其檔案。</p>
-                <ul id="file-tree" class="file-tree" role="tree" aria-describedby="file-tree-help"></ul>
-              </aside>
+              <p id="file-tree-help" class="visually-hidden">上下方向鍵可移動，左右方向鍵可展開或收合。選擇檔案可在下方查看內容；移除只會影響目前清單，不會刪除電腦中的原始檔案。</p>
+              <div class="table-scroll inventory-table-scroll" tabindex="0" aria-label="檔案清單與摘要，可左右捲動">
+                <table id="file-tree-table" class="inventory-table" role="treegrid" aria-describedby="file-tree-help">
+                  <caption class="visually-hidden">已加入檔案的資料列、檢查結果、已選列數與目前輸出格式問題</caption>
+                  <thead>
+                    <tr><th scope="col">檔案</th><th scope="col">資料</th><th scope="col">正確</th><th scope="col">錯誤</th><th scope="col">警告</th><th scope="col">已選列數</th><th id="inventory-output-heading" scope="col">輸出問題</th><th scope="col">移除</th></tr>
+                  </thead>
+                  <tbody id="file-tree"></tbody>
+                  <tfoot>
+                    <tr id="file-tree-total">
+                      <th data-total-label scope="row">全部 0 個檔案</th>
+                      <td data-total-value>0</td><td data-total-value>0</td><td data-total-value>0</td><td data-total-value>0</td><td data-total-value>0</td><td data-total-value>0</td><td></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+
+              <div id="selection-message" class="notice selection-message" hidden></div>
 
               <div id="data-workspace" class="data-workspace" hidden>
-                <dl class="validation-summary responsive-grid" aria-label="目前檔案摘要">
-                  <div><dt>資料列</dt><dd id="source-row-summary">—</dd></div>
-                  <div><dt>輸出列</dt><dd id="included-row-summary">—</dd></div>
-                  <div><dt>空白列</dt><dd id="blank-row-summary">—</dd></div>
-                  <div><dt>錯誤</dt><dd id="error-summary">—</dd></div>
-                  <div><dt>警告</dt><dd id="warning-summary">—</dd></div>
-                  <div><dt>自動修正</dt><dd id="modified-summary">—</dd></div>
-                </dl>
-
                 <div class="subsection-heading data-toolbar">
                   <div>
-                    <h3>資料預覽</h3>
-                    <p>將游標移到狀態欄，或用鍵盤聚焦，即可查看說明。</p>
+                    <h3>資料預覽：<span id="preview-file-name"></span></h3>
+                    <p id="preview-file-path"></p>
+                    <p>選擇有問題的數字，可直接查看相關資料列。</p>
                   </div>
                   <label class="filter-control" for="row-filter">顯示
                     <select id="row-filter">
                       <option value="all">全部</option>
                       <option value="error">錯誤</option>
                       <option value="warning">警告</option>
-                      <option value="valid">有效</option>
-                      <option value="modified">自動修正</option>
-                      <option value="excluded">已排除</option>
+                      <option value="valid">正確</option>
+                      <option value="excluded">未選取</option>
+                      <option value="output">輸出問題</option>
                     </select>
                   </label>
                 </div>
@@ -170,7 +167,13 @@
                     <caption class="visually-hidden">目前檔案的 15 欄資料預覽</caption>
                     <thead>
                       <tr>
-                        <th scope="col" aria-label="來源列">列</th><th scope="col">狀態</th><th scope="col">輸出</th>
+                        <th scope="col" aria-label="來源列">列</th><th scope="col">狀態</th>
+                        <th class="row-output-heading" scope="col">
+                          <label class="row-output-control row-output-heading-control">
+                            <span>輸出</span>
+                            <input id="visible-rows-checkbox" type="checkbox" aria-label="選取目前篩選結果的本頁資料列" disabled />
+                          </label>
+                        </th>
                         <th scope="col" aria-label="欄位1">1</th><th scope="col" aria-label="欄位2">2</th><th scope="col" aria-label="欄位3">3</th><th scope="col" aria-label="欄位4">4</th><th scope="col" aria-label="欄位5">5</th>
                         <th scope="col" aria-label="欄位6">6</th><th scope="col" aria-label="欄位7">7</th><th scope="col" aria-label="欄位8">8</th><th scope="col" aria-label="欄位9">9</th><th scope="col" aria-label="欄位10">10</th>
                         <th scope="col" aria-label="欄位11">11</th><th scope="col" aria-label="欄位12">12</th><th scope="col" aria-label="欄位13">13</th><th scope="col" aria-label="欄位14">14</th><th scope="col" aria-label="欄位15">15</th>
@@ -198,39 +201,26 @@
             <span aria-hidden="true">2</span>
             <div>
               <h2 id="output-heading">輸出格式</h2>
-              <p class="help-text">選擇下載格式，並查看整個工作區所有檔案的完整摘要。</p>
+              <p class="help-text">選擇整批輸出格式；有問題時，依下方提示處理後再下載。</p>
             </div>
           </div>
           <div class="output-format-control">
             <label for="output-format">輸出格式</label>
             <select id="output-format" aria-describedby="output-format-help">
-              <option value="big5-txt" selected>Big5 TXT</option>
+              <option value="big5-txt" selected>TXT（BIG-5E）</option>
               <option value="csv">CSV（UTF-8）</option>
               <option value="xlsx">XLSX</option>
             </select>
-            <p id="output-format-help" class="help-text">固定 208 bytes／筆。</p>
+            <p id="output-format-help" class="help-text">每筆固定 15 欄、208 bytes。</p>
           </div>
-          <div class="subsection-heading output-summary-heading">
-            <div>
-              <h3 id="output-summary-heading">工作區完整摘要</h3>
-              <p>合計涵蓋工作區內所有檔案，不只目前預覽的檔案。</p>
-            </div>
-          </div>
-          <dl class="validation-summary responsive-grid" aria-labelledby="output-summary-heading">
-            <div><dt>檔案</dt><dd id="output-file-summary">0</dd></div>
-            <div><dt>資料列</dt><dd id="output-source-row-summary">0</dd></div>
-            <div><dt>輸出列</dt><dd id="output-row-summary">0</dd></div>
-            <div><dt>空白列</dt><dd id="output-blank-row-summary">0</dd></div>
-            <div><dt>錯誤</dt><dd id="output-error-summary">0</dd></div>
-            <div><dt>警告</dt><dd id="output-warning-summary">0</dd></div>
-            <div><dt>自動修正</dt><dd id="output-modified-summary">0</dd></div>
-          </dl>
           <div class="download-bar">
             <div>
               <strong id="download-status-title">尚未準備下載</strong>
-              <span id="download-status-detail">請先新增檔案並完成驗證。</span>
+              <span id="download-status-detail">請先在第 1 區加入檔案。</span>
+              <a id="output-problem-link" class="inline-action-link" href="#file-tree-table" hidden>回到第 1 區查看問題</a>
+              <ul id="output-issue-list" class="output-issue-list" hidden></ul>
             </div>
-            <button id="download-button" class="primary-button" type="button" disabled>下載 Big5 TXT</button>
+            <button id="download-button" class="primary-button" type="button" disabled>下載 TXT（BIG-5E）</button>
           </div>
         </section>
 

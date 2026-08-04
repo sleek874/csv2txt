@@ -2,9 +2,9 @@ import { FIXED_FIELD_COUNT } from "./fixed-profile";
 import type { DataIssue, InternalCell, InternalRow } from "./internal-model";
 
 export interface NormalizationResult {
+  issues: DataIssue[];
   rows: InternalRow[];
   sourceRows: number;
-  excludedBlankRows: number;
 }
 
 function removeWhitespace(value: string): string {
@@ -33,11 +33,10 @@ export function normalizeRows(
   options: {
     sourceRowNumbers?: readonly number[];
     sourceRowCount?: number;
-    excludedBlankRows?: number;
   } = {},
 ): NormalizationResult {
   const rows: InternalRow[] = [];
-  let excludedBlankRows = options.excludedBlankRows ?? 0;
+  const issues: DataIssue[] = [];
 
   sourceRows.forEach((source, rowIndex) => {
     const sourceRow = options.sourceRowNumbers?.[rowIndex] ?? rowIndex + 1;
@@ -45,7 +44,13 @@ export function normalizeRows(
       normalizeCell(String(value), columnIndex + 1));
 
     if (normalizedSource.every((value) => value === "")) {
-      excludedBlankRows += 1;
+      issues.push({
+        severity: "warning",
+        stage: "source",
+        code: "EMPTY_ROW",
+        message: "空白列不會輸出。",
+        sourceRow,
+      });
       return;
     }
 
@@ -77,8 +82,8 @@ export function normalizeRows(
   });
 
   return {
+    issues,
     rows,
     sourceRows: options.sourceRowCount ?? sourceRows.length,
-    excludedBlankRows,
   };
 }

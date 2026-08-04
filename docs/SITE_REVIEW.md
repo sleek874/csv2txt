@@ -1,149 +1,67 @@
-# Site-wide implementation review
+# 站點健康檢查
 
-> **Historical baseline:** this review describes the last settings-driven,
-> single-file implementation before the fresh-start "離線資料轉換" work. Keep
-> it as verification evidence for reusable conversion, global-style, offline,
-> resource-loading, accessibility, and build contracts. It is not the target
-> product specification; see [DESIGN.md](DESIGN.md),
-> [ARCHITECTURE.md](ARCHITECTURE.md), and [ROADMAP.md](ROADMAP.md).
+檢查日期：2026-08-05
+範圍：BIG-5E mapping／PUA recovery、共同資料管線、CSV／XLSX／TXT／ZIP I/O、工作區 UI、可及性、響應式版面、離線建置、安全、dependency、測試與文件。
 
-Review date: 2026-07-30
-Scope: application shell, browser workflow, conversion core, settings, styles,
-offline/build integration, documentation, and automated tests.
+## 結論
 
-## Global picture
+目前分支是健康的 release candidate。完整本機 gate、dependency 安全檢查、正式建置 DOM 與桌面／窄螢幕截圖均通過；沒有保留舊 settings、方向 tabs、HKSCS fallback 或第二套 summary state。
 
-The project is a functional, privacy-first static browser application rather
-than a prototype. CSV, XLS, and XLSX inputs converge on one string-row model,
-the pure conversion core validates and emits fixed-width Big5 bytes, and the
-browser layer owns only file interaction, settings, preview, download, and
-offline preparation. Production assets are local and the Content Security
-Policy forbids runtime connections.
+本次 audit 額外修正一個資料契約偏差：CSV serializer 曾將每個值改寫成 Excel 文字公式。CSV 現在恢復為標準 literal-value 輸出，固定 UTF-8 BOM、CRLF、無標題列並保存最終 IR；需要可靠的試算表文字型別與前置零時使用 XLSX。
 
-The current implementation is strongest in deterministic conversion rules,
-recoverable settings, static accessibility contracts, and build-time resource
-validation. The most important remaining risk is external compatibility: the
-consumer's exact Big5 variant and expected Access-produced bytes have not been
-confirmed with an approved sanitized source/output pair.
+## 目前架構
 
-## Efforts completed
+File／ZIP 依序經過 safe inventory 與 virtual path、format adapter、normalized Unicode IR、來源驗證、可稽核 transformation、最終驗證與 row selection、所選格式 output gate，再輸出 CSV／BIG-5E TXT／XLSX；單檔直接下載，多檔建立保留路徑的 ZIP。
 
-### Conversion and data contract
+- 固定 profile、IR、validation、transformation、output validation 與 serializer 分層；瀏覽器 view 不持有 domain rule。
+- workspace-model.ts 是檔案、選取列與整批輸出格式的唯一狀態；tree、preview 與 download plan 都由 snapshot 即時計算。
+- CSV／BIG-5E TXT 是 base codec；Spreadsheet、ZIP 與預覽字型依需求延遲載入並加入對應離線資源群組。
 
-- Implemented strict UTF-8, UTF-16LE/BE, and Big5 decoding with visible
-  ambiguity and manual CSV override.
-- Implemented positional 15-field conversion, Big5 round-trip validation,
-  byte-width padding, CRLF output, and final CRLF.
-- Applied source-whitespace handling before empty-row, default, required,
-  encoding, and width checks.
-- Kept file-level parse/read failures separate from row/field conversion issues.
+## BIG-5E 與資料完整性
 
-### Settings and recovery
+- Runtime mapping 來自數位發展部 CNS11643 MapingTables.zip 版本 20260505，以 SHA-256 固定並產生 17,454 筆非 ASCII 一對一 mapping。
+- Codec 不呼叫 WHATWG Big5／HKSCS fallback。衝突位置例如 964F、9BBC 依 BIG-5E 解讀。
+- 測試逐一枚舉所有 runtime BIG-5E code，確認 decode／encode round-trip 與 provenance entry count 相符。
+- Recovery table 含 4,107 筆官方資料可唯一收斂的 BMP PUA；測試確認輸出皆為 formal Unicode。
+- 未解決 PUA 不猜字義、不消失、不被通用 replacement 取代；預覽只遮罩 glyph，IR 與問題明細保留 code point。
+- BIG-5E 無對照或 byte overflow 只阻止 BIG-5E TXT；CSV／XLSX 仍可表示已確認的 Unicode。
 
-- Moved persisted settings to the strict version 3 schema.
-- Kept per-file CSV encoding outside saved settings.
-- Preserved a last-valid settings snapshot while invalid edits remain visible.
-- Added explicit settings upload/download and default/recovery actions.
+## UI 與可及性
 
-### Browser, accessibility, and offline behavior
+- 四區順序、原生 rules disclosure、單一 multiple picker、treegrid、100-row preview、三態 page-scoped selection、原生 output select 與未開放 Section 3 都存在於正式 DOM。
+- Section 1 合併來源結果、選取列與目前格式 output issue；Section 2 不再複製完整摘要。
+- 移除與清空 copy 明確表示只影響頁面記憶體；ZIP 內 symlink 對使用者顯示為「捷徑」。
+- 問題 detail 支援 hover、focus 與 click；大量 table body 不作為 live region，只有事件型狀態使用安靜的 polite announcement。
+- 1440×1200 與 390×844 正式建置截圖沒有版面溢位、重疊或不可見主要控制。
+- Node 24.18.0、Chrome 151.0.7922.71、Lighthouse 13.4.1 對正式 preview root 的本機診斷為 Performance 99、Accessibility 100、Best Practices 100、SEO 92。
 
-- Kept the semantic workflow shell in `index.html` and split field editing,
-  settings, results, resources, offline caching, theme, and unload behavior into
-  owned modules.
-- Retained normal browser refresh behavior with a native leave-page warning only
-  while a selected source file is held.
-- Added focused live feedback, source-area alerts, keyboard-focusable overflow
-  regions, and a no-JavaScript fallback.
-- Split base, Excel, and preview-font resource groups and validate them against
-  the Vite manifest.
+自動與 headless 證據不能取代螢幕閱讀器、完整鍵盤操作、原生 file picker、下載 dialog 或真實裝置測試；這些仍列為發布前人工檢查。
 
-### Recent visual and responsive work
+## 安全、隱私與離線
 
-- Centralized light/dark semantic palette, border, radius, shadow, control, and
-  responsive-grid primitives.
-- Added early saved-theme restoration to reduce first-paint mismatch.
-- Reserved stable readiness, filename, metadata, and processing-indicator slots.
-- Kept the field editor, issue table, and fixed-width preview scrollable instead
-  of compressing their intrinsic horizontal relationships.
-- Renamed the source action to `取消選擇` so it does not imply deleting a local
-  file.
+- 正式 CSP 保持 connect-src 'none'；沒有 upload endpoint、telemetry、runtime CDN 或第三方連線。
+- 檔案內容、路徑、issue、IR 與輸出不寫入 localStorage、IndexedDB、URL 或 log；localStorage 只保存 UI theme。
+- ZIP 在解壓前檢查中央目錄，限制 entry、深度、單檔／總大小，拒絕 traversal、控制字元、加密、symlink、ZIP64、未知 compression 與碰撞；實際串流解壓大小也另行計數。
+- Service worker 的 base、Excel、archive 與 font 群組由 Vite manifest 產生，舊 app cache 會在 activate 清理。
+- robots.txt、llms.txt 與 sitemap.xml 皆直接回傳 200；Lighthouse 的 robots／llms 失敗來自正式 connect-src 'none' 阻擋其頁內檢索器，因此保留隱私 CSP 並由 build verifier 檢查內容。
+- npm audit --omit=dev 為 0 vulnerabilities；npm outdated 沒有列出落後 dependency。
 
-## Review results by area
+## 自動驗證
 
-| Area | Current state | Evidence and boundaries |
-|---|---|---|
-| Conversion core | Implemented | Pure modules under `src/core/`; byte output now has direct regression coverage. |
-| Settings | Implemented | Strict v3 validation, local autosave, JSON import/export, and last-valid recovery. |
-| CSV/Excel input | Implemented | CSV encoding selection is per file; Excel uses the first worksheet and formatted values. |
-| Privacy/CSP | Implemented statically | No upload endpoint or runtime asset CDN; build verifier checks the generated policy and resource graph. |
-| Offline behavior | Implemented | Base shell, Excel, and font caches are separated; full offline behavior still needs deployed-browser smoke testing. |
-| Accessibility | Strong static contract | Semantic shell and ARIA references are build-verified; keyboard and screen-reader journeys still require manual/browser validation. |
-| Responsive visual system | Implemented, awaiting browser matrix | Container-driven reflow and bounded scrollers are present; visual regression automation is not yet installed. |
-| Documentation | Reconciled | Runtime versions, verification commands, current coverage, and remaining compatibility work are now stated consistently. |
-| Automated tests | Improved | Core bytes, encoding, CSV, settings, spreadsheets, whitespace, resource ordering, and static production contracts are covered. |
-| Deployment | Hardened | Pages now runs tests before its production build and upload. |
+- npm run verify：Node tests、TypeScript、Vite production build、static build verifier。
+- Mapping：已知 BIG-5E／HKSCS 衝突、未知 bytes、完整 mapping round-trip、PUA recovery／unresolved cases。
+- Data：CSV quoting／CRLF／literal values、Excel formatted values／formula cache、208-byte TXT／padding／final CRLF。
+- Pipeline：日期、證號、性別、跨欄、空白列、TEL transformation、row inclusion、format-specific output gate。
+- Batch／ZIP：Unicode Path、CP950／CP437 filename fallback、nested ZIP、symlink、unsafe path、collision、fail-closed output。
+- UI contracts：tree aggregation、row filter、page-scoped bulk selection、focus continuity、ARIA references、responsive/static style rules。
+- Production：CSP、agent discovery、offline manifest groups、no source maps、base／Excel JavaScript budgets。
 
-## Points to watch
+## 剩餘風險
 
-1. **External byte compatibility remains unproven.** WHATWG Big5/CP950/vendor
-   differences, final CRLF, and Access formatting must be confirmed by the
-   receiving system with approved sanitized data.
-2. **Browser-level coverage is still manual.** The static verifier catches
-   structural regressions but cannot prove focus order, dialog behavior, file
-   picker flows, screen-reader announcements, or responsive rendering.
-3. **The recent CSS uses modern platform features.** `light-dark()`, container
-   queries, `inert`, and text clipping need an explicit supported-browser matrix
-   and real-device checks.
-4. **Large files still run in the main thread.** The 25 MiB limit is enforced,
-   but responsiveness has not been benchmarked across representative CSV/XLS/XLSX
-   sizes. A worker should be justified by measurements.
-5. **Offline correctness must be checked on the deployed origin.** Service
-   worker update timing, optional cache reuse, and recovery from interrupted
-   downloads are browser/runtime concerns beyond static build assertions.
-6. **No project license exists.** Third-party contributions and redistribution
-   remain constrained until the owner selects one.
+1. 接收端是否接受這份官方 BIG-5E profile、padding 與 CRLF 尚需核准的去識別 fixture 實測；本機 round-trip 不能替代外部系統 acceptance。
+2. 大型 Excel／ZIP 仍在主執行緒處理；25 MiB／100 MiB 是安全上限，不代表已證明互動延遲可接受。
+3. 部署 origin 的 service-worker 安裝、更新與完全離線 reload 尚需瀏覽器 smoke test。
+4. Screen reader、forced-colors、reduced-motion 與完整鍵盤／觸控旅程需要人工或正式 browser automation 覆蓋。
+5. 專案本身尚未選定 license；在此之前不應接受第三方 contribution。
 
-## Test coverage and remaining gaps
-
-Automated coverage now includes:
-
-- encoding BOM detection, ASCII ambiguity, Big5 round trips, and lossy rejection;
-- CSV quoting, embedded CRLF, terminal-line handling, and translated parse errors;
-- exact left/right Big5 padding, defaults after whitespace handling, blocking
-  validation, 208-byte records, and final CRLF;
-- settings classification and strict schema rejection;
-- XLS/XLSX formatted values, blank cells, formulas, and synthetic fixture parity;
-- resource-priority ordering and retry behavior;
-- production CSP, offline resource groups, semantic/ARIA invariants, removed
-  legacy hooks, and base JavaScript budget.
-
-The next useful automated layer is a small browser suite using only synthetic
-fixtures. It should cover settings persistence/recovery, CSV encoding changes,
-file deselection, download enablement, theme restoration, keyboard traversal,
-and a production service-worker smoke path. Screenshot tests should be limited
-to stable light/dark desktop and narrow layouts so they do not become noisy.
-
-## Future plan
-
-### Priority 0 — acceptance evidence
-
-- Obtain owner-approved sanitized CSV and Access-generated TXT output.
-- Confirm the consumer's Big5 mapping and CRLF/final-CRLF requirements.
-- Run keyboard, screen-reader, reduced-motion, forced-color, light/dark, and
-  narrow-layout smoke checks on the production build.
-
-### Priority 1 — browser and performance hardening
-
-- Add focused browser integration tests with synthetic fixtures.
-- Benchmark representative CSV/XLS/XLSX files up to the documented limit.
-- Move parsing/conversion to a worker only if measurements show disruptive main
-  thread blocking.
-- Test deployed offline install, optional resource preparation, update, and
-  interrupted-cache recovery.
-
-### Priority 2 — release governance
-
-- Define the supported-browser matrix.
-- Select and document a project license and contribution policy.
-- Require the verified build check on the protected default branch if repository
-  policy permits it.
+後續工作與明確不做的相容範圍見 [ROADMAP.md](ROADMAP.md)，BIG-5E 來源與重建方式見 [BIG5E_MAPPING.md](BIG5E_MAPPING.md)。

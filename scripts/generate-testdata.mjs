@@ -8,12 +8,13 @@ import {
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { strToU8, zipSync } from "fflate";
 import * as cptable from "xlsx/dist/cpexcel.full.mjs";
 import { set_cptable, utils, write } from "xlsx";
 
 import { serializeZip } from "../src/core/archive/zip.ts";
 import { createInternalFile } from "../src/core/conversion-pipeline.ts";
-import { encodeBig5 } from "../src/core/encoding.ts";
+import { encodeBig5E } from "../src/core/encoding.ts";
 import {
   FIXED_FIELD_COUNT,
   FIXED_RECORD_WIDTH_BYTES,
@@ -95,17 +96,17 @@ function fakeDate(year, index) {
   return `${year}${paddedNumber(month, 2)}${paddedNumber(day, 2)}`;
 }
 
-function exactWidthBig5Text(widthBytes) {
+function exactWidthBig5EText(widthBytes) {
   const source = "測試地址甲乙丙丁戊己庚辛壬癸".repeat(20);
   let result = "";
   for (const character of source) {
     const candidate = `${result}${character}`;
-    const encoded = encodeBig5(candidate);
+    const encoded = encodeBig5E(candidate);
     assert.ok(encoded);
     if (encoded.length > widthBytes) break;
     result = candidate;
   }
-  assert.equal(encodeBig5(result)?.length, widthBytes);
+  assert.equal(encodeBig5E(result)?.length, widthBytes);
   return result;
 }
 
@@ -139,12 +140,12 @@ function baseRow(index) {
 
 function boundaryRow(index) {
   const row = baseRow(index);
-  row[6] = exactWidthBig5Text(FIXED_WIDTHS[6]);
-  row[8] = exactWidthBig5Text(FIXED_WIDTHS[8]);
+  row[6] = exactWidthBig5EText(FIXED_WIDTHS[6]);
+  row[8] = exactWidthBig5EText(FIXED_WIDTHS[8]);
   row[9] = "+886(2)0000-001";
-  assert.equal(encodeBig5(row[6])?.length, 12);
-  assert.equal(encodeBig5(row[8])?.length, 120);
-  assert.equal(encodeBig5(row[9])?.length, 15);
+  assert.equal(encodeBig5E(row[6])?.length, 12);
+  assert.equal(encodeBig5E(row[8])?.length, 120);
+  assert.equal(encodeBig5E(row[9])?.length, 15);
   return row;
 }
 
@@ -228,8 +229,8 @@ const datasetDefinitions = [
 function assertSerializableRow(row, rowNumber) {
   assert.equal(row.length, FIXED_FIELD_COUNT, `第 ${rowNumber} 列必須有 ${FIXED_FIELD_COUNT} 欄`);
   row.forEach((value, fieldIndex) => {
-    const encoded = encodeBig5(value);
-    assert.ok(encoded, `第 ${rowNumber} 列欄位${fieldIndex + 1}必須可安全轉為 Big5`);
+    const encoded = encodeBig5E(value);
+    assert.ok(encoded, `第 ${rowNumber} 列欄位${fieldIndex + 1}必須可安全轉為 BIG-5E`);
     assert.ok(
       encoded.length <= FIXED_WIDTHS[fieldIndex],
       `第 ${rowNumber} 列欄位${fieldIndex + 1}不得超過 ${FIXED_WIDTHS[fieldIndex]} bytes`,
@@ -277,11 +278,9 @@ function summarizeRows(definition, rows) {
   if (definition.category === "clean") {
     assert.equal(summary.errorCount, 0);
     assert.equal(summary.warningCount, 0);
-    assert.equal(summary.modifiedCount, 0);
   } else if (definition.category === "modified") {
     assert.equal(summary.errorCount, 0);
-    assert.equal(summary.warningCount, 0);
-    assert.ok(summary.modifiedCount > 0);
+    assert.ok(summary.warningCount > 0);
   } else if (definition.category === "warning") {
     assert.equal(summary.errorCount, 0);
     assert.ok(summary.warningCount > 0);
@@ -290,7 +289,6 @@ function summarizeRows(definition, rows) {
   } else {
     assert.ok(summary.errorCount > 0);
     assert.ok(summary.warningCount > 0);
-    assert.ok(summary.modifiedCount > 0);
   }
   return summary;
 }
@@ -345,6 +343,19 @@ const archiveDefinitions = [
   },
 ];
 
+const exclusionArchiveDefinition = {
+  name: "excluded-entries.zip",
+  acceptedEntry: {
+    path: "accepted/clean-single.csv",
+    format: "csv",
+    dataset: "clean-single",
+  },
+  excludedEntries: [
+    { path: "excluded/notes.md", reason: "unsupported-type" },
+    { path: "excluded/link.csv", reason: "symlink" },
+  ],
+};
+
 async function writeArchives() {
   mkdirSync(formatDirectories.zip, { recursive: true });
   for (const archive of archiveDefinitions) {
@@ -354,6 +365,17 @@ async function writeArchives() {
     }));
     writeFileSync(join(formatDirectories.zip, archive.name), await serializeZip(entries));
   }
+  const accepted = exclusionArchiveDefinition.acceptedEntry;
+  writeFileSync(join(formatDirectories.zip, exclusionArchiveDefinition.name), zipSync({
+    [accepted.path]: new Uint8Array(readFileSync(
+      join(formatDirectories[accepted.format], `${accepted.dataset}.${accepted.format}`),
+    )),
+    "excluded/notes.md": strToU8("This unsupported extension should be skipped.\n"),
+    "excluded/link.csv": [
+      strToU8("../accepted/clean-single.csv"),
+      { attrs: 0o120777 << 16, os: 3 },
+    ],
+  }));
 }
 
 async function generateAll() {
@@ -372,7 +394,7 @@ async function generateAll() {
 
   await writeArchives();
 
-  const dataFileCount = generatedDatasets.length * 4 + archiveDefinitions.length;
+  const dataFileCount = generatedDatasets.length * 4 + archiveDefinitions.length + 1;
   assert.ok(dataFileCount <= MAX_DATA_FILES);
   const manifest = {
     generatedAt: "2026-08-04",
@@ -398,18 +420,19 @@ async function generateAll() {
       name: archive.name,
       entries: archive.entries.map(([path, format, dataset]) => ({ path, format, dataset })),
     })),
+    exclusionArchives: [exclusionArchiveDefinition],
   };
   writeFileSync(join(testdataDirectory, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
 if (process.argv.includes("--archives-only")) {
   await writeArchives();
-  console.log(`Regenerated ${archiveDefinitions.length} ZIP files from the current format folders.`);
+  console.log(`Regenerated ${archiveDefinitions.length + 1} ZIP files from the current format folders.`);
 } else {
   await generateAll();
   console.log(
-    `Generated ${generatedDatasets.length} logical datasets in CSV, XLS, XLSX, and Big5 TXT, plus ${archiveDefinitions.length} mixed-format ZIP files.`,
+    `Generated ${generatedDatasets.length} logical datasets in CSV, XLS, XLSX, and BIG-5E TXT, plus ${archiveDefinitions.length + 1} ZIP fixtures.`,
   );
-  console.log(`Largest dataset: ${Math.max(...generatedDatasets.map((dataset) => dataset.rowCount))} rows; total data files: ${generatedDatasets.length * 4 + archiveDefinitions.length}.`);
+  console.log(`Largest dataset: ${Math.max(...generatedDatasets.map((dataset) => dataset.rowCount))} rows; total data files: ${generatedDatasets.length * 4 + archiveDefinitions.length + 1}.`);
   console.log(`Example output: ${basename(join(formatDirectories.csv, "clean-large-6000.csv"))}`);
 }

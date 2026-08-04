@@ -1,7 +1,8 @@
 import type { OutputFormat } from "../../core/file-formats";
 import type { InternalFile } from "../../core/internal-model";
 
-export type WorkspaceFileState = "processing" | "ready" | "error";
+export type WorkspaceFileState = "processing" | "ready" | "error" | "ignored";
+export type WorkspaceIgnoredReason = "symlink" | "unsupported-type";
 export type WorkspaceSourceKind = "file" | "archive";
 
 export interface WorkspaceSource {
@@ -14,10 +15,12 @@ export interface WorkspaceItem {
   error?: string;
   file?: InternalFile;
   id: string;
+  ignoredReason?: WorkspaceIgnoredReason;
   size: number;
   sourceId: string;
   state: WorkspaceFileState;
   relativePath: string;
+  unread?: boolean;
   virtualPath: string;
 }
 

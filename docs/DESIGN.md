@@ -4,11 +4,11 @@
 
 本工具在瀏覽器內提供單一、批次、離線資料工作區：
 
-- 同一個檔案選擇區接受 CSV、XLS、XLSX、Big5 TXT 及 ZIP。
+- 同一個檔案選擇區接受 CSV、XLS、XLSX、臺灣政府 BIG-5E TXT 及 ZIP。
 - 每個支援檔案由自動選定的 input adapter 解析為共用內部表示。
-- 使用者完成驗證與修改後，才為整批選擇 Big5 TXT、UTF-8 CSV 或 XLSX 輸出。
+- 使用者完成驗證與修改後，才為整批選擇 BIG-5E TXT、UTF-8 CSV 或 XLSX 輸出。
 
-本文件定義下一個主要版本的固定契約。它不承諾舊設定檔、舊 localStorage、舊 UI 控制或舊行為相容。實作會依 [ROADMAP.md](ROADMAP.md) 分階段落地；尚未完成的能力不得在 UI、README 或部署說明中宣稱已完成。
+本文件定義目前主要版本的固定契約。舊設定檔、舊 localStorage、方向式 UI、舊 DOM selector 與舊行為相容層已移除，不屬於支援範圍；尚未完成的能力不得在 UI、README 或部署說明中宣稱已完成。
 
 ## 2. 核心原則
 
@@ -20,7 +20,7 @@
 6. UI 只顯示欄位編號，不顯示業務欄位名稱。
 7. 大型批次只呈現目前需要的摘要與分頁資料，不一次渲染全部內容。
 8. 來源格式只決定 input adapter，不建立方向模式、分頁或平行工作流程。
-9. 輸出格式只決定 serializer；相同最終資料必須可交給任一輸出 adapter。
+9. 輸出格式決定 serializer 與格式相容性 gate；共用 IR 不因格式切換而重建或改寫。
 
 ## 3. 固定 208-byte profile
 
@@ -32,9 +32,9 @@
 | 4 | 10 | `^[0-9]{10}$` | 必填；視為文字，不自動補零 |
 | 5 | 10 | `^[a-z0-9]{5,10}$` | 不分大小寫；移除空白後轉大寫；不是有效國民身分證或新式外來人口統一證號時顯示警告；若有效，性別與欄位8不符時顯示錯誤 |
 | 6 | 8 | `^[0-9]{8}$` | 必填；真實西元日期且嚴格早於臺北當地今天 |
-| 7 | 12 | `^.+$` | 可安全轉為 Big5；不得超過 12 bytes |
+| 7 | 12 | `^.+$` | 必填；BIG-5E TXT 輸出時須可編碼且不得超過 12 bytes |
 | 8 | 1 | `^[12]$` | 必填；欄位5為有效證號時，以 `1↔8`、`2↔9` 對應性別；不一致時錯誤 |
-| 9 | 120 | `^.+$` | 必填；須安全轉為 Big5 且不得超過 120 bytes |
+| 9 | 120 | `^.+$` | 必填；BIG-5E TXT 輸出時須可編碼且不得超過 120 bytes |
 | 10 | 15 | `^[0-9()+#-]{1,15}$` | 來源可空；在輸出修改階段補為 `0000000000`；最終值必須通過規則 |
 | 11 | 10 | `^[A-Z][12][0-9]{8}$` | 必填；移除空白後轉大寫；必須通過臺灣身分證檢查碼 |
 | 12 | 1 | `^[ABCD]$` | 必填 |
@@ -48,7 +48,7 @@
 [1, 2, 1, 10, 10, 8, 12, 1, 120, 15, 10, 1, 8, 8, 1]
 ```
 
-總寬度固定為 208 bytes。所有值靠左，右側以半形空白 byte `0x20` 補足欄寬。
+BIG-5E TXT 的總寬度固定為 208 bytes。所有值靠左，右側以半形空白 byte `0x20` 補足欄寬；CSV／XLSX 不套用 BIG-5E byte 寬度 gate。
 
 ## 4. 正規化
 
@@ -63,16 +63,16 @@ CSV、XLS 與 XLSX 每個來源儲存格依序處理：
 
 不執行數字推斷、日期格式轉換、自動補零或科學記號還原。
 
-### 4.2 Big5 TXT input adapter
+### 4.2 BIG-5E TXT input adapter
 
 1. 以 byte 檢查換行與 record 邊界；空白或只含空白的實體行先移除並計數。
 2. 每個其餘 record 必須在不含 CRLF 時恰為 208 bytes。
 3. 依固定欄寬切成 15 個 byte slice。
-4. 嚴格解碼 Big5 並確認可 round-trip。
+4. 只使用數位發展部全字庫官方對照表嚴格解碼臺灣政府 BIG-5E，不使用 WHATWG／HKSCS 對照。
 5. 移除右側 `0x20` padding。
 6. 移除剩餘空白字元並寫入共用內部表示。
 
-不得以文字字元位置切割 Big5 固定寬資料。
+不得以文字字元位置切割 BIG-5E 固定寬資料。
 
 ### 4.3 空白列
 
@@ -83,7 +83,7 @@ CSV、XLS 與 XLSX 每個來源儲存格依序處理：
 - 每個 Excel 儲存格皆空白的列。
 - `,,,` 這類所有解析欄位皆空的 CSV record。
 
-移除的列必須計數並保留原始來源列號資訊；不得因後續欄位10補值而復活。
+移除的列必須以結構化 warning 保留原始來源列號；不得另設空白列摘要欄位，也不得因後續欄位10補值而復活。
 
 ## 5. 內部表示與兩次驗證
 
@@ -95,22 +95,26 @@ CSV、XLS 與 XLSX 每個來源儲存格依序處理：
 - 欄位與列層級 issue。
 - 修改前後差異與原因。
 
+內部值以 Unicode 為共同表示。CSV 或試算表來源若含舊式 Windows CP950 外字位置的 BMP Private Use Area 字元，自動修正階段會查詢由官方完整 CNS／Unicode、BIG5-2003、BIG-5E、電信、稅務、工商、財稅及各地政對照表產生的 recovery-only table。標準 BIG5 對照優先；其餘只有所有可用官方來源得到單一 formal Unicode candidate 時才還原。成功時保留 normalized original、寫入 final value 與 change log，並顯示簡短 verification warning；無法唯一還原的 BMP、Plane 15 或 Plane 16 PUA 保留原值並顯示簡短 error。不得使用 HKSCS fallback，也不得在結果有歧義時猜測字義。
+
 處理順序固定為：
 
 1. 來源結構與欄位驗證。
 2. 明確的列篩選與值自動修正。
 3. 對保留資料執行最終驗證。
-4. 只有最終驗證通過才能序列化。
+4. Section 2 對已勾選列執行所選 output codec 的相容性驗證，再決定是否可序列化。
 
-欄位10補 `0000000000` 是來源驗證後、最終驗證前的內建自動修正，不是 parser default。這項自動修正套用於共用內部表示，與來源格式及最後選擇的輸出格式無關，並必須留下 before、after 與 reason。
+欄位10補 `0000000000` 與舊系統字元還原都是來源驗證後、最終驗證前的內建自動修正，不是 parser default。這些自動修正套用於共用內部表示，與來源格式及最後選擇的輸出格式無關，必須留下 kind、before、after 與 reason，並使該列歸入 warning。
 
 ## 6. 嚴重程度
 
 - `error`：該列預設不輸出；使用者可在預覽中明確勾選後強制納入。無法歸屬資料列的檔案層級 error 仍阻止輸出。
-- `warning`：該列預設不輸出；使用者可在預覽中明確勾選後納入，並必須在檔案樹、摘要及預覽中可見。
-- `valid`：沒有 error 或 warning。
-- `modified`：獨立狀態標記，不等同 warning。
+- `warning`：該列預設不輸出；包含來源 warning、空白列與任何自動修正。使用者可在預覽中明確勾選後納入。
+- `output error`：只屬於 Section 2 的所選格式，不寫回 IR；不可強制略過，必須排除該列、修正內容或改選可表示該 Unicode 的格式。
+- `valid`：沒有 error、warning 或自動修正，可直接輸出。
 - `excluded`：使用者或固定檔案篩選明確排除，不算 error，但必須計數。
+
+Section 1 的每個來源列只計入 `valid`、`error` 或 `warning` 一次；同列同時有 error 與 warning 時只計 error，但 hover／focus 詳情仍顯示全部 issue 與 change。
 
 欄位5不是有效國民身分證或新式外來人口統一證號時為 warning，與欄位8性別不一致時為 error；欄位11仍只接受國民身分證，格式或檢查碼錯誤時為 error。
 
@@ -140,9 +144,9 @@ CSV、XLS 與 XLSX 每個來源儲存格依序處理：
 
 不提供手動 decoder 或 encoding 選項。每個檔案獨立決定：
 
-1. ZIP、XLS、XLSX 先以安全內容 signature 與副檔名判斷。
-2. CSV 依 BOM、嚴格 UTF-8、UTF-16 byte pattern、嚴格 Big5 的固定順序判斷。
-3. `.txt` 必須通過嚴格 Big5 round-trip、換行及 208-byte record 檢查。
+1. 依副檔名選擇 ZIP、XLS、XLSX adapter，再由各 parser 驗證容器內容；副檔名不會跳過安全解析。
+2. CSV 依 BOM、嚴格 UTF-8、UTF-16 byte pattern、嚴格 BIG-5E 的固定順序判斷。
+3. `.txt` 必須通過官方 BIG-5E 對照、換行及 208-byte record 檢查。
 4. 使用的 decoder 與可信狀態存入內部檔案 metadata，但不作為一般 UI 模式或固定資訊區。
 5. 只有副檔名與內容衝突、可信度不足或無安全 decoder 時，才在該檔案的 issue 中說明判定結果。
 
@@ -166,7 +170,7 @@ CSV、XLS 與 XLSX 每個來源儲存格依序處理：
 - 任何輸出路徑碰撞都顯示 error，不自動重新命名。
 - 檔名先採 UTF-8 flag，再採 CRC 相符的 Unicode Path；未標示的非 ASCII 名稱才推測 CP950／CP437，並在內部保存原始 bytes、decoder 與可信狀態，不另顯示編碼警告。
 
-ZIP 與資料夾依子節點聚合嚴重程度：`error > warning > valid`。
+ZIP 與資料夾依子節點聚合嚴重程度：`error > warning > valid`。錯誤與警告同時存在時仍各自顯示計數，並以 `·` 分隔；色彩只採最高嚴重程度。
 
 ## 10. 四區工作流程
 
@@ -182,12 +186,14 @@ ZIP 與資料夾依子節點聚合嚴重程度：`error > warning > valid`。
 
 ### Section 1 — 輸入檔案
 
-- 提供單一 multiple file picker，接受 CSV、XLS、XLSX、Big5 TXT 與 ZIP。
+- 提供單一 multiple file picker，接受 CSV、XLS、XLSX、BIG-5E TXT 與 ZIP。
 - 再次選取會追加至目前工作區，不覆蓋已載入的檔案。
-- 每個檔案右側提供清楚標示的移除按鈕，操作只影響瀏覽器記憶體；另提供「全部清除」。
+- 每個檔案右側提供清楚標示的移除按鈕，單檔移除可復原，整個來源與「清空清單」先顯示原生確認對話框；所有操作只影響瀏覽器記憶體。
 - 選取後立即建立安全虛擬目錄樹，並開始 inventory、decoder、IR、validation pipeline。
-- Tree node 顯示 include state 與 `error > warning > valid` 聚合狀態；不只使用顏色。
-- 點選 regular file 後，在同一區顯示該檔案的 IR preview、摘要及 error／warning。
+- Tree table 保留 disclosure、縮排、狀態點與 `error > warning > valid` 聚合狀態，另以 archive／folder／file 圖示及文字區分種類，不只使用顏色。
+- 欄位依序為檔案、資料、正確、錯誤、警告、已選列數、目前輸出格式問題與移除；來源、資料夾與總計列都由子檔案即時計算，不建立第二份摘要狀態。
+- 成功新增不顯示重複通知卡；尚未由使用者開啟的檔案顯示可累計的「新加入」，不支援項目顯示持續存在的「未加入」。
+- 點選 regular file 後，在同一區顯示該檔案的 IR preview 與 error／warning。
 - 預覽不因 input adapter 改變版面，也不建立來源格式資訊 panel。
 
 #### IR preview
@@ -196,12 +202,15 @@ ZIP 與資料夾依子節點聚合嚴重程度：`error > warning > valid`。
 
 - 預設順序為 error、warning、valid；同級依原始來源列號。
 - 每頁最多 100 列，不提供一次顯示全部。
-- 可篩選全部、錯誤、警告、有效、自動修正、已排除。
+- 可篩選全部、錯誤、警告、正確、未選取與目前格式輸出問題；自動修正由警告篩選涵蓋。
 - 每列顯示「輸出」核取方塊；有 error 或 warning 時預設不勾選，使用者可明確勾選以強制納入。
+- 「輸出」表頭使用三態核取方塊選取或取消選取本頁；只套用至目前篩選結果的當前分頁，不改變其他篩選結果或頁面。
+- 篩選器位於表格上方；分頁控制保留在表格下方，以單列顯示頁碼、列範圍及內容寬的上一頁／下一頁按鈕。
 - 只請求並渲染目前頁面。
-- Error cell 使用紅色狀態；warning cell 使用黃色狀態；modified 使用獨立標記。
+- Error cell 使用紅色狀態；warning 與自動修正 cell 使用黃色狀態。
 - 不只使用顏色，必須同時提供圖示、文字或邊框。
 - Hover、focus 與觸控都可從狀態欄開啟 issue 或自動修正說明。
+- 預覽中的無法還原 PUA 以全形 `■` 代替顯示；IR、問題明細與實際輸出值仍保留原始 code point。
 - Error／warning 清單以完整邏輯資料列為單位，不把同一列拆成 15 筆 cell issue table；有問題的 cell 仍在該列中以底線標示，跨欄規則會標示全部相關欄位。
 - 格式錯誤顯示可直接採取行動的繁中說明；空值明確顯示「此欄位不能空白」，不向使用者顯示 regex。格式未通過時，不再疊加日期有效性或證號檢查碼錯誤。
 - UI 只顯示欄位編號。
@@ -209,12 +218,14 @@ ZIP 與資料夾依子節點聚合嚴重程度：`error > warning > valid`。
 
 ### Section 2 — 輸出格式
 
-- 以原生 dropdown 為整批選擇 Big5 TXT、CSV 或 XLSX，不能逐檔混用格式；Big5 TXT 為預設。
-- Dropdown 維持符合內容的緊湊寬度；本區明確顯示涵蓋整個工作區所有檔案的完整摘要，不跟隨目前預覽檔案切換。
-- 完整摘要合計檔案、資料列、輸出列、空白列、錯誤、警告與自動修正。
+- 以原生 dropdown 為整批選擇 `TXT（BIG-5E）`、`CSV（UTF-8）` 或 `XLSX`，不能逐檔混用格式；TXT（BIG-5E）為預設。
+- Dropdown 維持符合內容的緊湊寬度；Section 2 不再建立第二張檔案摘要表，只顯示簡短下載狀態、返回 Section 1 查看問題的連結與下載按鈕。
+- Section 1 tree table 的輸出問題欄隨 dropdown 在 TXT、CSV 與 XLSX 間更新；非零數字可直接選取檔案並篩選受影響資料列。
 - 選擇只切換 output adapter，不重新解析來源或建立第二份 IR。
+- Section 2 只對目前勾選列執行格式相容性 gate。BIG-5E TXT 檢查官方 mapping 與 byte 寬度；CSV／XLSX 不因字元不在 BIG-5E 而被阻擋。
+- BIG-5E TXT 無法輸出時由 Section 1 預覽列出虛擬檔案路徑、來源列、欄位、沒有對照的字元及 Unicode code point；無法辨識字元固定以全形 `■` 顯示。
 - 選擇變更可在背景預備對應 codec，但不得顯示吵雜的 live-region resource 訊息。
-- 可在驗證完成前選擇格式；未歸屬資料列的檔案層級 error 仍停用下載並顯示阻擋摘要。
+- 可在驗證完成前選擇格式；任何仍會阻止下載的問題都停用下載並顯示完整問題清單。
 - Error／warning 列依預覽中的逐列勾選決定是否輸出；單一檔案直接下載，兩個以上檔案以 ZIP 保留安全虛擬目錄。
 
 ### Section 3 — 進階輸出
@@ -231,14 +242,15 @@ ZIP 與資料夾依子節點聚合嚴重程度：`error > warning > valid`。
 
 ## 11. 輸出
 
-使用者在下載階段為整批選擇一種輸出格式：Big5 TXT、CSV 或 XLSX。這個選擇只決定 output adapter，不改變正規化、自動修正、欄位規則或 error／warning 結果；輸入與輸出格式相同時，仍會產生經驗證及明確自動修正後的標準化檔案。
+使用者在下載階段為整批選擇一種輸出格式：BIG-5E TXT、CSV 或 XLSX。這個選擇不改變正規化、自動修正或 IR 的 error／warning；它會建立獨立、非持久化的 output issues，並只在所選格式可表示全部勾選值時允許下載。
 
-### Big5 TXT
+### BIG-5E TXT
 
 - 每列固定 208 bytes。
 - 所有值靠左，右側以 `0x20` 補齊。
 - 每列後接 CRLF，包括最後一列。
-- 任何值無法安全 round-trip Big5 或超出 byte 寬度時為 error。
+- 依固定的數位發展部 CNS11643／BIG-5E 對照表編碼，不使用 HKSCS fallback。
+- 任何值沒有官方 BIG-5E 對照或超出 byte 寬度時為 error。
 
 ### XLSX
 
@@ -249,9 +261,8 @@ ZIP 與資料夾依子節點聚合嚴重程度：`error > warning > valid`。
 ### CSV
 
 - 使用 UTF-8 BOM，換行固定為 CRLF，不加入標題列。
-- 依 CSV 規則處理逗號、雙引號、多行文字與空值。
-- 不加入公式、前置 apostrophe 或其他隱藏內容改寫。
-- CSV 沒有儲存格型別；檔案文字可保留前置零，但試算表軟體直接開啟時仍可能自行轉型。需要可靠文字型別時應選 XLSX。
+- 依 CSV 規則保存最終 IR 的文字值，處理逗號、雙引號、多行文字與空值。
+- 不加入公式、前置 apostrophe 或其他試算表專用 wrapper。CSV 沒有儲存格型別，試算表軟體直接開啟時可能自行轉型；需要可靠文字型別與前置零時使用 XLSX。
 
 ### Batch ZIP
 

@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { decodeSource, encodeBig5 } from "../src/core/encoding.ts";
+import { BIG5E_MAPPING_PROVENANCE } from "../src/core/big5e-mapping.ts";
+import {
+  PRIVATE_USE_RECOVERY_PROVENANCE,
+  recoveredUnicodeCodePoint,
+} from "../src/core/private-use-recovery-mapping.ts";
+import {
+  decodeBig5E,
+  decodeSource,
+  encodeBig5E,
+  privateUseCodePoints,
+} from "../src/core/encoding.ts";
+import { recoverPrivateUse } from "../src/core/private-use-recovery.ts";
 
 test("detects Unicode BOMs and strips them from decoded CSV text", () => {
   const utf8 = decodeSource(
@@ -33,15 +44,105 @@ test("marks ASCII auto-detection as ambiguous", () => {
   assert.equal(detected.ambiguous, true);
 });
 
-test("round-trips Big5 and rejects lossy encoding", () => {
-  const bytes = encodeBig5("繁體中文");
+test("uses the pinned Taiwan-government BIG-5E mapping instead of HKSCS", () => {
+  const bytes = encodeBig5E("繁體中文堃綉");
   assert.ok(bytes);
+  assert.deepEqual(bytes.slice(-4), new Uint8Array([0x96, 0x4f, 0x9b, 0xbc]));
+  assert.equal(decodeBig5E(new Uint8Array([0x96, 0x4f, 0x9b, 0xbc])), "堃綉");
 
   const decoded = decodeSource(bytes);
-  assert.equal(decoded.text, "繁體中文");
-  assert.equal(decoded.encoding, "big5");
+  assert.equal(decoded.text, "繁體中文堃綉");
+  assert.equal(decoded.encoding, "big5e");
   assert.equal(decoded.ambiguous, false);
 
-  assert.equal(encodeBig5("😀"), null);
-  assert.throws(() => decodeSource(new Uint8Array([0xff])), /Big5 位元組/u);
+  assert.equal(encodeBig5E("𤈛"), null, "the former HKSCS interpretation must not leak into BIG-5E");
+  assert.equal(encodeBig5E("😀"), null);
+  assert.throws(() => decodeSource(new Uint8Array([0xff])), /BIG-5E/u);
+  assert.deepEqual(BIG5E_MAPPING_PROVENANCE, {
+    entryCount: 17_454,
+    sourceUrl: "https://www.cns11643.gov.tw/opendata/MapingTables.zip",
+    sourceVersion: "20260505",
+    sourceSha256: "f59dacc4dbdef334d7a887c3da671af02778e2c80adb2a7fd1053f64dbf9e659",
+  });
+});
+
+test("round-trips every pinned non-ASCII BIG-5E mapping", () => {
+  let mappedCount = 0;
+  for (let encodedCode = 0x8000; encodedCode <= 0xffff; encodedCode += 1) {
+    const bytes = new Uint8Array([encodedCode >> 8, encodedCode & 0xff]);
+    let decoded;
+    try {
+      decoded = decodeBig5E(bytes);
+    } catch {
+      continue;
+    }
+    mappedCount += 1;
+    assert.deepEqual(
+      encodeBig5E(decoded),
+      bytes,
+      `BIG-5E ${encodedCode.toString(16).toUpperCase()} must round-trip`,
+    );
+  }
+  assert.equal(mappedCount, BIG5E_MAPPING_PROVENANCE.entryCount);
+});
+
+test("keeps every generated PUA recovery inside the pinned formal-Unicode contract", () => {
+  const recovered = [];
+  for (let privateUse = 0xe000; privateUse <= 0xf8ff; privateUse += 1) {
+    const formalUnicode = recoveredUnicodeCodePoint(privateUse);
+    if (formalUnicode !== undefined) recovered.push(formalUnicode);
+  }
+  assert.equal(recovered.length, PRIVATE_USE_RECOVERY_PROVENANCE.entryCount);
+  assert.equal(
+    recovered.some((codePoint) => privateUseCodePoints(String.fromCodePoint(codePoint)).length > 0),
+    false,
+  );
+});
+
+test("recognizes all three Unicode Private Use Areas", () => {
+  assert.deepEqual(
+    privateUseCodePoints(`A${String.fromCodePoint(0xe000)}${String.fromCodePoint(0xf0000)}${String.fromCodePoint(0x100000)}${String.fromCodePoint(0xe000)}`),
+    [0xe000, 0xf0000, 0x100000],
+  );
+  assert.deepEqual(privateUseCodePoints("正式 Unicode 堃"), []);
+});
+
+test("recovers legacy Excel private-use slots only through the official mapping", () => {
+  const result = recoverPrivateUse(
+    `王${String.fromCodePoint(0xe808)}${String.fromCodePoint(0xeb64)}`,
+    recoveredUnicodeCodePoint,
+  );
+  assert.deepEqual(result, {
+    value: "王堃綉",
+    recoveredCount: 2,
+    unresolvedCount: 0,
+  });
+
+  const unresolved = String.fromCodePoint(0xf0000);
+  assert.deepEqual(recoverPrivateUse(`王${unresolved}`, recoveredUnicodeCodePoint), {
+    value: `王${unresolved}`,
+    recoveredCount: 0,
+    unresolvedCount: 1,
+  });
+  assert.deepEqual(recoverPrivateUse("正式 Unicode 堃", recoveredUnicodeCodePoint), {
+    value: "正式 Unicode 堃",
+    recoveredCount: 0,
+    unresolvedCount: 0,
+  });
+  assert.deepEqual(recoverPrivateUse(String.fromCodePoint(0xe001), recoveredUnicodeCodePoint), {
+    value: String.fromCodePoint(0xe001),
+    recoveredCount: 0,
+    unresolvedCount: 1,
+  });
+  assert.deepEqual(recoverPrivateUse(String.fromCodePoint(0xe088), recoveredUnicodeCodePoint), {
+    value: String.fromCodePoint(0xe088),
+    recoveredCount: 0,
+    unresolvedCount: 1,
+  });
+  assert.deepEqual(PRIVATE_USE_RECOVERY_PROVENANCE, {
+    entryCount: 4_107,
+    sourceUrl: "https://www.cns11643.gov.tw/opendata/MapingTables.zip",
+    sourceVersion: "20260505",
+    sourceSha256: "f59dacc4dbdef334d7a887c3da671af02778e2c80adb2a7fd1053f64dbf9e659",
+  });
 });

@@ -23,3 +23,8 @@ export function detectInputFileType(fileName: string): InputFileType | null {
 export function outputStem(fileName: string): string {
   return fileName.replace(/\.(?:csv|xlsx?|txt)$/iu, "");
 }
+
+export function outputPath(fileName: string, format: OutputFormat): string {
+  const extension = format === "big5-txt" ? "txt" : format;
+  return `${outputStem(fileName)}.${extension}`;
+}

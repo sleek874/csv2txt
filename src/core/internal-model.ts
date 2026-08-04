@@ -20,6 +20,7 @@ export function issueFieldIndices(issue: DataIssue): readonly number[] {
 }
 
 export interface TransformationChange {
+  kind: "telephone-default" | "private-use-recovery";
   sourceRow: number;
   fieldIndex: number;
   before: string;
@@ -46,10 +47,9 @@ export interface InternalRow {
 export interface FileSummary {
   sourceRows: number;
   includedRows: number;
-  excludedBlankRows: number;
+  outputRows: number;
   errorCount: number;
   warningCount: number;
-  modifiedCount: number;
 }
 
 export interface InternalFile {
@@ -78,8 +78,12 @@ export function collectIssues(file: Pick<InternalFile, "issues" | "rows">): Data
   ];
 }
 
-export function collectRowIssues(row: InternalRow): DataIssue[] {
+export function collectRowIssues(
+  row: InternalRow,
+  fileIssues: readonly DataIssue[] = [],
+): DataIssue[] {
   return [
+    ...fileIssues.filter((issue) => issue.sourceRow === row.sourceRow),
     ...row.issues,
     ...row.cells.flatMap((cell) => cell.issues),
   ];
@@ -88,19 +92,34 @@ export function collectRowIssues(row: InternalRow): DataIssue[] {
 export function summarizeInternalFile(
   file: Pick<InternalFile, "issues" | "rows">,
   sourceRows: number,
-  excludedBlankRows: number,
 ): FileSummary {
-  const issues = collectIssues(file);
+  const errorRows = new Set<number>();
+  const warningRows = new Set<number>();
+  let fileErrors = 0;
+  let fileWarnings = 0;
+
+  for (const issue of collectIssues(file)) {
+    if (issue.sourceRow === undefined) {
+      if (issue.severity === "error") fileErrors += 1;
+      else fileWarnings += 1;
+    } else if (issue.severity === "error") {
+      errorRows.add(issue.sourceRow);
+    } else {
+      warningRows.add(issue.sourceRow);
+    }
+  }
+  file.rows.filter((row) => row.changes.length > 0).forEach((row) => warningRows.add(row.sourceRow));
+  errorRows.forEach((sourceRow) => warningRows.delete(sourceRow));
+
   return {
     sourceRows,
     includedRows: file.rows.filter((row) => row.included).length,
-    excludedBlankRows,
-    errorCount: issues.filter((issue) => issue.severity === "error").length,
-    warningCount: issues.filter((issue) => issue.severity === "warning").length,
-    modifiedCount: file.rows.reduce((total, row) => total + row.changes.length, 0),
+    outputRows: Math.max(0, sourceRows - errorRows.size - warningRows.size),
+    errorCount: fileErrors + errorRows.size,
+    warningCount: fileWarnings + warningRows.size,
   };
 }
 
 export function hasBlockingFileIssues(file: InternalFile): boolean {
-  return file.issues.some((issue) => issue.severity === "error");
+  return file.issues.some((issue) => issue.severity === "error" && issue.sourceRow === undefined);
 }

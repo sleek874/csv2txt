@@ -1,5 +1,6 @@
-import { outputStem, type OutputFormat } from "../../core/file-formats";
+import { outputPath, type OutputFormat } from "../../core/file-formats";
 import { cellValue, hasBlockingFileIssues, type InternalFile } from "../../core/internal-model";
+import { describeOutputIssue, validateOutput } from "../../core/output-validation";
 import type { SerializableRow } from "../../core/formats/types";
 import type { CodecManager } from "../resources/codec-manager";
 
@@ -13,13 +14,10 @@ export interface OutputAdapter {
   create(files: readonly InternalFile[], format: OutputFormat, createdAt?: Date): Promise<CreatedOutput>;
 }
 
-const PRESENTATIONS: Record<OutputFormat, { extension: string; mimeType: string }> = {
-  "big5-txt": { extension: "txt", mimeType: "text/plain;charset=big5" },
-  csv: { extension: "csv", mimeType: "text/csv;charset=utf-8" },
-  xlsx: {
-    extension: "xlsx",
-    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  },
+const MIME_TYPES: Record<OutputFormat, string> = {
+  "big5-txt": "application/octet-stream",
+  csv: "text/csv;charset=utf-8",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 
 function selectedRows(file: InternalFile): SerializableRow[] {
@@ -29,10 +27,6 @@ function selectedRows(file: InternalFile): SerializableRow[] {
       sourceRow: row.sourceRow,
       values: row.cells.map(cellValue),
     }));
-}
-
-function outputPath(file: InternalFile, format: OutputFormat): string {
-  return `${outputStem(file.virtualPath)}.${PRESENTATIONS[format].extension}`;
 }
 
 function basename(path: string): string {
@@ -56,13 +50,15 @@ export function createOutputAdapter(codecs: CodecManager): OutputAdapter {
   return {
     async create(files, format, createdAt = new Date()) {
       if (files.length === 0) throw new Error("工作區沒有可輸出的檔案。");
+      const outputIssue = validateOutput(files, format)[0];
+      if (outputIssue) throw new Error(describeOutputIssue(outputIssue));
       const planned = files.map((file) => {
         if (hasBlockingFileIssues(file)) {
           throw new Error(`${file.virtualPath} 仍有無法逐列處理的錯誤。`);
         }
         const rows = selectedRows(file);
         if (rows.length === 0) throw new Error(`${file.virtualPath} 尚未選擇任何輸出列。`);
-        return { path: outputPath(file, format), rows };
+        return { path: outputPath(file.virtualPath, format), rows };
       });
       const paths = new Set<string>();
       for (const { path } of planned) {
@@ -95,7 +91,7 @@ export function createOutputAdapter(codecs: CodecManager): OutputAdapter {
       return {
         bytes: output.bytes,
         filename: basename(output.path),
-        mimeType: PRESENTATIONS[format].mimeType,
+        mimeType: MIME_TYPES[format],
       };
     },
   };

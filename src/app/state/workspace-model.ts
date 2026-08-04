@@ -9,9 +9,24 @@ export interface WorkspaceModel {
   hasPath(path: string): boolean;
   remove(fileId: string): WorkspaceItem | null;
   removeSource(sourceId: string): WorkspaceItem[];
+  restore(
+    item: WorkspaceItem,
+    source: WorkspaceSource,
+    fileIndex: number,
+    sourceIndex: number,
+    selected: boolean,
+  ): boolean;
+  restoreSource(
+    source: WorkspaceSource,
+    items: readonly { index: number; item: WorkspaceItem }[],
+    sourceIndex: number,
+    previousSelectedFileId: string | null,
+  ): boolean;
   select(fileId: string): boolean;
   selectedItem(): WorkspaceItem | null;
+  markAllViewed(): number;
   setOutputFormat(format: OutputFormat): void;
+  setRowsIncluded(sourceRows: readonly number[], included: boolean): number;
   setRowIncluded(sourceRow: number, included: boolean): boolean;
   snapshot(): WorkspaceSnapshot;
   subscribe(listener: (snapshot: WorkspaceSnapshot) => void): () => void;
@@ -40,6 +55,10 @@ export function createWorkspaceModel(): WorkspaceModel {
       selectedFileId = entries[0]?.id ?? null;
     }
     selectedFileId ??= entries[0]?.id ?? null;
+  }
+
+  function refreshSummary(file: NonNullable<WorkspaceItem["file"]>): void {
+    file.summary = summarizeInternalFile(file, file.summary.sourceRows);
   }
 
   return {
@@ -96,11 +115,40 @@ export function createWorkspaceModel(): WorkspaceModel {
       emit();
       return removed;
     },
+    restore(item, source, fileIndex, sourceIndex, selected) {
+      if (entries.some((entry) => entry.id === item.id)) return false;
+      if (!sources.some((current) => current.id === source.id)) {
+        sources.splice(Math.min(Math.max(sourceIndex, 0), sources.length), 0, source);
+      }
+      entries.splice(Math.min(Math.max(fileIndex, 0), entries.length), 0, item);
+      if (selected) selectedFileId = item.id;
+      normalizeSelection();
+      emit();
+      return true;
+    },
+    restoreSource(source, items, sourceIndex, previousSelectedFileId) {
+      if (sources.some((current) => current.id === source.id)) return false;
+      if (items.some(({ item }) => entries.some((entry) => entry.id === item.id))) return false;
+      sources.splice(Math.min(Math.max(sourceIndex, 0), sources.length), 0, source);
+      [...items]
+        .sort((left, right) => left.index - right.index)
+        .forEach(({ index, item }) => {
+          entries.splice(Math.min(Math.max(index, 0), entries.length), 0, item);
+        });
+      if (previousSelectedFileId && entries.some((entry) => entry.id === previousSelectedFileId)) {
+        selectedFileId = previousSelectedFileId;
+      }
+      normalizeSelection();
+      emit();
+      return true;
+    },
     select(fileId) {
-      if (!entries.some((entry) => entry.id === fileId)) {
+      const entry = entries.find((candidate) => candidate.id === fileId);
+      if (!entry) {
         return false;
       }
       selectedFileId = fileId;
+      entry.unread = false;
       emit();
       return true;
     },
@@ -114,6 +162,25 @@ export function createWorkspaceModel(): WorkspaceModel {
       outputFormat = format;
       emit();
     },
+    markAllViewed() {
+      const unread = entries.filter((entry) => entry.unread);
+      unread.forEach((entry) => { entry.unread = false; });
+      if (unread.length > 0) emit();
+      return unread.length;
+    },
+    setRowsIncluded(sourceRows, included) {
+      const file = entries.find((entry) => entry.id === selectedFileId)?.file;
+      if (!file) return 0;
+      const selectedSourceRows = new Set(sourceRows);
+      const rows = file.rows.filter(
+        (row) => selectedSourceRows.has(row.sourceRow) && row.included !== included,
+      );
+      if (rows.length === 0) return 0;
+      rows.forEach((row) => { row.included = included; });
+      refreshSummary(file);
+      emit();
+      return rows.length;
+    },
     setRowIncluded(sourceRow, included) {
       const file = entries.find((entry) => entry.id === selectedFileId)?.file;
       const row = file?.rows.find((candidate) => candidate.sourceRow === sourceRow);
@@ -121,11 +188,7 @@ export function createWorkspaceModel(): WorkspaceModel {
         return false;
       }
       row.included = included;
-      file.summary = summarizeInternalFile(
-        file,
-        file.summary.sourceRows,
-        file.summary.excludedBlankRows,
-      );
+      refreshSummary(file);
       emit();
       return true;
     },

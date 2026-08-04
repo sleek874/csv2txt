@@ -3,7 +3,7 @@
   "version": "1.0.0-alpha.0",
   "private": true,
   "type": "module",
-  "description": "Privacy-first offline browser conversion between tabular files and a fixed 208-byte Big5 record format.",
+  "description": "Privacy-first offline browser conversion between tabular files and a fixed 208-byte Taiwan-government BIG-5E record format.",
   "scripts": {
     "dev": "vite",
     "check": "tsc --noEmit",
@@ -11,6 +11,7 @@
     "build": "npm run check && vite build && npm run verify:build",
     "verify": "npm test && npm run build",
     "verify:build": "node scripts/verify-build.mjs",
+    "generate:big5e-mapping": "node scripts/generate-big5e-mapping.mjs",
     "generate:testdata": "node --import ./tests/register-typescript.mjs scripts/generate-testdata.mjs",
     "preview": "vite preview"
   },

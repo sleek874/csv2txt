@@ -1,6 +1,12 @@
+export interface ParseIssue {
+  message: string;
+  severity: "error" | "warning";
+  sourceRow?: number;
+}
+
 export interface ParsedRows {
   rows: string[][];
-  errors: string[];
+  issues: ParseIssue[];
 }
 
 export interface SerializableRow {

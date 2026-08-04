@@ -1,6 +1,6 @@
-import * as iconv from "iconv-lite";
+import { big5eCodePoint, big5eEncodedCode } from "./big5e-mapping";
 
-type DetectedEncoding = "utf-8" | "utf-16le" | "utf-16be" | "big5";
+type DetectedEncoding = "utf-8" | "utf-16le" | "utf-16be" | "big5e";
 
 export interface DecodedSource {
   text: string;
@@ -11,10 +11,6 @@ export interface DecodedSource {
 
 function startsWith(bytes: Uint8Array, prefix: readonly number[]): boolean {
   return prefix.every((byte, index) => bytes[index] === byte);
-}
-
-function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
-  return left.length === right.length && left.every((byte, index) => byte === right[index]);
 }
 
 function strictUnicodeDecode(
@@ -28,14 +24,26 @@ function strictUnicodeDecode(
   }
 }
 
-export function decodeBig5(bytes: Uint8Array): string {
-  const decoded = iconv.decode(bytes, "big5");
-  const encoded = new Uint8Array(iconv.encode(decoded, "big5"));
+export function decodeBig5E(bytes: Uint8Array): string {
+  let decoded = "";
+  for (let index = 0; index < bytes.length; index += 1) {
+    const first = bytes[index];
+    if (first === undefined) break;
+    if (first < 0x80) {
+      decoded += String.fromCodePoint(first);
+      continue;
+    }
 
-  if (decoded.includes("\uFFFD") || !equalBytes(encoded, bytes)) {
-    throw new Error("檔案含有無法安全解讀的 Big5 位元組。");
+    const second = bytes[index + 1];
+    const codePoint = second === undefined
+      ? undefined
+      : big5eCodePoint((first << 8) | second);
+    if (codePoint === undefined) {
+      throw new Error("檔案含有無法依臺灣政府 BIG-5E 對照表解讀的位元組。");
+    }
+    decoded += String.fromCodePoint(codePoint);
+    index += 1;
   }
-
   return decoded;
 }
 
@@ -75,8 +83,8 @@ function decodeDetected(bytes: Uint8Array, encoding: DetectedEncoding): string {
       return strictUnicodeDecode(startsWith(bytes, [0xff, 0xfe]) ? bytes.subarray(2) : bytes, "utf-16le");
     case "utf-16be":
       return strictUnicodeDecode(startsWith(bytes, [0xfe, 0xff]) ? bytes.subarray(2) : bytes, "utf-16be");
-    case "big5":
-      return decodeBig5(bytes);
+    case "big5e":
+      return decodeBig5E(bytes);
   }
 }
 
@@ -122,7 +130,7 @@ export function decodeSource(bytes: Uint8Array): DecodedSource {
       ambiguous: asciiOnly,
     };
   } catch {
-    // Continue with the conservative UTF-16 and Big5 fallbacks.
+    // Continue with the conservative UTF-16 and BIG-5E fallbacks.
   }
 
   const hintedUtf16 = utf16Hint(bytes);
@@ -136,14 +144,59 @@ export function decodeSource(bytes: Uint8Array): DecodedSource {
   }
 
   return {
-    text: decodeDetected(bytes, "big5"),
-    encoding: "big5",
-    label: "Big5（自動判斷）",
+    text: decodeDetected(bytes, "big5e"),
+    encoding: "big5e",
+    label: "臺灣政府 BIG-5E（自動判斷）",
     ambiguous: false,
   };
 }
 
-export function encodeBig5(value: string): Uint8Array | null {
-  const encoded = new Uint8Array(iconv.encode(value, "big5"));
-  return iconv.decode(encoded, "big5") === value ? encoded : null;
+export function encodeBig5E(value: string): Uint8Array | null {
+  const encoded = [];
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint === undefined) return null;
+    if (codePoint < 0x80) {
+      encoded.push(codePoint);
+      continue;
+    }
+
+    const encodedCode = big5eEncodedCode(codePoint);
+    if (encodedCode === undefined) return null;
+    encoded.push(encodedCode >> 8, encodedCode & 0xff);
+  }
+  return new Uint8Array(encoded);
+}
+
+export interface UnencodableBig5ECharacter {
+  character: string;
+  codePoint: number;
+}
+
+export const UNRECOGNIZED_CHARACTER = "■";
+
+export function unencodableBig5ECharacters(value: string): UnencodableBig5ECharacter[] {
+  const characters = new Map<number, string>();
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint === undefined || codePoint < 0x80 || big5eEncodedCode(codePoint) !== undefined) {
+      continue;
+    }
+    characters.set(codePoint, character);
+  }
+  return [...characters].map(([codePoint, character]) => ({ character, codePoint }));
+}
+
+export function isPrivateUseCodePoint(codePoint: number): boolean {
+  return (codePoint >= 0xe000 && codePoint <= 0xf8ff)
+    || (codePoint >= 0xf0000 && codePoint <= 0xffffd)
+    || (codePoint >= 0x100000 && codePoint <= 0x10fffd);
+}
+
+export function privateUseCodePoints(value: string): number[] {
+  return [...new Set(
+    [...value]
+      .map((character) => character.codePointAt(0))
+      .filter((codePoint): codePoint is number => codePoint !== undefined && isPrivateUseCodePoint(codePoint)),
+  )];
 }

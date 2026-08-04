@@ -54,3 +54,40 @@
     background-image: none;
   }
 }
+
+.status-badge {
+  display: inline-flex;
+  min-height: 1.05rem;
+  align-items: center;
+  padding: 0 0.35rem;
+  border: var(--border-ui);
+  border-radius: var(--radius-pill);
+  color: var(--color-neutral-text);
+  background: var(--color-neutral-bg);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.status-badge[data-tone="info"] {
+  border-color: var(--color-info-border);
+  color: var(--color-info-text);
+  background: var(--color-info-bg);
+}
+
+.inline-action-link {
+  display: inline-block;
+  margin-top: 0.45rem;
+  color: var(--color-accent-text);
+  font-size: 0.85rem;
+  font-weight: 800;
+  text-underline-offset: 0.2em;
+}
+
+.notice-action {
+  min-height: var(--control-height-compact);
+  flex: none;
+  margin-left: auto;
+  padding: 0.35rem 0.8rem;
+}

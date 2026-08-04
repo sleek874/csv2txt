@@ -8,10 +8,12 @@ export interface FilePickerView {
     onFiles: (files: readonly File[]) => void;
   }): void;
   clear(): void;
-  clearError(): void;
+  clearMessage(): void;
+  confirmClear(): boolean;
   fileInput(): HTMLInputElement;
-  renderError(title: string, detail: string): void;
-  renderSummary(files: readonly WorkspaceItem[], sourceCount: number): void;
+  renderMessage(title: string, details: readonly string[], tone: "error" | "info"): void;
+  renderUndo(message: string, onUndo: () => void): void;
+  renderSummary(files: readonly WorkspaceItem[]): void;
   setProcessing(processing: boolean): void;
 }
 
@@ -19,15 +21,15 @@ export function createFilePickerView(root: HTMLElement): FilePickerView {
   const sourceInput = requireDescendant<HTMLInputElement>(root, "#source-file");
   const sourcePicker = requireDescendant<HTMLElement>(root, "#source-file-picker");
   const sourceName = requireDescendant<HTMLElement>(root, "#source-file-name");
-  const sourceMeta = requireDescendant<HTMLElement>(root, "#source-file-meta");
-  const sourceError = requireDescendant<HTMLElement>(root, "#source-file-error");
+  const sourceMessage = requireDescendant<HTMLElement>(root, "#source-file-message");
   const processingIndicator = requireDescendant<HTMLElement>(root, "#file-processing-indicator");
   const selectButton = requireDescendant<HTMLButtonElement>(root, "#select-source-button");
   const clearButton = requireDescendant<HTMLButtonElement>(root, "#clear-workspace-button");
 
-  function clearError(): void {
-    sourceError.hidden = true;
-    sourceError.replaceChildren();
+  function clearMessage(): void {
+    sourceMessage.hidden = true;
+    sourceMessage.replaceChildren();
+    sourceMessage.removeAttribute("role");
   }
 
   return {
@@ -43,36 +45,68 @@ export function createFilePickerView(root: HTMLElement): FilePickerView {
       });
     },
     clear() {
+      const restoreFocus = document.activeElement === clearButton;
       sourceInput.value = "";
-      sourceName.textContent = "工作區尚無檔案";
+      sourceName.textContent = "尚未加入檔案";
       sourceName.removeAttribute("title");
-      sourceMeta.textContent = "";
-      sourceMeta.hidden = true;
       sourcePicker.dataset.tone = "neutral";
       clearButton.disabled = true;
-      clearError();
+      clearMessage();
+      if (restoreFocus) selectButton.focus({ preventScroll: true });
     },
-    clearError,
+    clearMessage,
+    confirmClear: () => window.confirm(
+      "要清空檔案清單嗎？\n\n這只會移除目前頁面中的資料，不會變更電腦中的原始檔案。",
+    ),
     fileInput: () => sourceInput,
-    renderError(title, detail) {
-      sourcePicker.dataset.tone = "error";
+    renderMessage(title, details, tone) {
+      if (tone === "error") sourcePicker.dataset.tone = "error";
       const heading = document.createElement("strong");
       heading.textContent = title;
-      const description = document.createElement("span");
-      description.textContent = detail;
-      sourceError.replaceChildren(heading, description);
-      sourceError.hidden = false;
+      const list = document.createElement("ul");
+      for (const detail of details) {
+        const item = document.createElement("li");
+        item.textContent = detail;
+        list.append(item);
+      }
+      sourceMessage.classList.toggle("error-notice", tone === "error");
+      sourceMessage.classList.toggle("info-notice", tone === "info");
+      if (tone === "error") sourceMessage.setAttribute("role", "alert");
+      else sourceMessage.removeAttribute("role");
+      sourceMessage.replaceChildren(heading, list);
+      sourceMessage.hidden = false;
     },
-    renderSummary(files, sourceCount) {
-      const totalBytes = files.reduce((total, file) => total + file.size, 0);
+    renderUndo(message, onUndo) {
+      const text = document.createElement("span");
+      text.textContent = message;
+      const button = document.createElement("button");
+      button.className = "secondary-button notice-action";
+      button.type = "button";
+      button.textContent = "復原";
+      button.addEventListener("click", () => {
+        onUndo();
+        text.textContent = "已復原到清單。";
+        button.textContent = "已復原";
+        button.disabled = true;
+      }, { once: true });
+      sourceMessage.classList.remove("error-notice");
+      sourceMessage.classList.add("info-notice");
+      sourceMessage.removeAttribute("role");
+      sourceMessage.replaceChildren(text, button);
+      sourceMessage.hidden = false;
+    },
+    renderSummary(files) {
       const processing = files.some((file) => file.state === "processing");
       const errors = files.some((file) => file.state === "error");
-      sourceName.textContent = sourceCount === files.length
-        ? `${files.length} 個檔案`
-        : `${sourceCount} 個來源，${files.length} 個檔案`;
-      sourceMeta.hidden = false;
-      sourceMeta.textContent = `${totalBytes.toLocaleString("zh-Hant-TW")} bytes`;
-      sourcePicker.dataset.tone = processing ? "info" : errors ? "error" : "success";
+      const ignored = files.filter((file) => file.state === "ignored").length;
+      sourceName.textContent = processing
+        ? "正在處理檔案"
+        : errors
+          ? "有檔案需要查看"
+          : ignored > 0
+            ? "部分檔案未加入"
+            : "檔案已加入";
+      sourcePicker.dataset.tone = processing ? "info" : errors ? "error" : ignored > 0 ? "warning" : "success";
       clearButton.disabled = false;
     },
     setProcessing(processing) {

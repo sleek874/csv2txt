@@ -37,7 +37,7 @@ test("codec manager retries a transient spreadsheet import failure", async () =>
       if (imports === 1) throw new Error("temporary failure");
       return {
         parseSpreadsheet() {
-          return { rows: [["ok"]], errors: [], sheetName: "Sheet1" };
+          return { rows: [["ok"]], issues: [], sheetName: "Sheet1" };
         },
       };
     },
@@ -48,12 +48,12 @@ test("codec manager retries a transient spreadsheet import failure", async () =>
   assert.equal(imports, 2);
   assert.deepEqual((await manager.spreadsheet()).parseSpreadsheet(new Uint8Array(), 1), {
     rows: [["ok"]],
-    errors: [],
+    issues: [],
     sheetName: "Sheet1",
   });
 });
 
-test("CSV and Big5 codecs share the same managed prepare/get contract", async () => {
+test("CSV and BIG-5E codecs share the same managed prepare/get contract", async () => {
   const manager = createCodecManager();
   await Promise.all([manager.prepareOutput("csv"), manager.prepareOutput("big5-txt")]);
   assert.equal(typeof (await manager.csv()).serializeCsv, "function");

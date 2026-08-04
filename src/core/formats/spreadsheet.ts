@@ -105,18 +105,22 @@ export function parseSpreadsheet(
     rowLastColumns.set(position.r, Math.max(rowLastColumns.get(position.r) ?? 0, position.c));
   }
 
-  const errors: string[] = [];
+  const issues: ParsedSpreadsheet["issues"] = [];
   const rows = Array.from({ length: lastRow + 1 }, (_, rowIndex) => {
     const columnCount = Math.max(minimumColumnCount, (rowLastColumns.get(rowIndex) ?? 0) + 1);
     return Array.from({ length: columnCount }, (_, columnIndex) => {
       const address = utils.encode_cell({ r: rowIndex, c: columnIndex });
       const cell = sheet[address] as CellObject | undefined;
       if (cell?.f !== undefined && cell.v === undefined) {
-        errors.push(`Excel 儲存格 ${address} 的公式沒有已儲存的計算結果；請在試算表軟體中重新計算並儲存後再試。`);
+        issues.push({
+          message: `Excel 儲存格 ${address} 的公式沒有已儲存的計算結果；請在試算表軟體中重新計算並儲存後再試。`,
+          severity: "error",
+          sourceRow: rowIndex + 1,
+        });
       }
       return formattedCellValue(cell);
     });
   });
 
-  return { rows, errors, sheetName };
+  return { rows, issues, sheetName };
 }

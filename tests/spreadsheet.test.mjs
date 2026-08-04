@@ -17,7 +17,7 @@ test("creates an XLSX with text cells and no added header row", () => {
   const parsed = parseSpreadsheet(bytes, 3);
   assert.equal(parsed.sheetName, "資料");
   assert.deepEqual(parsed.rows, rows);
-  assert.deepEqual(parsed.errors, []);
+  assert.deepEqual(parsed.issues, []);
 });
 
 test("source type detection accepts supported single-file and ZIP inputs", () => {
@@ -67,5 +67,6 @@ test("preserves leading blank rows and reports formulas without cached results",
   const parsed = parseSpreadsheet(new Uint8Array(write(workbook, { type: "array", bookType: "xlsx" })), 15);
   assert.equal(parsed.rows.length, 2);
   assert.deepEqual(parsed.rows[0], Array(15).fill(""));
-  assert.match(parsed.errors[0] ?? "", /A2.*公式沒有已儲存的計算結果/u);
+  assert.match(parsed.issues[0]?.message ?? "", /A2.*公式沒有已儲存的計算結果/u);
+  assert.equal(parsed.issues[0]?.sourceRow, 2);
 });

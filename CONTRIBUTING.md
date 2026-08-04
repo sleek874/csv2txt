@@ -34,8 +34,16 @@ npm run verify
 
 `npm run verify` runs the Node test suite, TypeScript check, production build,
 and static build-contract verifier. Run `npm run generate:testdata` only when
-intentionally regenerating all six synthetic CSV/XLS/XLSX fixtures, then review
-the resulting fixture diff.
+intentionally regenerating the complete synthetic dataset, then review the
+resulting fixture diff and preserve CSV/TXT CRLF bytes.
+
+`src/core/big5e-mapping.ts` and `src/core/private-use-recovery-mapping.ts` are
+generated artifacts. Regenerate them only from the pinned official archive
+documented in `docs/BIG5E_MAPPING.md`, using its recorded SHA-256:
+
+```bash
+npm run generate:big5e-mapping -- /path/to/MapingTables.zip
+```
 
 Use `npm install` only when intentionally adding or updating dependencies, and
 commit the resulting `package-lock.json` change with `package.json`.
@@ -45,7 +53,7 @@ commit the resulting `package-lock.json` change with `package.json`.
 - Keep changes focused and explain user-visible behavior.
 - Add synthetic tests for conversion logic and regressions.
 - Never commit real or sensitive CSV/TXT data.
-- Include byte-level expected output for Big5 conversion changes.
+- Include byte-level expected output and official mapping provenance for BIG-5E conversion changes.
 - Update documentation when the fixed profile, validation, or output contract changes.
 - Verify that no runtime dependency sends network requests or telemetry.
 

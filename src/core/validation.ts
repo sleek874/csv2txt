@@ -1,4 +1,4 @@
-import { encodeBig5 } from "./encoding";
+import { privateUseCodePoints, unencodableBig5ECharacters } from "./encoding";
 import { FIXED_FIELDS } from "./fixed-profile";
 import {
   cellValue,
@@ -14,6 +14,9 @@ const TAIWAN_ID_LETTER_CODES: Readonly<Record<string, number>> = {
   Q: 24, R: 25, S: 26, T: 27, U: 28, V: 29, W: 32, X: 30,
   Y: 31, Z: 33,
 };
+
+const CHARACTER_REVIEW_MESSAGE = "請確認字元。";
+const CHARACTER_RECOVERY_FAILED_MESSAGE = "字元無法還原。";
 
 function issue(
   stage: IssueStage,
@@ -132,6 +135,9 @@ function validateCell(
   const value = stage === "source" ? cell.normalizedValue : cellValue(cell);
   const issues: DataIssue[] = [];
   const formatMatches = field.pattern.test(value);
+  const recoveredPrivateUse = stage === "final" && row.changes.some(
+    (change) => change.kind === "private-use-recovery" && change.fieldIndex === field.index,
+  );
 
   if (!formatMatches) {
     issues.push(issue(
@@ -148,15 +154,32 @@ function validateCell(
     return issues;
   }
 
-  const encoded = encodeBig5(value);
-  if (!encoded) {
-    issues.push(issue(stage, "error", "UNENCODABLE_BIG5", "含有 Big5 無法使用的字元。", row.sourceRow, field.index));
-  } else if (encoded.length > field.widthBytes) {
+  const privateUse = privateUseCodePoints(value);
+  if (stage === "source" && privateUse.length > 0) {
     issues.push(issue(
       stage,
-      "error",
-      "WIDTH_OVERFLOW",
-      `內容太長：目前 ${encoded.length} bytes，此欄最多 ${field.widthBytes} bytes。`,
+      "warning",
+      "PRIVATE_USE_CHARACTER",
+      "偵測到舊系統字元。",
+      row.sourceRow,
+      field.index,
+    ));
+  }
+
+  if (stage === "final" && (
+    privateUse.length > 0
+    || recoveredPrivateUse
+    || unencodableBig5ECharacters(value).length > 0
+  )) {
+    issues.push(issue(
+      stage,
+      privateUse.length > 0 ? "error" : "warning",
+      privateUse.length > 0
+        ? "PRIVATE_USE_REMAINS"
+        : recoveredPrivateUse
+          ? "PRIVATE_USE_RECOVERED"
+          : "CHARACTER_REVIEW_REQUIRED",
+      privateUse.length > 0 ? CHARACTER_RECOVERY_FAILED_MESSAGE : CHARACTER_REVIEW_MESSAGE,
       row.sourceRow,
       field.index,
     ));

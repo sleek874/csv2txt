@@ -2,7 +2,7 @@
 
 ## 1. 架構目標
 
-下一個主要版本保留已驗證的靜態頁面、離線、視覺與檔案轉換骨架，但不延伸舊 settings-first controller。新架構以共用內部表示為唯一工作區，讓所有輸入格式、批次 ZIP、驗證、自動修正、預覽與三種輸出共用同一條可測試資料管線。
+目前架構保留已驗證的靜態頁面、離線、視覺與檔案轉換骨架，不延伸已移除的 settings-first controller。共用內部表示是唯一工作區，讓所有輸入格式、批次 ZIP、驗證、自動修正、預覽與三種輸出共用同一條可測試資料管線。
 
 原則：
 
@@ -10,7 +10,7 @@
 - Input adapter 只解析，不執行隱藏的業務修正。
 - Validation 不直接產生 bytes 或 workbook。
 - Modification 必須留下 before/after 與 reason。
-- Serializer 只接受通過最終驗證的內部資料。
+- Serializer 只接受已勾選且通過所選 codec output gate 的內部資料。
 - Main entry 只負責組裝，不累積業務條件。
 - 模組以清楚責任為主，不建立大量只有一個 trivial function 的檔案。
 
@@ -27,6 +27,7 @@ File / ZIP
   -> explicit filters and modifications
   -> final validation
   -> batch output-format selection
+  -> selected-format output validation
   -> selected output adapter
   -> safe output paths
   -> ZIP writer
@@ -96,20 +97,21 @@ interface InternalCell {
 | 區域 | 責任 | 不應負責 |
 |---|---|---|
 | Fixed profile | 欄寬、regex、hook metadata、固定 modifier 宣告 | DOM、檔案讀取、ZIP |
-| Input adapters | CSV、Excel、Big5 TXT 解析為 logical rows | 補 TEL、下載、UI issue render |
-| Normalization | 移除空白、空白列、ID 大寫、來源列號 | 最終 byte padding |
+| Input adapters | CSV、Excel、BIG-5E TXT 解析為 logical rows | 補 TEL、下載、UI issue render |
+| Normalization | 移除空白、空白列 warning、ID 大寫、來源列號 | 最終 byte padding |
 | Validation | 欄位、日期、checksum、跨欄、severity | 直接修改值 |
-| Transformations | 明確列篩選與值自動修正、change log | 隱藏修正 validator error |
-| Output adapters | Big5 TXT bytes、UTF-8 CSV、XLSX workbook | Parser fallback、UI state |
+| Transformations | 明確列篩選、TEL 補值、舊系統字元還原與 change log | 隱藏修正 validator error、猜測未對照字元 |
+| Output validation | 所選格式的 mapping、byte 寬度與 blocking output issues | 改寫 primary IR、把 codec 限制當來源錯誤 |
+| Output adapters | BIG-5E TXT bytes、UTF-8 CSV、XLSX workbook | Parser fallback、UI state |
 | Advanced lookup | 參照 workbook、有序 join plan、match issue、整理後 workbook model | 改寫 primary IR、隱藏 fallback、阻擋 standard output |
 | Archive | ZIP inventory、quota、安全路徑、ZIP output | 欄位規則 |
 | Batch orchestration | Queue、取消、狀態聚合、資源需求、整批輸出選擇 | Validator 細節、DOM markup |
 | Views | Tree、summary、100-row page、issue popover | 解析、checksum、ZIP 解壓 |
 | Browser integration | File picker、download、unload guard、theme | Domain 規則 |
 
-## 5. 模組輪廓與本次重構
+## 5. 模組輪廓
 
-本次重構將格式 I/O、容器 I/O、資源生命週期與各 section UI 明確分層。只建立已有實際使用者的模組；進階輸出、資料夾節點與 worker 在對應契約確認前不建立空殼。
+格式 I/O、容器 I/O、資源生命週期與各 section UI 明確分層。只建立已有實際使用者的模組；進階輸出與 worker 在對應契約確認前不建立空殼。
 
 ```text
 src/
@@ -130,6 +132,10 @@ src/
     validation.ts
     transformations.ts
     encoding.ts
+    big5e-mapping.ts
+    private-use-recovery.ts
+    private-use-recovery-mapping.ts
+    output-validation.ts
     bytes.ts
     file-formats.ts
   app/
@@ -164,9 +170,9 @@ src/
     unload-guard.ts
 ```
 
-CSV、Big5 TXT 與 Spreadsheet 是三個 tabular codec，各自擁有 parse 與 serialize。ZIP 是 container codec，交換 archive entries 而非 logical rows，因此放在 `core/archive/`，也不成為 Section 2 dropdown 的第四種資料格式。
+CSV、BIG-5E TXT 與 Spreadsheet 是三個 tabular codec，各自擁有 parse 與 serialize。ZIP 是 container codec，交換 archive entries 而非 logical rows，因此放在 `core/archive/`，也不成為 Section 2 dropdown 的第四種資料格式。
 
-`src/main.ts` 只建立共享 model、resource manager、controllers 與 views，並連接頂層生命週期。每個 view 只查詢自己 section root 內的元素；跨 section 的檔案、列納入決策與整批輸出格式由 `workspace-model.ts` 保存。Section 2 的完整摘要與下載計畫由目前 snapshot 即時計算，不另存衍生狀態；頁碼、篩選、tooltip 與 disclosure 等純呈現狀態留在各 view。
+`src/main.ts` 只建立共享 model、resource manager、controllers 與 views，並連接頂層生命週期。每個 view 只查詢自己 section root 內的元素；跨 section 的檔案、列納入決策與整批輸出格式由 `workspace-model.ts` 保存。Section 1 的互斥 row outcome 與 Section 2 的 download problem 都由目前 snapshot 即時計算，不建立第二套 summary state；頁碼、篩選、tooltip 與 disclosure 等純呈現狀態留在各 view。
 
 Section 3 尚未實作，因此 `app/sections/advanced/` 與 `core/advanced/` 只記錄為已確認的未來邊界，不先建立空檔案或無作用控制。
 
@@ -215,7 +221,7 @@ Worker 保存 active batch 的內部表示，並以 request/response API 提供�
 由 `src/app/resources/codec-manager.ts` 保存單一 memoized spreadsheet codec promise 與 Excel manual chunk：
 
 - Inventory 或 parser 遇到 XLS/XLSX input 時載入 Excel。
-- CSV 或 Big5 TXT input 本身不載入 Excel。
+- CSV 或 BIG-5E TXT input 本身不載入 Excel。
 - 使用者選擇 XLSX output、實際需要建立 workbook 時載入 Excel。
 - Section 3 讀取 reference workbook 與產生 organized XLSX 時重用同一個 spreadsheet codec；Section 3 不直接 import SheetJS，也不建立第二套 Excel dependency。
 - Batch 中多個檔案共用同一個 module promise。
@@ -233,11 +239,15 @@ ZIP library 採獨立 lazy chunk，由 `codec-manager` 載入 `core/archive/zip.
 - `zip.ts` 同時提供安全 extract 與 serialize；path、depth、quota、symlink 與 collision 規則放在相鄰 policy 模組。
 - Standard output 只有一個檔案時直接回傳 tabular codec artifact；兩個以上才載入 ZIP writer，保留 virtual path，並以 output codec 與台北分鐘時間戳命名 archive。
 
-### CSV 與 Big5
+### CSV 與 BIG-5E
 
-- CSV codec 負責自動文字解碼、CSV parse，以及 UTF-8 BOM／CRLF／無標題列的 CSV serialize。
-- Big5 TXT codec 負責嚴格 Big5、208-byte records、padding 與 CRLF 的雙向 I/O。
-- 三個 tabular codecs 都由 resource manager 暴露一致的 prepare/get 生命週期，但不強迫採相同載入時機。CSV 很小且是常見路徑；Big5 encoding 是固定 profile validation 的必要能力；Spreadsheet 才維持真正的 on-demand heavy chunk。
+- CSV codec 負責自動文字解碼、CSV parse，以及 UTF-8 BOM／CRLF／無標題列的 literal-value CSV serialize。它保存最終 IR 值，不加入公式、apostrophe 或試算表專用 wrapper；需要可靠儲存格文字型別時使用 XLSX。
+- BIG-5E TXT codec 只使用本機固定的臺灣政府對照表，負責嚴格 BIG-5E、208-byte records、padding 與 CRLF 的雙向 I/O；不得呼叫 WHATWG／HKSCS decoder 作為 fallback。
+- `big5e-mapping.ts` 由 `scripts/generate-big5e-mapping.mjs` 從官方 CNS11643 對照表產生，組合 BIG5-2003 主表、符號、七個倚天外字與 BIG-5E，固定來源版本、SHA-256、筆數及一對一 byte／Unicode 關係。它只服務 BIG-5E input/output codec。
+- 同一產生器另建立 compact `private-use-recovery-mapping.ts`。它使用完整 CNS／Unicode 與官方 legacy code tables，將 CP950 PUA 位置收斂為唯一 formal Unicode；有歧義或沒有對照時不產生 recovery entry。
+- CSV／Spreadsheet IR 中的舊式 PUA 由 transformation 查詢 recovery-only table；成功留下 before／after change 與簡短 verification warning，未解決則保留原值並產生簡短 error。formal Unicode 沒有 BIG-5E output mapping 時使用同一個簡短 warning。
+- `output-validation.ts` 依 Section 2 選定格式檢查目前勾選列，結果由 Section 1 tree table 與 preview 呈現。BIG-5E mapping／byte 寬度問題成為 blocking output issues，並提供檔案、來源列、欄位及無對照 Unicode 明細；CSV／XLSX 目前不套用該 gate，output issues 也不寫回 IR。
+- 三個 tabular codecs 都由 resource manager 暴露一致的 prepare/get 生命週期，但不強迫採相同載入時機。CSV 很小且是常見路徑；Spreadsheet 維持 on-demand heavy chunk。
 
 ### Preview font
 
@@ -268,11 +278,11 @@ Build verifier 必須確認 manifest 與 group 一致、沒有遺漏 dynamic ass
 - 能以 lazy chunk 隔離，不擴大 base shell。
 - 有針對惡意輸入、資源上限與錯誤路徑的測試策略。
 
-未被當前 phase 使用的 dependency 不先加入。選定 ZIP library 後，應在 archive phase 與第一個使用者一起提交。
+未被目前功能使用的 dependency 不先加入。任何新 dependency 必須與第一個實際使用者、測試、離線資源分類及 third-party notice 一起提交。
 
 ## 10. Fresh-start policy
 
-下一版不提供：
+目前版本不提供：
 
 - Settings v3 parser 或 migration。
 - 舊 settings JSON upload/download。
@@ -282,8 +292,6 @@ Build verifier 必須確認 manifest 與 group 一致、沒有遺漏 dynamic ass
 
 舊 controller、markup、types、tests 與 static verifier assertions 已由新契約取代；不要恢復第二條 code path。
 
-目前 `agent/big5-txt-to-xlsx` 的價值是驗證既有核心能解析 Big5 TXT 並產生 XLSX；下一版會抽取可重用的 parser、writer、resource loader 與測試證據，而不是保留其頁面結構或方向模型。
-
 ## 11. Styles and accessibility
 
 保留現有全域 palette、spacing、border、shadow、responsive-grid、light/dark、reduced-motion 與穩定 layout 基礎。新增 UI 優先組合既有 token；只有跨兩個以上新 component 的共用模式才建立新 primitive。
@@ -292,9 +300,10 @@ Build verifier 必須確認 manifest 與 group 一致、沒有遺漏 dynamic ass
 
 - Foundation：tokens、reset、通用 layout、controls。
 - Rules disclosure：初始收合的固定 profile、regex 與可鍵盤開啟的 hook 說明。
-- Batch tree：tree/list、node state、selection。
-- Data page：15-column table、cell severity、pagination。
-- Standard output：summary、整批 output selector、download、file-level status。
+- Batch inventory：treegrid hierarchy、node state、selection、unread／ignored badge 與 subtree aggregation。
+- Data page：15-column table、互斥 row outcome、完整 issue/change tooltip、pagination。
+- Aggregated inventory：Section 1 單一表格顯示 input outcome、已選列數與目前格式 output problem；Section 2 不複製檔案摘要。
+- Standard output：整批 output selector、codec-specific problem、download、file-level status。
 - Advanced output：獨立 reference picker、lookup plan/result、organized XLSX download。
 
 Header readiness 使用共用 status indicator component。Component 擁有固定幾何、狀態色、文字 shimmer、`prefers-reduced-motion` 與 forced-colors fallback；readiness view 只提供 state 與文字。動畫不得被複製成另一套 section-specific CSS。
@@ -303,7 +312,7 @@ Live region 只宣告批次開始、完成、取消與目前選取檔案的重�
 
 ## 12. Verification ownership
 
-- Core tests：schema、normalization、validation、transformation、serializer。
+- Core tests：fixed profile、normalization、validation、transformation、mapping、serializer。
 - Archive tests：safe path、depth 5、quota、symlink、collision、nested ZIP。
 - Batch tests：decoder assignment、混合來源、filter、status aggregation、output selection、cancel stale work。
 - View tests：rules disclosure、priority、pagination 100、selection、issue disclosure、blocked download。
@@ -311,4 +320,4 @@ Live region 只宣告批次開始、完成、取消與目前選取檔案的重�
 - Build verifier：CSP、semantic shell、ARIA connections、manifest groups、base budget、obsolete settings residue。
 - Browser smoke：keyboard tree, focus/click popover, multi-file picker, download, offline reload。
 
-每個 phase 都執行 `npm run verify`，並對未能自動驗證的 browser 行為明確記錄限制。
+每次 release candidate 都執行 `npm run verify`，並對未能自動驗證的 browser 行為明確記錄限制。

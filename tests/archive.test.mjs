@@ -60,7 +60,11 @@ test("inspects and extracts supported entries while preserving virtual paths", a
   assert.equal(metadata[0]?.utf8Flag, false);
 
   const extraction = await extractZip("batch.zip", bytes);
-  assert.equal(extraction.skippedEntries, 1);
+  assert.deepEqual(extraction.skippedEntries, [{
+    relativePath: "folder/notes.md",
+    reason: "unsupported-type",
+    virtualPath: "batch/folder/notes.md",
+  }]);
   assert.deepEqual(extraction.files.map((file) => file.virtualPath), ["batch/folder/data.csv"]);
   assert.deepEqual(extraction.files.map((file) => file.relativePath), ["folder/data.csv"]);
   assert.equal(new TextDecoder().decode(extraction.files[0]?.bytes), "A,01");
@@ -138,4 +142,34 @@ test("rejects an archive with a tampered encrypted flag", () => {
     }
   }
   assert.equal(inspectZip(bytes)[0]?.encrypted, true);
+});
+
+test("safely skips symbolic links and unsupported extensions while keeping supported files", async () => {
+  const bytes = zipSync({
+    "accepted/data.csv": strToU8("A,01"),
+    "excluded/notes.md": strToU8("not a source file"),
+    "excluded/link.csv": [
+      strToU8("../accepted/data.csv"),
+      { attrs: 0o120777 << 16, os: 3 },
+    ],
+  });
+  const metadata = inspectZip(bytes);
+  assert.equal(metadata.find((entry) => entry.name === "excluded/link.csv")?.isSymlink, true);
+
+  const extraction = await extractZip("excluded-entries.zip", bytes);
+  assert.deepEqual(extraction.files.map((file) => file.virtualPath), [
+    "excluded-entries/accepted/data.csv",
+  ]);
+  assert.deepEqual(extraction.skippedEntries, [
+    {
+      relativePath: "excluded/notes.md",
+      reason: "unsupported-type",
+      virtualPath: "excluded-entries/excluded/notes.md",
+    },
+    {
+      relativePath: "excluded/link.csv",
+      reason: "symlink",
+      virtualPath: "excluded-entries/excluded/link.csv",
+    },
+  ]);
 });

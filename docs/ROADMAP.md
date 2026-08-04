@@ -1,171 +1,75 @@
-# 離線資料轉換 — 分階段更新計畫
+# 離線資料轉換 — 更新計畫
 
-## 原則
+## 維護原則
 
-- 以目前兩種 parser／writer 已個別驗證的分支骨架為起點，不單獨合併該驗證分支的方向式 UI。
-- 不維護舊設定、舊 DOM 或舊資料模型的相容層。
-- 每一 phase 都只引入有實際使用者的模組與 dependency。
-- 每一 phase 結束時，現存功能、測試、建置與離線資源契約必須可運作。
-- 全域樣式、resource priority、offline cache 與 static verifier 是保留資產，不重寫成平行系統。
+- Unicode 是唯一共用 IR；CSV、XLS、XLSX、BIG-5E TXT 與 ZIP 只在輸入／輸出邊界處理格式差異。
+- 臺灣政府舊資料使用明確的 BIG-5E profile，不以 WHATWG Big5、HKSCS 或其他 vendor mapping 靜默 fallback。
+- 不維護舊設定檔、方向式 UI、舊 DOM selector、舊 controller 或 schema migration 相容層。
+- 每次變更都必須保留 byte／CRLF、ZIP 安全、隱私、可及性、離線資源與 fail-closed batch output 契約。
+- 只加入已確認用途的功能與 dependency；Section 3 的政策未定前不建立假控制。
 
-## 目前進度
+## 已完成的主要版本
 
-- Phase 0 已完成。
-- Phase 1 的固定 profile、共用 IR、正規化、欄位／日期／身分證／跨欄驗證及欄位10明確自動修正已建立。
-- Phase 2 的四區靜態骨架、單一 picker、四種單檔 input adapter、共同 100-row 分頁預覽及兩種 output adapter 已建立。
-- Phase 3 的多檔追加、來源／資料夾／檔案樹、聚合狀態、整組或逐檔移除、鍵盤 navigation 與 stale-work cancellation 已建立。
-- Phase 4 的共同 15 欄預覽、狀態排序與篩選、100-row 分頁、逐列輸出決策、兩次驗證及欄位10明確自動修正已建立。
-- Phase 5 的 ZIP reader／writer、safe path、quota、nested ZIP、檔名 metadata／Unicode Path／CP950 fallback、整批完整摘要與 lazy archive chunk 已完成。
+### 固定資料與共用工作區
 
-### 已完成的責任重構
+- 固定 15 欄、208-byte profile 是唯一規格來源。
+- CSV、XLS、XLSX 與 BIG-5E TXT 進入相同的 normalization、來源驗證、明確 transformation、最終驗證與 row-selection 流程。
+- 四區 UI、100 列分頁、問題篩選、逐列輸出決策與目前篩選頁面的三態批次選取已完成。
+- 多檔追加、來源／資料夾／檔案 treegrid、移除／復原、未讀狀態與完整工作區聚合已完成。
 
-- 將 CSV、Big5 TXT 與 Spreadsheet 收斂為各自可讀可寫的 tabular codec。
-- 新增 CSV standard output，Section 2 改用原生 dropdown。
-- 將 ZIP 收斂為獨立可讀可寫的 container codec，並保留既有安全限制。
-- 以單一 resource manager 管理 codec 的 memoized prepare/get 與 offline resource priority。
-- 將原本同時管理 file picker、tree、preview 與 download 的大型 view/controller 拆成 section-scoped modules，加上一個共享 workspace model。
-- 抽出可重用 status indicator，保留既有 readiness text shimmer、固定尺寸與 reduced-motion fallback。
-- 保留已完成的 Section 0 lazy rules rendering 與目前欄位描述，不還原重複 HTML 規則表。
-- Section 3 繼續保持未開放，但明確規定未來重用同一 spreadsheet codec，而不是直接使用或重複載入 SheetJS。
+### 格式與批次輸出
 
-### 2026-08-04 本機 Lighthouse 診斷基準
+- CSV、BIG-5E TXT 與 Spreadsheet 各自由同一 codec 擁有 parse／serialize；ZIP 是獨立 container codec。
+- 單檔直接下載；多檔保留安全虛擬路徑並以臺北分鐘時間戳建立 ZIP。
+- 任何處理中／失敗檔案、檔案層級錯誤、零勾選列、output issue 或路徑碰撞都使整批輸出 fail closed。
+- CSV 輸出固定 UTF-8 BOM、CRLF、無標題列並保存 literal IR 值；需要可靠試算表文字型別時使用 XLSX。
 
-- 以 Node 24.18.0、Chrome 151.0.7922.71 與 Lighthouse 13.4.1 檢查當前正式建置根路徑，三次有效本機診斷的 Performance 為 95–97，Accessibility 為 100，Best Practices 為 100，SEO 為 92；修正主題初始化的同步 style read 後最新 Performance 為 96，且 forced reflow audit 已無項目。
-- 可及性與瀏覽器最佳實務沒有 Lighthouse 失敗項目；後續仍需以鍵盤、螢幕閱讀器、reduced-motion 與 forced-colors 實際流程補足自動審查邊界。
-- SEO 的 `robots.txt` 與 `llms.txt` 為 Lighthouse 檢索器受正式 `connect-src 'none'` CSP 阻擋，不是檔案返回失敗；直接 HTTP 檢查兩者皆為 200 與 `text/plain`。保留該 CSP，改由 build verifier 驗證 robots、sitemap 與 agent discovery 內容。
-- 目前最大的效能機會是 base main bundle 約 102 KiB 的未使用 JavaScript 估算；納入 Phase 6 以真實檔案的首次可用交互、離線預備與編解碼成本一併量測，不為單次分數拆分核心。
-- Lighthouse HTML、JSON、Chrome profile 與 log 只存於 repository 外的暫存目錄，不納入版本控制。
+### BIG-5E 與舊系統字元
 
-## Phase 0 — Foundation
+- BIG-5E codec 使用數位發展部 CNS11643 20260505 固定來源與 SHA-256，執行時完全離線。
+- 17,454 筆非 ASCII mapping 同時負責嚴格 decode／encode；所有 mapping 由測試逐筆 round-trip。
+- 4,107 筆 recovery-only mapping 只還原官方資料可唯一收斂的 CP950 PUA；未對照或歧義值保留原 code point 並要求人工確認。
+- BIG-5E mapping 與 byte 寬度是所選格式的 output gate，不改寫共用 Unicode IR，也不限制 CSV／XLSX 表示能力。
 
-本階段：
+### UI、離線與安全
 
-- 以「離線資料轉換」更新產品文件與 package metadata。
-- 固定 208-byte contract、批次 pipeline、內部表示與責任邊界。
-- 將舊 SITE_REVIEW 保留為歷史基準，而不是目標規格。
-- 檢查 dependency 狀態，只更新能通過完整驗證且有當前價值的項目。
-- 不改動目前可運作 UI 或轉換行為。
+- Section 1 以單一 treegrid 呈現資料、正確、錯誤、警告、已選列與目前格式輸出問題；Section 2 只保留格式、下載狀態與下載動作。
+- ZIP reader 限制巢狀深度、項目數、單檔／總展開量，拒絕 traversal、加密、symlink、ZIP64 與碰撞。
+- Excel、ZIP 與預覽字型維持 manifest-derived lazy resource group；正式 CSP 保持 connect-src 'none'。
+- 靜態 build verifier 持續檢查 semantic shell、ARIA reference、legacy residue、離線資源與 JavaScript budget。
 
-完成條件：
+## 發布前仍需確認
 
-- 文件沒有把未完成批次功能描述成已部署。
-- DESIGN、ARCHITECTURE 與 README 彼此一致。
-- `npm run verify` 通過。
+1. 由實際接收系統使用核准的去識別來源／輸出 pair，確認 BIG-5E bytes、padding、CRLF 與最後一筆 CRLF 均被接受。
+2. 在部署 origin 完成 service-worker 安裝、optional resource 預備、離線 reload 與更新恢復 smoke test。
+3. 以鍵盤、螢幕閱讀器、reduced-motion、forced-colors、深／淺色及真實窄螢幕走完整檔案、treegrid、tooltip、分頁與下載流程。
 
-## Phase 1 — Fixed profile and internal model
+## 下一階段
 
-- 建立單一固定 profile，取代 editable column/settings domain。
-- 建立共用 InternalFile、InternalRow、InternalCell 與 issue/change model。
-- 新增日期、臺灣身分證、欄位、跨欄與 TEL 規則測試。
-- 讓 CSV、XLS、XLSX 與 Big5 TXT adapter 都可產生相同內部表示。
-- 保留現有 UI 作為暫時 consumer，直到 Phase 2 一次替換。
+### 效能與 worker
 
-完成條件：
+- 先量測 250、1,200、6,000 列與接近 25 MiB 上限的代表性 CSV／XLS／XLSX／ZIP。
+- 只有在量測顯示主執行緒阻塞時，才將 archive、Excel、validation 與 serialization 移入單一有界 worker。
+- Worker 必須支援取消、stale-result 防護與可驗證的記憶體釋放；UI 只取得摘要及目前頁面。
 
-- 固定 15 欄與 208 bytes 只有一個 source of truth。
-- 所有來源共用 validation model，model 不含 conversion direction。
-- 不再從 runtime settings 決定欄寬或對齊。
+### Decoder 與來源診斷
 
-## Phase 2 — Fresh static workflow
+- 將 ASCII／推測 UTF-16 等低可信 decoder 結果轉成可見的檔案 issue。
+- 補足副檔名與容器內容不一致的直接測試與可採取行動的繁中訊息。
+- 不加入手動 encoding selector，也不因診斷功能恢復來源格式專用流程。
 
-- 網站顯示名稱改為「離線資料轉換」。
-- 移除設定檔 UI、column editor、global settings、local persistence 與舊 controller。
-- Section 0 改為初始收合、點擊展開的固定欄位規則；regex 可見，hook 支援 hover、focus 與觸控說明。
-- 以單一通用 file picker 取代方向 tabs；先接受 CSV、XLS、XLSX 與 Big5 TXT，Phase 5 由同一控制加入 ZIP。
-- 移除手動 encoding selector；decoder metadata 只在自動判定有 issue 時顯示。
-- Section 1 建立共用檔案選取、tree、IR 預覽、驗證與自動修正 shell；點選檔案顯示該檔摘要及 issue，輸入格式不改變版面。
-- Section 2 提供整批 Big5 TXT、UTF-8 CSV 或 XLSX 的輸出選擇與下載狀態。
-- Section 3 保留為進階輸出說明，不在 lookup contract 未定時建立無作用的 upload／mapping 控制。
-- 更新 static verifier，確認沒有 settings residue。
+### 進階 XLSX
 
-完成條件：
+實作 Section 3 前需另行確認 lookup key、worksheet、欄位 mapping、key normalization、重複／未命中 severity、跨檔合併、排序、輸出欄位、worksheet、檔名及 ZIP 包裝規則。已確認邊界：
 
-- 沒有舊 settings schema、migration 或 selector compatibility code。
-- 任一支援的單檔都進入相同工作流程，且可選擇任一輸出格式。
-- 全域視覺、離線與可及性基礎未退化。
+- Reference workbook 是 Section 3 專用輸入，不加入 Section 1 tree。
+- Lookup 只讀 final IR，不回寫標準 pipeline。
+- Reference／lookup error 不阻止 Section 2 標準輸出。
+- 預設輸出解析後的文字值；若要保留公式，必須成為獨立且明確的輸出契約。
 
-## Phase 3 — Batch inventory and file filtering
+## 不在目前範圍
 
-- File input 支援 multiple。
-- 建立 safe virtual path 與 file/archive/folder node model。
-- 自動辨識 CSV、XLS、XLSX 及 Big5 TXT adapter，所有支援 regular file 預設保留。
-- Tree 支援逐檔移除與全部清除；後續資料夾節點再加入聚合狀態與整組操作。
-- 建立 bounded processing queue、stale-work cancellation 與 file summary。
-- 以 synthetic loose files 驗證追加與移除；ZIP dependency 由已提出需求的 Phase 5 reader 一併加入。
-
-完成條件：
-
-- 多檔不共享或覆蓋 parser state。
-- Excluded file 不輸出並明確計數。
-- Tree 可鍵盤操作且不只使用顏色。
-
-## Phase 4 — Internal data table and transformations
-
-- 選取檔案後顯示 15-column internal representation。
-- 預設排序 error、warning、valid；同級依來源列號。
-- 每頁最多 100 rows，支援狀態與修改篩選。
-- Problem cell 以 hover、focus、touch 顯示 issue。
-- 建立 source validation → modification → final validation。
-- 將 `欄位10空值 → 0000000000` 移到來源與輸出格式無關的共用 transformation。
-
-完成條件：
-
-- Parser 與 writer 不再藏業務修正。
-- 每個 modified cell 有 before/after/reason。
-- Error／warning 列預設不輸出；預覽提供逐列核取方塊，明確勾選後可強制輸出。
-
-## Phase 5 — Recursive ZIP and packaged output
-
-- 加入經審查的 browser ZIP dependency 與 lazy archive chunk。
-- 支援 nested ZIP 與 virtual directory，深度上限 5。
-- 不跟隨 symlink；實作 safe path、quota、entry limit 與 collision error。
-- 依整批輸出選擇，將每個保留檔案序列化為 Big5 TXT、UTF-8 CSV 或 XLSX。
-- 輸出一個保留虛擬路徑的 ZIP；相同 stem 造成的輸出路徑碰撞必須報錯。
-- 更新 offline cache group 與 build verifier。
-
-完成條件：
-
-- 惡意路徑、symlink、depth、quota 與 collision 有直接測試。
-- ZIP dependency 不進入 base shell。
-- 任一 kept error 阻止完整 ZIP。
-
-## Phase 6 — Worker, performance and release hardening
-
-- 將 archive、Excel、validation 與 serialization 移入單一有界 worker service。
-- Main thread 只取得 tree summary 與目前 100-row page。
-- 量測代表性 batch 的記憶體、取消時間、互動延遲與 ZIP 產生時間。
-- 完成 keyboard、screen reader、mobile、reduced-motion、forced-colors、offline install/update smoke tests。
-- 更新部署文件、agent discovery 與 release notes。
-
-完成條件：
-
-- 大型 batch 不長時間阻塞 UI。
-- 取消不留下舊結果或未釋放 worker。
-- 部署版離線與動態資源行為有 browser evidence。
-
-## Deferred
-
-### PR #21 後優先工作
-
-1. 把 CSV decoder 的低可信判定轉成可見的檔案 issue，補足副檔名／內容 signature 衝突測試。
-2. 在 tree、整批 writer 與 page request contract 穩定後，再移入單一有界 worker，量測取消、記憶體與互動延遲。
-
-### Future phase — Advanced organized XLSX
-
-在實作前另行確認：
-
-- Section 1 的哪個欄位或複合欄位作為 lookup key。
-- 參照 workbook 的 worksheet 選擇、header／column mapping 及 key 正規化。
-- Exact match 規則、重複 key、未命中、空 key 與型別差異的 severity。
-- 對每個來源檔分別輸出或合併整批、輸出欄位／順序、排序、工作表及檔名。
-- 進階 XLSX 已定位為標準輸出之外的額外 artifact；待確認併入同一 ZIP 或另行下載。
-
-已確認的架構邊界：reference workbook 是 Section 3 專用輸入；lookup 只讀 final IR；不回寫 standard pipeline；預設輸出已解析值；reference／lookup error 不阻止 Section 2 標準輸出。若需保留 VLOOKUP 公式，必須另行明確定義。
-
-### Other deferred work
-
-- 使用者自訂 schema。
-- 部分成功檔案下載。
-- 任意 cell editor。
-- Server processing、帳號、同步或 telemetry。
-- 超過已驗證資源上限的超大型 ZIP。
+- 使用者自訂 schema、任意 cell editor、部分成功檔案下載。
+- 舊設定或舊 UI migration。
+- Server processing、帳號、同步、telemetry 或 runtime CDN。
+- 超過已驗證 ZIP／檔案資源上限的批次。

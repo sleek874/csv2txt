@@ -20,9 +20,15 @@ export interface ExtractedSourceFile {
   virtualPath: string;
 }
 
+export interface SkippedArchiveEntry {
+  relativePath: string;
+  reason: "symlink" | "unsupported-type";
+  virtualPath: string;
+}
+
 export interface ArchiveExtraction {
   files: ExtractedSourceFile[];
-  skippedEntries: number;
+  skippedEntries: SkippedArchiveEntry[];
 }
 
 export interface ArchiveOutputEntry {

@@ -209,19 +209,34 @@ h3 {
   justify-content: space-between;
 }
 
-.source-file-error {
-  align-items: flex-start;
+.source-file-message {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: start;
   margin-top: 0.75rem;
 }
 
-.source-file-error[hidden] {
+.source-file-message:has(.notice-action) {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.source-file-message[hidden] {
   display: none;
 }
 
-.source-file-error ul {
+.source-file-message strong {
+  white-space: nowrap;
+}
+
+.source-file-message ul {
   margin: 0;
   padding-left: 1.25rem;
   color: inherit;
+}
+
+.source-file-message li {
+  overflow-wrap: anywhere;
 }
 
 .file-status-copy {
@@ -273,18 +288,6 @@ h3 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.file-status-meta {
-  flex: none;
-  color: var(--color-text-muted);
-  font-size: 0.78rem;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.file-status-meta[hidden] {
-  display: none;
 }
 
 .source-file-picker[data-tone="info"] .file-status {
@@ -474,6 +477,15 @@ button:disabled {
     flex-direction: column;
   }
 
+  .source-file-message {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .source-file-message .notice-action {
+    width: 100%;
+    margin-left: 0;
+  }
+
   .schema-summary {
     width: 100%;
     flex-direction: column;
@@ -521,10 +533,6 @@ button:disabled {
     white-space: normal;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
-  }
-
-  .file-status-meta {
-    min-height: 1.2rem;
   }
 
   .file-processing-slot {
@@ -629,10 +637,6 @@ button:disabled {
   font-size: 0.82rem;
 }
 
-.workspace-empty {
-  margin-top: 1rem;
-}
-
 .coming-soon {
   margin: 0.75rem 0 0;
   color: var(--color-text-muted);
@@ -658,10 +662,6 @@ button:disabled {
 .output-format-control .help-text {
   grid-column: 3;
   margin: 0;
-}
-
-.output-summary-heading {
-  margin-top: 1.25rem;
 }
 
 @container panel (max-width: 36rem) {
@@ -691,21 +691,6 @@ button:disabled {
     padding: 1rem;
   }
 
-  .data-toolbar,
-  .filter-control,
-  .page-navigation {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .filter-control select {
-    width: 100%;
-  }
-
-  .page-actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 :where([hidden]) {

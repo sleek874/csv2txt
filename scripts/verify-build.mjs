@@ -34,6 +34,14 @@ const dataPreviewViewSource = readFileSync(
   new URL("../src/app/sections/input/data-preview-view.ts", import.meta.url),
   "utf8",
 );
+const encodingSource = readFileSync(
+  new URL("../src/core/encoding.ts", import.meta.url),
+  "utf8",
+);
+const outputValidationSource = readFileSync(
+  new URL("../src/core/output-validation.ts", import.meta.url),
+  "utf8",
+);
 const themeSource = readFileSync(
   new URL("../src/browser/theme.ts", import.meta.url),
   "utf8",
@@ -252,15 +260,16 @@ assert.doesNotMatch(
 assert.match(indexHtml, /<label for="output-format">輸出格式<\/label>/u);
 assert.match(
   indexHtml,
-  /<select id="output-format"[^>]*aria-describedby="output-format-help"[\s\S]*?<option value="big5-txt" selected>Big5 TXT<\/option>[\s\S]*?<option value="csv">CSV（UTF-8）<\/option>[\s\S]*?<option value="xlsx">XLSX<\/option>[\s\S]*?<\/select>/u,
+  /<select id="output-format"[^>]*aria-describedby="output-format-help"[\s\S]*?<option value="big5-txt" selected>TXT（BIG-5E）<\/option>[\s\S]*?<option value="csv">CSV（UTF-8）<\/option>[\s\S]*?<option value="xlsx">XLSX<\/option>[\s\S]*?<\/select>/u,
   "Output formats must use one native select and expose all three codecs.",
 );
 assert.doesNotMatch(indexHtml, /<input[^>]*name="output-format"|class="format-option"/u);
 assert.match(
   indexHtml,
-  /id="row-filter"[\s\S]*?value="modified"[\s\S]*?value="excluded"/u,
-  "The preview must expose both transformed and explicitly excluded row filters.",
+  /id="row-filter"[\s\S]*?value="warning"[\s\S]*?value="valid">正確<\/option>[\s\S]*?value="excluded">未選取<\/option>/u,
+  "The preview must expose the exclusive warning, output-ready, and excluded row filters.",
 );
+assert.doesNotMatch(indexHtml, /value="modified"|>自動修正<\/option>/u);
 assert.match(
   indexHtml,
   /id="data-page-status"[^>]*aria-live="polite"/u,
@@ -268,16 +277,67 @@ assert.match(
 );
 assert.match(
   indexHtml,
-  /<th scope="col">輸出<\/th>/u,
-  "The preview must expose the per-row output decision column.",
+  /class="row-output-heading" scope="col">[\s\S]*?class="row-output-control row-output-heading-control"[\s\S]*?<span>輸出<\/span>[\s\S]*?id="visible-rows-checkbox"[^>]*aria-label="選取目前篩選結果的本頁資料列"[^>]*disabled/u,
+  "The preview output header must expose a three-state current-page checkbox.",
+);
+assert.doesNotMatch(
+  indexHtml,
+  /select-all-rows-button|unselect-all-rows-button|全選本頁|取消本頁/u,
+  "Legacy bulk-action buttons must not duplicate the output-header checkbox.",
+);
+assert.match(
+  dataPreviewViewSource,
+  /visibleSourceRows = visibleRows\.map[\s\S]*?visibleRowsCheckbox\.indeterminate = selection\.indeterminate[\s\S]*?onVisibleRowsIncludedChange\(visibleSourceRows, visibleRowsCheckbox\.checked\)/u,
+  "Bulk selection must be limited to the current filter and page.",
+);
+assert.match(
+  dataPreviewViewSource,
+  /`第 \$\{currentPage \+ 1\} \/ \$\{pageCount\} 頁 · \$\{pageStart \+ 1\}–\$\{pageStart \+ visibleRows\.length\} \/ \$\{filteredRows\.length\} 列`/u,
+  "Preview pagination must use one concise page-and-range status line.",
+);
+assert.match(
+  dataPreviewViewSource,
+  /outputControl\.className = "row-output-control"[\s\S]*?outputControl\.append\(outputCheckbox\)[\s\S]*?outputCell\.append\(outputControl\)/u,
+  "Each preview output checkbox must use a cell-filling label target.",
+);
+assert.match(
+  encodingSource,
+  /export const UNRECOGNIZED_CHARACTER = "■"/u,
+  "Unrecognized characters must use one shared fullwidth-block marker.",
+);
+assert.match(
+  dataPreviewViewSource,
+  /isPrivateUseCodePoint\(codePoint\)[\s\S]*?\? UNRECOGNIZED_CHARACTER[\s\S]*?previewCellValue\(displayedValue\)/u,
+  "Preview masking must render unresolved private-use characters as fullwidth blocks.",
+);
+assert.match(
+  dataPreviewViewSource,
+  /previewChangeDetail[\s\S]*?previewCellValue\(change\.before\)[\s\S]*?row\.changes\.map\(previewChangeDetail\)/u,
+  "Hover correction details must mask unresolved private-use characters.",
+);
+assert.match(
+  outputValidationSource,
+  /\.map\(\(\{ codePoint \}\) => `「\$\{UNRECOGNIZED_CHARACTER\}」（\$\{unicodeLabel\(codePoint\)\}）`\)/u,
+  "BIG-5E output problems must mask unsupported Unicode while retaining its code point.",
+);
+assert.match(
+  dataPreviewViewSource,
+  /rowIssues\(row, file\)\.map\(issueDetail\)[\s\S]*?row\.changes\.map/u,
+  "An error-dominant row must retain every warning and correction in its detail box.",
+);
+assert.doesNotMatch(dataPreviewViewSource, /PRIVATE_USE_RECOVERED[\s\S]*?filter/u);
+assert.match(
+  indexHtml,
+  /<ul id="output-issue-list"[^>]*hidden><\/ul>/u,
+  "Section 2 must provide a dedicated list for detailed download problems.",
 );
 assert.doesNotMatch(indexHtml, /settings-file|settings-status|source-encoding|workflow-tab/u);
 assert.doesNotMatch(indexHtml, /正向轉換|反向轉換|全域設定|欄位設定/u);
 assert.doesNotMatch(indexHtml, /內部資料|adapter|pipeline|正規化/u);
 assert.match(
   indexHtml,
-  /id="file-tree"[^>]*role="tree"[^>]*aria-describedby="file-tree-help"/u,
-  "The batch file tree must expose keyboard guidance.",
+  /id="file-tree-table"[^>]*role="treegrid"[^>]*aria-describedby="file-tree-help"[\s\S]*?<tbody id="file-tree"><\/tbody>/u,
+  "The batch inventory tree-table must expose keyboard guidance.",
 );
 assert.match(indexHtml, /id="data-workspace"[^>]*\shidden(?:\s|>)/u);
 assert.match(indexHtml, /id="cell-tooltip"[^>]*role="tooltip"[^>]*hidden/u);
@@ -324,13 +384,19 @@ assert.match(
 );
 assert.match(
   indexHtml,
-  /id="file-status"[\s\S]*?id="source-file-name"[\s\S]*?id="source-file-meta"/u,
-  "Filename and file-size metadata must remain independently responsive.",
+  /id="file-status"[\s\S]*?id="source-file-name"[\s\S]*?class="file-processing-slot"/u,
+  "The friendly file status and stable processing slot must remain together.",
+);
+assert.doesNotMatch(indexHtml, /id="source-file-meta"/u, "The action area must not repeat file counts or total size.");
+assert.match(
+  indexHtml,
+  /id="clear-workspace-button"[^>]*>清空清單<\/button>/u,
+  "Clearing the in-memory workspace must be explicit.",
 );
 assert.match(
   indexHtml,
-  /id="clear-workspace-button"[^>]*>全部清除<\/button>/u,
-  "Clearing the in-memory workspace must be explicit.",
+  /id="mark-all-viewed-button"[\s\S]*?id="select-source-button"[\s\S]*?id="clear-workspace-button"/u,
+  "The optional mark-all-viewed action must appear before stable add and clear actions.",
 );
 assert.doesNotMatch(
   indexHtml,
@@ -344,19 +410,45 @@ assert.match(
 );
 assert.match(
   indexHtml,
-  /class="validation-summary responsive-grid"/u,
-  "Validation summaries must consume the shared responsive-grid primitive.",
+  /id="file-tree-table" class="inventory-table"[\s\S]*?<th scope="col">檔案<\/th><th scope="col">資料<\/th><th scope="col">正確<\/th><th scope="col">錯誤<\/th><th scope="col">警告<\/th><th scope="col">已選列數<\/th><th id="inventory-output-heading" scope="col">輸出問題<\/th><th scope="col">移除<\/th>[\s\S]*?id="file-tree-total"/u,
+  "Section 1 must own the aggregated hierarchy and output-problem summary.",
+);
+assert.doesNotMatch(
+  indexHtml,
+  /file-tree-pane|file-tree-count|file-tree-heading/u,
+  "The hierarchy must not be wrapped in a repeated sub-region or file-count heading.",
+);
+assert.doesNotMatch(
+  indexHtml,
+  /workspace-empty/u,
+  "The empty workspace must use the real blank tree instead of a placeholder notice.",
+);
+assert.doesNotMatch(
+  indexHtml,
+  /id="workspace-results"[^>]*\shidden/u,
+  "The working tree must remain visible when it contains zero files.",
+);
+assert.doesNotMatch(
+  resultStyles,
+  /\.file-tree-marker|\.file-tree-kind-icon/u,
+  "The hierarchy must rely on disclosure and indentation instead of decorative dots or icons.",
+);
+assert.doesNotMatch(indexHtml, /compact-summary|output-selected-summary|output-tree-summary/u);
+assert.match(
+  dataPreviewViewSource,
+  /label:\s*"正確",\s*tone:\s*"valid"/u,
+  "The preview row status must use the same correct-row label as its filter and summaries.",
 );
 assert.match(
   indexHtml,
-  /id="output-heading">輸出格式[\s\S]*?整個工作區所有檔案的完整摘要[\s\S]*?id="output-summary-heading">工作區完整摘要[\s\S]*?aria-labelledby="output-summary-heading"/u,
-  "Section 2 must identify its summary as the full workspace summary.",
+  /id="output-heading">輸出格式[\s\S]*?依下方提示處理後再下載[\s\S]*?id="output-format"[\s\S]*?id="output-problem-link"[^>]*href="#file-tree-table"/u,
+  "Section 2 must stay concise and link back to Section 1 problems.",
 );
 assert.match(
   indexHtml,
-  /id="source-file-error"[^>]*role="alert"[^>]*hidden/u,
+  /id="source-file-message"[^>]*hidden/u,
 );
-assert.doesNotMatch(indexHtml, /id="source-file-error"[^>]*tabindex=/u);
+assert.doesNotMatch(indexHtml, /id="source-file-message"[^>]*tabindex=/u);
 assert.match(
   indexHtml,
   /id="advanced-step"[\s\S]*?尚未開放[\s\S]*?<\/section>/u,
@@ -537,7 +629,7 @@ assert.match(
 );
 assert.match(
   dataPreviewViewSource,
-  /const FILTERABLE_ROW_STATES:[\s\S]*?function syncFilterOptions\(file: InternalFile\): void \{[\s\S]*?option\.disabled = !file\.rows\.some\(\(row\) => rowMatches\(row, filter\)\);[\s\S]*?rowFilter\.value = "all";/u,
+  /const FILTERABLE_ROW_STATES:[\s\S]*?function syncFilterOptions\(file: InternalFile, outputIssues: readonly OutputIssue\[\]\): void \{[\s\S]*?option\.disabled = !file\.rows\.some\(\(row\) => rowMatches\(row, file, outputIssues, filter\)\);[\s\S]*?rowFilter\.value = "all";/u,
   "Filters without matching rows must be disabled, with a safe fallback to all rows.",
 );
 assert.match(
@@ -664,7 +756,7 @@ assert.match(
   /\[[^\]]+\]\(https:\/\/[^)]+\)/u,
   "Agent discovery must provide at least one Markdown link.",
 );
-for (const capability of ["CSV", "Big5 TXT", "XLSX", "ZIP", "不會上傳"]) {
+for (const capability of ["CSV", "BIG-5E TXT", "XLSX", "ZIP", "不會上傳"]) {
   assert.ok(
     llmsTxt.includes(capability),
     `Agent discovery is missing a current capability or privacy statement: ${capability}`,
