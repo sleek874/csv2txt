@@ -103,7 +103,7 @@ interface InternalCell {
 | Transformations | 明確列篩選、TEL 補值、舊系統字元還原與 change log | 隱藏修正 validator error、猜測未對照字元 |
 | Output validation | 所選格式的 mapping、byte 寬度與 blocking output issues | 改寫 primary IR、把 codec 限制當來源錯誤 |
 | Output adapters | BIG-5E TXT bytes、UTF-8 CSV、XLSX workbook | Parser fallback、UI state |
-| Advanced lookup | 參照 workbook、有序 join plan、match issue、整理後 workbook model | 改寫 primary IR、隱藏 fallback、阻擋 standard output |
+| Advanced lookup | 勾選列投影、參照 workbook、逐列 left join、整理後 workbook model | 改寫 primary IR、因資料 issue／重複／未命中阻擋下載 |
 | Archive | ZIP inventory、quota、安全路徑、ZIP output | 欄位規則 |
 | Batch orchestration | Queue、取消、狀態聚合、資源需求、整批輸出選擇 | Validator 細節、DOM markup |
 | Views | Tree、summary、100-row page、issue popover | 解析、checksum、ZIP 解壓 |
@@ -111,7 +111,7 @@ interface InternalCell {
 
 ## 5. 模組輪廓
 
-格式 I/O、容器 I/O、資源生命週期與各 section UI 明確分層。只建立已有實際使用者的模組；進階輸出與 worker 在對應契約確認前不建立空殼。
+格式 I/O、容器 I/O、資源生命週期與各 section UI 明確分層。只建立已有實際使用者的模組；尚未確認的 worker 不建立空殼。
 
 ```text
 src/
@@ -125,6 +125,8 @@ src/
       types.ts
       policy.ts
       zip.ts
+    advanced/
+      lookup.ts
     fixed-profile.ts
     internal-model.ts
     conversion-pipeline.ts
@@ -152,9 +154,12 @@ src/
       output/output-controller.ts
       output/output-view.ts
       output/output-presentations.ts
+      advanced/advanced-controller.ts
+      advanced/advanced-view.ts
     adapters/
       input-adapter.ts
       output-adapter.ts
+      advanced-output-adapter.ts
     resources/
       codec-manager.ts
       resource-policy.ts
@@ -174,7 +179,7 @@ CSV、BIG-5E TXT 與 Spreadsheet 是三個 tabular codec，各自擁有 parse �
 
 `src/main.ts` 只建立共享 model、resource manager、controllers 與 views，並連接頂層生命週期。每個 view 只查詢自己 section root 內的元素；跨 section 的檔案、列納入決策與整批輸出格式由 `workspace-model.ts` 保存。Section 1 的互斥 row outcome 與 Section 2 的 download problem 都由目前 snapshot 即時計算，不建立第二套 summary state；頁碼、篩選、tooltip 與 disclosure 等純呈現狀態留在各 view。
 
-Section 3 尚未實作，因此 `app/sections/advanced/` 與 `core/advanced/` 只記錄為已確認的未來邊界，不先建立空檔案或無作用控制。
+Section 3 是沒有 error、warning 或 validation gate 的 minimal working model。`core/advanced/lookup.ts` 只負責勾選列投影（包括欄位8的 `1 → 男`、`2 → 女` mapping）與純資料 join；controller 保存 reference workbook、worksheet、key 與欄位選擇，view 只處理獨立 picker、mapping controls、摘要與下載。Reference duplicate 以 one-to-many 結果展開，未命中以空白參照值保留原列，兩者都不是 blocking issue。
 
 ## 6. Batch state
 

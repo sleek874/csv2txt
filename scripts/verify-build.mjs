@@ -451,8 +451,13 @@ assert.match(
 assert.doesNotMatch(indexHtml, /id="source-file-message"[^>]*tabindex=/u);
 assert.match(
   indexHtml,
+  /id="advanced-step"[\s\S]*?id="reference-file"[^>]*accept="\.xls,\.xlsx"[\s\S]*?id="reference-key-column"[\s\S]*?id="reference-column-options"[\s\S]*?id="advanced-download-button"[\s\S]*?<\/section>/u,
+  "Section 3 must expose its separate reference picker, lookup mapping, and XLSX download.",
+);
+assert.doesNotMatch(
+  indexHtml,
   /id="advanced-step"[\s\S]*?尚未開放[\s\S]*?<\/section>/u,
-  "The deferred advanced section must explain its state without fake controls.",
+  "The implemented advanced section must not retain the deferred placeholder.",
 );
 const baseCss = precachePaths
   .filter((path) => path.endsWith(".css"))

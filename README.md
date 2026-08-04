@@ -11,7 +11,7 @@
 - 多檔案與遞迴 ZIP 批次處理
 - 唯讀規格預覽、逐檔狀態清單、分頁式內部資料預覽
 - 驗證後的明確篩選與自動修正，再進行最終驗證及輸出
-- 預留獨立的進階 XLSX 整理流程，以額外參照 workbook 對最終資料執行明確 lookup
+- 獨立的進階 XLSX 整理流程，以額外參照 Excel 對勾選資料逐列 lookup
 
 所有來源內容、內部資料、驗證結果與輸出都只保留在目前瀏覽器記憶體中，不會上傳至伺服器。
 
@@ -32,6 +32,7 @@
 - Section 2 只保留整批格式選擇、簡短下載狀態與下載按鈕；目前格式問題在 Section 1 表格與預覽查看。BIG-5E TXT 以官方 BIG5-2003＋BIG-5E 對照及 byte 寬度檢查勾選列。
 - 本機處理、CSP、iframe 防護與離線快取。
 - Excel 程式碼與預覽字型的延遲載入。
+- Section 3 可另選一個有標題列的 Excel，以欄位11查詢使用者選定的參照欄、加入指定欄位，並下載單一整理後 XLSX；重複與未命中不阻止下載。
 - 已驗證的全域視覺、響應式與可及性基礎。
 
 舊設定檔、舊設定 schema、方向 tabs 與相容層已從這個基礎工作區移除。後續功能依 [roadmap](docs/ROADMAP.md) 增加，且每個階段都必須維持建置、測試與目前可用流程正常。
@@ -52,9 +53,9 @@
 0. 以預設收合、可展開的清單檢視固定欄位規則。
 1. 可重複選擇多個來源並追加至同一工作區；一般檔案位於頂層，ZIP 以可折疊 archive／folder／file tree table 保留安全相對路徑，點選檔案或問題數字後檢視共同 IR。
 2. 為整個工作區選擇 TXT（BIG-5E）、CSV（UTF-8）或 XLSX；單一檔案直接下載，多個檔案以輸出 codec 與台北時間命名 ZIP，並保留安全目錄結構。
-3. 未來可選擇額外參照 Excel，對已驗證 IR 執行明確 lookup，產生另一份整理後 XLSX。
+3. 另選一個有標題列的 XLS／XLSX，選擇工作表、欄位11要查詢的參照欄及要附加的欄位，將所有勾選列合併為 `進階輸出-YYYYMMDDHHmm.xlsx`。每一列獨立處理；重複的 primary row 保留，reference key 多筆命中時展開為多列，未命中時保留 primary row 並填入空白參照值。
 
-Section 3 的 lookup key、參照 worksheet、重複／未命中規則、輸出欄位與檔名仍待確認；目前只顯示不可操作的未開放說明。
+> **Section 3 是最小可運作模型（minimal working model）。** 它沒有 error、warning 或 validation gate；所有勾選列都會逐列處理，資料問題、重複與未命中不會阻止下載。欄位8只做輸出 mapping：`1 → 男`、`2 → 女`，其他值原樣保留。
 
 架構責任、內部表示與資源載入邊界見 [architecture](docs/ARCHITECTURE.md)。
 

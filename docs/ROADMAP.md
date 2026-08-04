@@ -6,7 +6,7 @@
 - 臺灣政府舊資料使用明確的 BIG-5E profile，不以 WHATWG Big5、HKSCS 或其他 vendor mapping 靜默 fallback。
 - 不維護舊設定檔、方向式 UI、舊 DOM selector、舊 controller 或 schema migration 相容層。
 - 每次變更都必須保留 byte／CRLF、ZIP 安全、隱私、可及性、離線資源與 fail-closed batch output 契約。
-- 只加入已確認用途的功能與 dependency；Section 3 的政策未定前不建立假控制。
+- 只加入已確認用途的功能與 dependency；未確認用途不建立假控制。
 
 ## 已完成的主要版本
 
@@ -60,12 +60,13 @@
 
 ### 進階 XLSX
 
-實作 Section 3 前需另行確認 lookup key、worksheet、欄位 mapping、key normalization、重複／未命中 severity、跨檔合併、排序、輸出欄位、worksheet、檔名及 ZIP 包裝規則。已確認邊界：
+Section 3 已完成：
 
-- Reference workbook 是 Section 3 專用輸入，不加入 Section 1 tree。
-- Lookup 只讀 final IR，不回寫標準 pipeline。
-- Reference／lookup error 不阻止 Section 2 標準輸出。
-- 預設輸出解析後的文字值；若要保留公式，必須成為獨立且明確的輸出契約。
+- Reference workbook 是 Section 3 專用的單一 XLS／XLSX，不加入 Section 1 tree。
+- Lookup 只讀所有勾選列的 final value，不回寫標準 pipeline。
+- 使用者選擇 worksheet、reference key 與要加入的欄位；primary 欄位11以 trim＋大寫比對。
+- Primary duplicates 逐列保留；reference duplicates 展開為多筆；未命中保留原列並填入空白參照值。這些資料 issue 不阻止下載或 Section 2 標準輸出。
+- 結果以解析後文字值輸出為單一 `進階輸出-YYYYMMDDHHmm.xlsx`，不保留公式、不打包 ZIP。
 
 ## 不在目前範圍
 

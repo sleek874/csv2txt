@@ -23,9 +23,31 @@ export interface WorkbookSummary {
   sheetNames: readonly string[];
 }
 
+export interface HeaderedSpreadsheet extends ParsedRows {
+  headers: readonly string[];
+  sheetName: string;
+}
+
 export function serializeSpreadsheet(rows: readonly SerializableRow[]): Uint8Array {
   const sheet = utils.aoa_to_sheet(rows.map((row) => [...row.values]));
   const workbook = utils.book_new(sheet, "資料");
+  return new Uint8Array(write(workbook, {
+    type: "array",
+    bookType: "xlsx",
+    compression: true,
+  }));
+}
+
+export function serializeHeaderedSpreadsheet(
+  headers: readonly string[],
+  rows: readonly (readonly string[])[],
+  sheetName = "整理結果",
+): Uint8Array {
+  const sheet = utils.aoa_to_sheet([
+    [...headers],
+    ...rows.map((row) => [...row]),
+  ]);
+  const workbook = utils.book_new(sheet, sheetName);
   return new Uint8Array(write(workbook, {
     type: "array",
     bookType: "xlsx",
@@ -123,4 +145,65 @@ export function parseSpreadsheet(
   });
 
   return { rows, issues, sheetName };
+}
+
+function uniqueHeaders(rawHeaders: readonly string[], columnCount: number): {
+  headers: string[];
+  issues: ParsedRows["issues"];
+} {
+  const headers: string[] = [];
+  const issues: ParsedRows["issues"] = [];
+  const used = new Set<string>();
+
+  for (let columnIndex = 0; columnIndex < columnCount; columnIndex += 1) {
+    const rawHeader = rawHeaders[columnIndex]?.trim() ?? "";
+    const baseHeader = rawHeader || `未命名欄${columnIndex + 1}`;
+    let header = baseHeader;
+    let suffix = 2;
+    while (used.has(header)) {
+      header = `${baseHeader}（${suffix}）`;
+      suffix += 1;
+    }
+    if (!rawHeader) {
+      issues.push({
+        message: `第 ${columnIndex + 1} 欄沒有標題，已使用「${header}」。`,
+        severity: "warning",
+        sourceRow: 1,
+      });
+    } else if (header !== rawHeader) {
+      issues.push({
+        message: `標題「${rawHeader}」重複，已將這一欄命名為「${header}」。`,
+        severity: "warning",
+        sourceRow: 1,
+      });
+    }
+    headers.push(header);
+    used.add(header);
+  }
+
+  return { headers, issues };
+}
+
+export function parseHeaderedSpreadsheet(
+  bytes: Uint8Array,
+  requestedSheetName?: string,
+): HeaderedSpreadsheet {
+  const parsed = parseSpreadsheet(bytes, 1, requestedSheetName);
+  const rawHeaders = parsed.rows[0] ?? [];
+  const dataRows = parsed.rows.slice(1);
+  const columnCount = Math.max(
+    rawHeaders.length,
+    ...dataRows.map((row) => row.length),
+  );
+  const { headers, issues } = uniqueHeaders(rawHeaders, columnCount);
+  const rows = dataRows
+    .filter((row) => row.some((value) => value !== ""))
+    .map((row) => Array.from({ length: columnCount }, (_, index) => row[index] ?? ""));
+
+  return {
+    headers,
+    issues: [...parsed.issues, ...issues],
+    rows,
+    sheetName: parsed.sheetName,
+  };
 }

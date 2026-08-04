@@ -1,9 +1,9 @@
 export interface UnloadGuard {
-  setPendingFile(pending: boolean): void;
+  setPendingFile(pending: boolean, owner?: string): void;
 }
 
 export function createUnloadGuard(): UnloadGuard {
-  let hasPendingFile = false;
+  const pendingOwners = new Set<string>();
 
   function handleBeforeUnload(event: BeforeUnloadEvent): void {
     event.preventDefault();
@@ -11,15 +11,16 @@ export function createUnloadGuard(): UnloadGuard {
   }
 
   function syncBeforeUnload(): void {
-    if (hasPendingFile) {
+    if (pendingOwners.size > 0) {
       window.addEventListener("beforeunload", handleBeforeUnload);
     } else {
       window.removeEventListener("beforeunload", handleBeforeUnload);
     }
   }
 
-  function setPendingFile(pending: boolean): void {
-    hasPendingFile = pending;
+  function setPendingFile(pending: boolean, owner = "default"): void {
+    if (pending) pendingOwners.add(owner);
+    else pendingOwners.delete(owner);
     syncBeforeUnload();
   }
 

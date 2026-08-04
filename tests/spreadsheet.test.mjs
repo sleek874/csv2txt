@@ -6,7 +6,9 @@ import { utils, write } from "xlsx";
 import { detectInputFileType, detectSourceFileType } from "../src/core/file-formats.ts";
 import {
   inspectSpreadsheet,
+  parseHeaderedSpreadsheet,
   parseSpreadsheet,
+  serializeHeaderedSpreadsheet,
   serializeSpreadsheet,
 } from "../src/core/formats/spreadsheet.ts";
 
@@ -50,13 +52,47 @@ for (const bookType of ["xlsx", "biff8"]) {
   });
 }
 
-test("supports explicit worksheet selection for future reference workbooks", () => {
+test("supports explicit worksheet selection for reference workbooks", () => {
   const workbook = utils.book_new();
   utils.book_append_sheet(workbook, utils.aoa_to_sheet([["first"]]), "First");
   utils.book_append_sheet(workbook, utils.aoa_to_sheet([["second"]]), "Reference");
   const bytes = new Uint8Array(write(workbook, { type: "array", bookType: "xlsx" }));
   assert.deepEqual(inspectSpreadsheet(bytes).sheetNames, ["First", "Reference"]);
   assert.deepEqual(parseSpreadsheet(bytes, 1, "Reference").rows, [["second"]]);
+});
+
+test("parses a header row into unique non-blocking reference column names", () => {
+  const sheet = utils.aoa_to_sheet([
+    ["ID", "ID", ""],
+    ["A123", "first", "001"],
+    ["", "", ""],
+    ["B456", "second", "002"],
+  ]);
+  const workbook = utils.book_new(sheet, "Reference");
+  const bytes = new Uint8Array(write(workbook, { type: "array", bookType: "xlsx" }));
+  const parsed = parseHeaderedSpreadsheet(bytes);
+
+  assert.equal(parsed.sheetName, "Reference");
+  assert.deepEqual(parsed.headers, ["ID", "ID（2）", "未命名欄3"]);
+  assert.deepEqual(parsed.rows, [
+    ["A123", "first", "001"],
+    ["B456", "second", "002"],
+  ]);
+  assert.equal(parsed.issues.length, 2);
+  assert.ok(parsed.issues.every((issue) => issue.severity === "warning"));
+});
+
+test("serializes an arbitrary headered organized workbook", () => {
+  const bytes = serializeHeaderedSpreadsheet(
+    ["欄位5", "參照值"],
+    [["00123", "甲"], ["00002", "乙"]],
+  );
+  assert.deepEqual(inspectSpreadsheet(bytes).sheetNames, ["整理結果"]);
+  assert.deepEqual(parseSpreadsheet(bytes, 2).rows, [
+    ["欄位5", "參照值"],
+    ["00123", "甲"],
+    ["00002", "乙"],
+  ]);
 });
 
 test("preserves leading blank rows and reports formulas without cached results", () => {

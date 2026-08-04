@@ -28,7 +28,7 @@ File／ZIP 依序經過 safe inventory 與 virtual path、format adapter、norma
 
 ## UI 與可及性
 
-- 四區順序、原生 rules disclosure、單一 multiple picker、treegrid、100-row preview、三態 page-scoped selection、原生 output select 與未開放 Section 3 都存在於正式 DOM。
+- 四區順序、原生 rules disclosure、單一 multiple picker、treegrid、100-row preview、三態 page-scoped selection、原生 output select 與獨立的 Section 3 reference picker／mapping controls 都存在於正式 DOM。
 - Section 1 合併來源結果、選取列與目前格式 output issue；Section 2 不再複製完整摘要。
 - 移除與清空 copy 明確表示只影響頁面記憶體；ZIP 內 symlink 對使用者顯示為「捷徑」。
 - 問題 detail 支援 hover、focus 與 click；大量 table body 不作為 live region，只有事件型狀態使用安靜的 polite announcement。

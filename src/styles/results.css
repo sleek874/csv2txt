@@ -625,3 +625,102 @@
   color: var(--color-text-muted);
   font-size: 0.82rem;
 }
+
+.advanced-workspace {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.reference-file-picker {
+  margin-top: 0;
+}
+
+.advanced-config {
+  --responsive-column-min: 15rem;
+}
+
+.advanced-field {
+  display: grid;
+  align-content: start;
+  gap: 0.4rem;
+  color: var(--color-text-muted);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.advanced-field select {
+  min-height: var(--control-height);
+}
+
+.advanced-field[hidden] {
+  display: none;
+}
+
+.advanced-columns {
+  min-width: 0;
+  margin: 1rem 0 0;
+  padding: 1rem;
+  border: var(--border-ui);
+  border-radius: var(--radius-ui);
+}
+
+.advanced-columns legend {
+  padding: 0 0.35rem;
+  font-weight: 800;
+}
+
+.advanced-columns .help-text {
+  margin-bottom: 0.75rem;
+}
+
+.advanced-column-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: 0.5rem;
+}
+
+.advanced-column-option {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.55rem 0.65rem;
+  border: var(--border-ui);
+  border-radius: var(--radius-ui);
+  background: var(--color-surface-soft);
+  cursor: pointer;
+}
+
+.advanced-column-option:hover {
+  border-color: var(--color-accent-border);
+  background: var(--color-accent-bg);
+}
+
+.advanced-column-option input {
+  flex: none;
+  margin-top: 0.15rem;
+}
+
+.advanced-column-option span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.advanced-summary {
+  margin: 0.85rem 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+@container panel (max-width: 36rem) {
+  .advanced-workspace .download-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .advanced-workspace .download-bar button {
+    width: 100%;
+  }
+}

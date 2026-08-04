@@ -230,15 +230,19 @@ ZIP 與資料夾依子節點聚合嚴重程度：`error > warning > valid`。錯
 
 ### Section 3 — 進階輸出
 
-本區預留一條獨立的進階 XLSX 整理流程。初步邊界如下：
+本區提供一條獨立的進階 XLSX 整理流程：
+
+Section 3 明確是最小可運作模型（minimal working model），沒有 error、warning 或 validation gate。只要來源解析完成、至少有一列已勾選且參照 workbook 可讀，就允許下載；任何逐列資料問題、重複或未命中都不形成 gate。
 
 - 使用者在本區另選一個參照 Excel workbook；它不是 Section 1 的批次來源，不加入來源檔案樹。
-- 進階流程只讀取已通過最終驗證的 IR，不回寫或改變 Section 1／2 的資料、issue 或標準輸出。
-- 實作時以有順序的一個或多個 join／lookup step 執行；預設輸出已解析值。若需要在 workbook 中保留 VLOOKUP 公式，另行定義為明確輸出選項。
-- 目標是產生另一份整理後 XLSX，並保留 lookup 摘要、未命中、重複 key 與變更資訊供檢視。
-- Primary batch 有 error 時進階輸出不可執行；reference／lookup error 只阻止進階 XLSX，不阻止 Section 2 的標準輸出。
+- 第一列作為 header；空白 header 以欄序補名，重複 header 以序號區分。多工作表 workbook 由使用者選擇一張。
+- 進階流程只讀取目前所有勾選列的 final value，不回寫或改變 Section 1／2 的資料、issue 或標準輸出。
+- 每列先輸出欄位5、欄位6、台北目前年份減欄位6年份所得的約略年齡，以及欄位7至欄位12。欄位8在此輸出投影中套用 `1 → 男`、`2 → 女`，其他值原樣保留；Primary row 不依欄位5去重。
+- 使用者選擇 reference key 欄與要附加的 reference 欄。Primary 欄位11與 reference key 都以 trim＋大寫後比對。
+- 每個 primary row 獨立執行 left join。Reference key 多筆命中時依 reference row order 展開為多列；未命中時仍保留 primary row，附加欄位填空白。
+- Primary／reference 資料 issue、重複與未命中只顯示摘要，不阻止進階下載；只有來源仍在解析、沒有勾選列或 reference workbook 無法解析時不能建立結果。
+- 輸出單一 `進階輸出-YYYYMMDDHHmm.xlsx`，worksheet 名稱為 `整理結果`，時間使用 `Asia/Taipei`。
 - 參照 workbook 與 lookup 結果同樣只保留在目前瀏覽器記憶體中。
-- 在 lookup key、參照 worksheet、比對正規化、重複值、未命中 severity、輸出欄位／順序、跨檔合併、worksheet 及檔名規則確認前，本區只列為未實作能力，不顯示可操作但無作用的控制。
 
 ## 11. 輸出
 

@@ -229,10 +229,54 @@
             <span aria-hidden="true">3</span>
             <div>
               <h2 id="advanced-heading">進階輸出</h2>
-              <p class="help-text">整理後 XLSX。</p>
+              <p class="help-text">以欄位11查詢參照 Excel，產生整理後 XLSX。</p>
             </div>
           </div>
-          <p class="coming-soon">功能尚未開放。</p>
+
+          <div class="advanced-workspace">
+            <div id="reference-file-picker" class="file-picker reference-file-picker" data-tone="neutral">
+              <div class="file-status-copy">
+                <span id="reference-file-name" class="file-status-name">尚未選擇參照 Excel</span>
+                <p class="help-text">第一列作為欄位標題；檔案只在目前瀏覽器記憶體中處理。</p>
+              </div>
+              <div class="file-picker-actions">
+                <button id="select-reference-button" class="primary-button" type="button">選擇 Excel</button>
+                <button id="clear-reference-button" class="secondary-button" type="button" disabled>移除</button>
+              </div>
+              <input id="reference-file" type="file" accept=".xls,.xlsx" hidden />
+            </div>
+
+            <div id="reference-message" class="notice error-notice" hidden></div>
+
+            <div id="advanced-controls" hidden>
+              <div class="advanced-config responsive-grid">
+                <label id="reference-sheet-control" class="advanced-field" for="reference-sheet">
+                  <span>參照工作表</span>
+                  <select id="reference-sheet"></select>
+                </label>
+                <label class="advanced-field" for="reference-key-column">
+                  <span>用欄位11查詢</span>
+                  <select id="reference-key-column"></select>
+                </label>
+              </div>
+
+              <fieldset class="advanced-columns">
+                <legend>加入輸出的參照欄位</legend>
+                <p class="help-text">預設加入查詢欄以外的全部欄位；可依需要取消。</p>
+                <div id="reference-column-options" class="advanced-column-options"></div>
+              </fieldset>
+
+              <p id="advanced-summary" class="advanced-summary">0 列已勾選。</p>
+
+              <div class="download-bar">
+                <div>
+                  <strong id="advanced-download-title">尚未準備進階輸出</strong>
+                  <span id="advanced-download-detail">請先選擇參照 Excel。</span>
+                </div>
+                <button id="advanced-download-button" class="primary-button" type="button" disabled>下載進階 XLSX</button>
+              </div>
+            </div>
+          </div>
         </section>
 
         <p id="app-status" class="visually-hidden" role="status" aria-live="polite"></p>

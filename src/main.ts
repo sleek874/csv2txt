@@ -1,6 +1,9 @@
 import { createInputAdapter } from "./app/adapters/input-adapter";
+import { createAdvancedOutputAdapter } from "./app/adapters/advanced-output-adapter";
 import { createOutputAdapter } from "./app/adapters/output-adapter";
 import { createCodecManager } from "./app/resources/codec-manager";
+import { createAdvancedController } from "./app/sections/advanced/advanced-controller";
+import { createAdvancedView } from "./app/sections/advanced/advanced-view";
 import { createInputController } from "./app/sections/input/input-controller";
 import { createInputSectionView } from "./app/sections/input/input-section-view";
 import { createOutputController } from "./app/sections/output/output-controller";
@@ -21,6 +24,7 @@ const offlineCache = createOfflineCache({
 const codecs = createCodecManager();
 const model = createWorkspaceModel();
 const status = createAppStatus();
+const unloadGuard = createUnloadGuard();
 
 bindRulesView();
 
@@ -30,7 +34,7 @@ const inputController = createInputController({
   model,
   offlineCache,
   status,
-  unloadGuard: createUnloadGuard(),
+  unloadGuard,
   view: createInputSectionView(),
 });
 const outputController = createOutputController({
@@ -40,7 +44,15 @@ const outputController = createOutputController({
   status,
   view: createOutputView(),
 });
+const advancedController = createAdvancedController({
+  model,
+  outputAdapter: createAdvancedOutputAdapter(codecs),
+  status,
+  unloadGuard,
+  view: createAdvancedView(),
+});
 
 inputController.bind();
 outputController.bind();
+advancedController.bind();
 void offlineCache.prepareOfflineUse();

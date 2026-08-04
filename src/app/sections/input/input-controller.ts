@@ -68,7 +68,10 @@ export function createInputController(options: InputControllerOptions) {
   function render(): void {
     const snapshot = options.model.snapshot();
     options.view.render(snapshot, pendingArchiveCount);
-    options.unloadGuard.setPendingFile(snapshot.sources.length > 0 || pendingArchiveCount > 0);
+    options.unloadGuard.setPendingFile(
+      snapshot.sources.length > 0 || pendingArchiveCount > 0,
+      "primary-workspace",
+    );
   }
 
   function rejectedEntry(
@@ -334,7 +337,7 @@ export function createInputController(options: InputControllerOptions) {
     validationDate = null;
     options.model.clear();
     options.view.clear();
-    options.unloadGuard.setPendingFile(false);
+    options.unloadGuard.setPendingFile(false, "primary-workspace");
     options.status.announce("檔案清單已清空；電腦中的原始檔案沒有變更。");
   }
 
