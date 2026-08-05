@@ -1,5 +1,5 @@
 import type { DataIssue, InternalFile } from "./internal-model";
-import { collectRowIssues, summarizeInternalFile } from "./internal-model";
+import { summarizeInternalFile } from "./internal-model";
 import { privateUseCodePoints } from "./encoding";
 import { normalizeRows } from "./normalization";
 import type { PrivateUseRecoveryLookup } from "./private-use-recovery";
@@ -35,7 +35,7 @@ export function createInternalFile(
     virtualPath,
     rows: finalValidation.rows.map((row) => ({
       ...row,
-      included: collectRowIssues(row, fileIssues).length === 0 && row.changes.length === 0,
+      included: true,
     })),
     issues: fileIssues,
     summary: {

@@ -1,5 +1,6 @@
-import type { InternalRow, TransformationChange } from "./internal-model";
+import { cellValue, type InternalRow, type TransformationChange } from "./internal-model";
 import { recoverPrivateUse, type PrivateUseRecoveryLookup } from "./private-use-recovery";
+import { genderCodeFromField5Id } from "./validation";
 
 const EMPTY_TELEPHONE_DEFAULT = "0000000000";
 
@@ -10,6 +11,8 @@ export function applyTransformations(
   return rows.map((row) => {
     const cells = row.cells.map((cell) => ({ ...cell, issues: [...cell.issues] }));
     const changes: TransformationChange[] = [...row.changes];
+    const optionalId = cells[4];
+    const gender = cells[7];
     const telephone = cells[9];
 
     for (const cell of cells) {
@@ -29,6 +32,22 @@ export function applyTransformations(
         before: cell.normalizedValue,
         after: recovered.value,
         reason: "已還原舊系統字元",
+      });
+    }
+
+    const expectedGenderCode = optionalId
+      ? genderCodeFromField5Id(cellValue(optionalId))
+      : null;
+    if (gender && expectedGenderCode && cellValue(gender) !== expectedGenderCode) {
+      const before = cellValue(gender);
+      gender.finalValue = expectedGenderCode;
+      changes.push({
+        kind: "id-gender-correction",
+        sourceRow: row.sourceRow,
+        fieldIndex: 8,
+        before,
+        after: expectedGenderCode,
+        reason: "依欄位5有效證號修正性別",
       });
     }
 

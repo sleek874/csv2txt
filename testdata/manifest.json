@@ -156,7 +156,7 @@
       "category": "modified",
       "expectedSummary": {
         "sourceRows": 30,
-        "includedRows": 0,
+        "includedRows": 30,
         "outputRows": 0,
         "errorCount": 0,
         "warningCount": 30
@@ -168,7 +168,7 @@
       "category": "warning",
       "expectedSummary": {
         "sourceRows": 40,
-        "includedRows": 0,
+        "includedRows": 40,
         "outputRows": 0,
         "errorCount": 0,
         "warningCount": 40
@@ -180,10 +180,10 @@
       "category": "error",
       "expectedSummary": {
         "sourceRows": 40,
-        "includedRows": 0,
+        "includedRows": 40,
         "outputRows": 0,
-        "errorCount": 40,
-        "warningCount": 0
+        "errorCount": 35,
+        "warningCount": 5
       }
     },
     {
@@ -192,10 +192,10 @@
       "category": "mixed",
       "expectedSummary": {
         "sourceRows": 200,
-        "includedRows": 146,
+        "includedRows": 200,
         "outputRows": 146,
-        "errorCount": 12,
-        "warningCount": 42
+        "errorCount": 10,
+        "warningCount": 44
       }
     },
     {
@@ -204,10 +204,10 @@
       "category": "mixed",
       "expectedSummary": {
         "sourceRows": 1200,
-        "includedRows": 1012,
+        "includedRows": 1200,
         "outputRows": 1012,
-        "errorCount": 42,
-        "warningCount": 146
+        "errorCount": 36,
+        "warningCount": 152
       }
     }
   ],

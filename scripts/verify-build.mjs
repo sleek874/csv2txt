@@ -614,6 +614,11 @@ assert.doesNotMatch(
 );
 assert.match(
   resultStyles,
+  /@container panel \(max-width:\s*36rem\)[\s\S]*?\.inventory-name-cell\s*\{[^}]*position:\s*static/u,
+  "Narrow inventory tables must scroll filename cells with their numeric columns.",
+);
+assert.match(
+  resultStyles,
   /\.data-table\s*\{[^}]*width:\s*max-content[^}]*min-width:\s*100%/u,
   "The preview table must expand from intrinsic fixed-field widths.",
 );

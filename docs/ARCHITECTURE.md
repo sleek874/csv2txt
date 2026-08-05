@@ -85,7 +85,7 @@ interface InternalCell {
 - `normalizedValue` 是主要資料。
 - 來源種類與 decoder metadata 屬於 inventory／orchestration，不進入 logical IR，也不建立 UI 方向模式。
 - `outputFormat` 是整批在下載階段的獨立選擇，不存入每列或每個 cell。
-- `included` 是每列的輸出決策：沒有 issue 時預設為 `true`，有 error 或 warning 時預設為 `false`，之後只由預覽中的使用者操作改變。
+- `included` 是每列的輸出決策：所有進入共同 IR 的資料列一律預設為 `true`，不受 error、warning 或自動修正影響，之後只由預覽中的使用者操作改變。
 - 原值只有在不同、發生 issue 或需說明修改時保存。
 - Final value 採 copy-on-write，沒有修改就不重複字串。
 - UI 只取得摘要及目前 100-row page。
@@ -100,7 +100,7 @@ interface InternalCell {
 | Input adapters | CSV、Excel、BIG-5E TXT 解析為 logical rows | 補 TEL、下載、UI issue render |
 | Normalization | 移除空白、空白列 warning、ID 大寫、來源列號 | 最終 byte padding |
 | Validation | 欄位、日期、checksum、跨欄、severity | 直接修改值 |
-| Transformations | 明確列篩選、TEL 補值、舊系統字元還原與 change log | 隱藏修正 validator error、猜測未對照字元 |
+| Transformations | 明確列篩選、有效證號推導性別、TEL 補值、舊系統字元還原與 change log | 無紀錄地修正值、猜測未對照字元 |
 | Output validation | 所選格式的 mapping、byte 寬度與 blocking output issues | 改寫 primary IR、把 codec 限制當來源錯誤 |
 | Output adapters | BIG-5E TXT bytes、UTF-8 CSV、XLSX workbook | Parser fallback、UI state |
 | Advanced lookup | 勾選列投影、參照 workbook、逐列 left join、整理後 workbook model | 改寫 primary IR、因資料 issue／重複／未命中阻擋下載 |

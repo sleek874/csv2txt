@@ -55,8 +55,8 @@ test("normalizes one shared row, records the telephone change, and emits 208-byt
   assert.equal(file.summary.errorCount, 1, "the extra source column remains a visible error");
   assert.equal(file.summary.warningCount, 1, "the blank row contributes one warning");
   assert.equal(file.summary.outputRows, 0);
-  assert.equal(file.rows[0]?.included, false);
-  await assert.rejects(outputAdapter.create([file], "big5-txt"), /尚未選擇任何輸出列/u);
+  assert.equal(file.rows[0]?.included, true);
+  assert.equal(file.summary.includedRows, 1);
 
   const validFile = createInternalFile(
     "file-2",
@@ -67,10 +67,9 @@ test("normalizes one shared row, records the telephone change, and emits 208-byt
   assert.equal(validFile.summary.errorCount, 0);
   assert.equal(validFile.summary.warningCount, 1);
   assert.equal(validFile.summary.outputRows, 0);
-  assert.equal(validFile.rows[0]?.included, false);
+  assert.equal(validFile.rows[0]?.included, true);
   assert.equal(validFile.rows[0]?.cells[9]?.finalValue, "0000000000");
 
-  validFile.rows[0].included = true;
   const bytes = (await outputAdapter.create([validFile], "big5-txt")).bytes;
   assert.equal(bytes.length, FIXED_RECORD_WIDTH_BYTES + 2);
   assert.deepEqual(bytes.slice(-2), new Uint8Array([0x0d, 0x0a]));
@@ -141,7 +140,7 @@ test("recovers known legacy PUA values and warns for verification", async () => 
     reason: "已還原舊系統字元",
   });
   assert.equal(issues.some((issue) => issue.severity === "error"), false);
-  assert.equal(file.rows[0]?.included, false);
+  assert.equal(file.rows[0]?.included, true);
 });
 
 test("recovers an unambiguous CNS character for review before output gating", async () => {
@@ -159,7 +158,6 @@ test("recovers an unambiguous CNS character for review before output gating", as
   assert.equal(file.summary.errorCount, 0);
   assert.equal(file.summary.warningCount, 1);
 
-  file.rows[0].included = true;
   assert.equal((await outputAdapter.create([file], "csv")).filename, "cns-recovery.csv");
   await assert.rejects(
     outputAdapter.create([file], "big5-txt"),
@@ -182,7 +180,7 @@ test("keeps U+E088 unresolved instead of guessing the address character", async 
   assert.equal(issue?.message, "字元無法還原。");
   assert.equal(file.summary.errorCount, 1);
   assert.equal(file.summary.warningCount, 0);
-  assert.equal(file.rows[0]?.included, false);
+  assert.equal(file.rows[0]?.included, true);
 });
 
 test("keeps unresolved PUA values for review and defers output compatibility", async () => {
@@ -203,9 +201,8 @@ test("keeps unresolved PUA values for review and defers output compatibility", a
   assert.equal(file.rows[0]?.changes.some((change) => change.fieldIndex === 7), false);
   assert.equal(file.summary.errorCount, 1);
   assert.equal(file.summary.warningCount, 0);
-  assert.equal(file.rows[0]?.included, false);
+  assert.equal(file.rows[0]?.included, true);
 
-  file.rows[0].included = true;
   assert.equal((await outputAdapter.create([file], "csv")).filename, "private-use-unresolved.csv");
   await assert.rejects(
     outputAdapter.create([file], "big5-txt"),
@@ -231,7 +228,7 @@ test("records recovered characters and keeps unresolved characters for review", 
   assert.equal(issues.some((issue) => issue.code === "PRIVATE_USE_REMAINS"), true);
   assert.equal(file.summary.errorCount, 1);
   assert.equal(file.summary.warningCount, 0);
-  assert.equal(file.rows[0]?.included, false);
+  assert.equal(file.rows[0]?.included, true);
 });
 
 test("uses one concise preview warning for Unicode without a BIG5 mapping", async () => {
@@ -249,7 +246,7 @@ test("uses one concise preview warning for Unicode without a BIG5 mapping", asyn
   assert.equal(reviewIssues[0]?.fieldIndex, 7);
   assert.equal(reviewIssues[0]?.message, "請確認字元。");
   assert.equal(file.summary.warningCount, 1);
-  assert.equal(file.rows[0]?.included, false);
+  assert.equal(file.rows[0]?.included, true);
 });
 
 test("uses regex for the contract but presents friendly format errors", () => {
@@ -308,7 +305,7 @@ test("uses regex for the contract but presents friendly format errors", () => {
   assert.equal(idIssues.some((issue) => issue.code === "REQUIRED_ID_INVALID"), false);
 });
 
-test("accepts valid new resident IDs in field 5 and maps their sex code", () => {
+test("accepts valid field-5 IDs and corrects a mismatched gender with a warning", () => {
   assert.equal(isValidTaiwanNationalId("A123456789"), true);
   assert.equal(isValidNewResidentId("A800000014"), true);
   assert.equal(isValidNewResidentId("A900000016"), true);
@@ -338,10 +335,22 @@ test("accepts valid new resident IDs in field 5 and maps their sex code", () => 
   const mismatchIssues = issuesFor(mismatchFile);
   assert.equal(mismatchIssues.some((issue) => issue.code === "OPTIONAL_ID_INVALID"), false);
   const genderMismatch = mismatchIssues.find((issue) => issue.code === "ID_GENDER_MISMATCH");
-  assert.equal(genderMismatch?.severity, "error");
+  assert.equal(genderMismatch?.severity, "warning");
+  assert.equal(genderMismatch?.message, "欄位8已依欄位5的有效證號修正，請確認。");
   assert.deepEqual(issueFieldIndices(genderMismatch), [5, 8]);
-  assert.equal(mismatchFile.summary.errorCount, 1);
-  assert.equal(mismatchFile.rows[0]?.included, false);
+  assert.equal(mismatchFile.rows[0]?.cells[7]?.normalizedValue, "2");
+  assert.equal(mismatchFile.rows[0]?.cells[7]?.finalValue, "1");
+  assert.deepEqual(mismatchFile.rows[0]?.changes.find((change) => change.kind === "id-gender-correction"), {
+    kind: "id-gender-correction",
+    sourceRow: 1,
+    fieldIndex: 8,
+    before: "2",
+    after: "1",
+    reason: "依欄位5有效證號修正性別",
+  });
+  assert.equal(mismatchFile.summary.errorCount, 0);
+  assert.equal(mismatchFile.summary.warningCount, 1);
+  assert.equal(mismatchFile.rows[0]?.included, true);
 
   const invalidFile = createInternalFile(
     "resident-invalid",
@@ -355,10 +364,10 @@ test("accepts valid new resident IDs in field 5 and maps their sex code", () => 
   );
   assert.equal(invalidFile.summary.warningCount, 1);
   assert.equal(invalidFile.summary.errorCount, 0);
-  assert.equal(invalidFile.rows[0]?.included, false);
+  assert.equal(invalidFile.rows[0]?.included, true);
 });
 
-test("defaults issue rows to excluded and serializes them only after an explicit row decision", async () => {
+test("defaults every IR row to selected and honors explicit row deselection", async () => {
   const file = createInternalFile(
     "row-output-decisions",
     "row-output-decisions.csv",
@@ -371,15 +380,18 @@ test("defaults issue rows to excluded and serializes them only after an explicit
     "20260803",
   );
 
-  assert.deepEqual(file.rows.map((row) => row.included), [true, false]);
-  assert.equal(file.summary.includedRows, 1);
-  assert.equal(issuesFor(file).some((issue) => issue.code === "ID_GENDER_MISMATCH"), true);
+  assert.deepEqual(file.rows.map((row) => row.included), [true, true]);
+  assert.equal(file.summary.includedRows, 2);
+  assert.equal(
+    issuesFor(file).find((issue) => issue.code === "ID_GENDER_MISMATCH")?.severity,
+    "warning",
+  );
   assert.equal(
     issuesFor(file).some((issue) => issue.code === "PATTERN_MISMATCH" && issue.fieldIndex === 9),
     true,
   );
-  assert.equal((await outputAdapter.create([file], "big5-txt")).bytes.length, FIXED_RECORD_WIDTH_BYTES + 2);
-
-  file.rows[1].included = true;
   assert.equal((await outputAdapter.create([file], "big5-txt")).bytes.length, (FIXED_RECORD_WIDTH_BYTES + 2) * 2);
+
+  file.rows[1].included = false;
+  assert.equal((await outputAdapter.create([file], "big5-txt")).bytes.length, FIXED_RECORD_WIDTH_BYTES + 2);
 });

@@ -25,9 +25,9 @@ test("derives the fixed rules table from the shared TypeScript profile", () => {
     "必填",
     "必填",
   ]);
-  assert.equal(fields[4]?.description, "轉大寫；證號無效時警告");
+  assert.equal(fields[4]?.description, "轉大寫；證號無效時警告；有效證號可修正欄位8");
   assert.equal(fields[6]?.description, "必填；可安全轉為 BIG-5E");
-  assert.equal(fields[7]?.description, "有效證號時與欄位5比對性別，性別不符時錯誤");
+  assert.equal(fields[7]?.description, "與有效證號不符時依欄位5修正並警告");
   assert.equal(fields[8]?.description, "必填；可安全轉為 BIG-5E");
   assert.deepEqual(fields.at(-1), {
     fieldLabel: "欄位15",

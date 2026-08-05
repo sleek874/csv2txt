@@ -595,6 +595,10 @@
     min-width: 15rem;
   }
 
+  .inventory-name-cell {
+    position: static;
+  }
+
   .data-toolbar {
     align-items: stretch;
     flex-direction: column;

@@ -69,7 +69,7 @@ function isValidField5Id(value: string): boolean {
   return isValidTaiwanNationalId(value) || isValidNewResidentId(value);
 }
 
-function field8SexCode(value: string): "1" | "2" | null {
+export function genderCodeFromField5Id(value: string): "1" | "2" | null {
   if (!isValidField5Id(value)) {
     return null;
   }
@@ -216,14 +216,27 @@ function validateCrossField(
   const field13 = valueAt(row, 13, stage);
   const field14 = valueAt(row, 14, stage);
   const field15 = valueAt(row, 15, stage);
-  const expectedSexCode = field8SexCode(field5);
+  const expectedGenderCode = genderCodeFromField5Id(field5);
+  const genderCorrection = stage === "final"
+    ? row.changes.find((change) => change.kind === "id-gender-correction")
+    : undefined;
 
-  if (expectedSexCode && expectedSexCode !== field8) {
+  if (genderCorrection) {
     issues.push(issue(
       stage,
-      "error",
+      "warning",
       "ID_GENDER_MISMATCH",
-      "欄位5的證號性別與欄位8不一致，請確認兩個欄位。",
+      "欄位8已依欄位5的有效證號修正，請確認。",
+      row.sourceRow,
+      undefined,
+      [5, 8],
+    ));
+  } else if (expectedGenderCode && expectedGenderCode !== field8) {
+    issues.push(issue(
+      stage,
+      "warning",
+      "ID_GENDER_MISMATCH",
+      "欄位5的有效證號與欄位8不一致，將依證號修正欄位8。",
       row.sourceRow,
       undefined,
       [5, 8],

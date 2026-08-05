@@ -146,8 +146,12 @@ test("a row output decision updates the shared model summary", async () => {
   harness.callbacks().onFilesChosen([sourceFile("invalid.csv", "A,01")]);
   await harness.controller.whenIdle();
   const file = harness.model.selectedItem().file;
+  assert.equal(file.rows[0].included, true);
+  assert.equal(file.summary.includedRows, 1);
+  harness.callbacks().onRowIncludedChange(1, false);
   assert.equal(file.rows[0].included, false);
   assert.equal(file.summary.includedRows, 0);
+  assert.match(harness.announcements.at(-1), /第 1 列已排除輸出/u);
   harness.callbacks().onRowIncludedChange(1, true);
   assert.equal(file.rows[0].included, true);
   assert.equal(file.summary.includedRows, 1);
@@ -162,15 +166,15 @@ test("bulk row actions update only the current filtered page", async () => {
   await harness.controller.whenIdle();
   const file = harness.model.selectedItem().file;
 
-  harness.callbacks().onVisibleRowsIncludedChange([1, 3], true);
-  assert.deepEqual(file.rows.map((row) => row.included), [true, false, true]);
-  assert.equal(file.summary.includedRows, 2);
-  assert.match(harness.announcements.at(-1), /已選取本頁/u);
-
-  harness.callbacks().onVisibleRowsIncludedChange([3], false);
-  assert.deepEqual(file.rows.map((row) => row.included), [true, false, false]);
+  harness.callbacks().onVisibleRowsIncludedChange([1, 3], false);
+  assert.deepEqual(file.rows.map((row) => row.included), [false, true, false]);
   assert.equal(file.summary.includedRows, 1);
   assert.match(harness.announcements.at(-1), /已取消選取本頁/u);
+
+  harness.callbacks().onVisibleRowsIncludedChange([3], true);
+  assert.deepEqual(file.rows.map((row) => row.included), [false, true, true]);
+  assert.equal(file.summary.includedRows, 2);
+  assert.match(harness.announcements.at(-1), /已選取本頁/u);
 });
 
 test("output format is global workspace state", () => {

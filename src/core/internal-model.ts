@@ -20,7 +20,7 @@ export function issueFieldIndices(issue: DataIssue): readonly number[] {
 }
 
 export interface TransformationChange {
-  kind: "telephone-default" | "private-use-recovery";
+  kind: "telephone-default" | "private-use-recovery" | "id-gender-correction";
   sourceRow: number;
   fieldIndex: number;
   before: string;

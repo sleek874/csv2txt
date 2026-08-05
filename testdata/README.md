@@ -37,7 +37,7 @@
 - `clean-*`：無 error、warning 或自動修正；`clean-boundaries` 另含 12-byte、120-byte 與 15-byte 精確邊界。
 - `modified-phone-default`：欄位10來源為空，驗證流程應留下補值修改紀錄並將該列歸入 warning。
 - `warning-optional-id`：欄位5符合 regex 但 checksum 無效，只有 warning。
-- `error-validation`：涵蓋 regex、日期、checksum、性別及欄位14／15跨欄錯誤；所有值仍可安全放入 BIG-5E 固定欄寬，使四種格式可保持同值。
+- `error-validation`：涵蓋 regex、日期、checksum、欄位14／15跨欄錯誤，以及性別不一致自動修正 warning；所有來源值仍可安全放入 BIG-5E 固定欄寬，使四種格式可保持同值。
 - `mixed-*`：clean、modified、warning 與 error 混合。
 - `excluded-entries.zip`：`accepted/clean-single.csv` 應正常加入；`excluded/link.csv` 是捷徑項目，`excluded/notes.md` 是不支援副檔名，兩者應安全略過並分行顯示路徑。
 
