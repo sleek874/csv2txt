@@ -7,6 +7,7 @@ import type { HeaderedSpreadsheet } from "../../../core/formats/spreadsheet";
 import type { AdvancedOutputAdapter } from "../../adapters/advanced-output-adapter";
 import type { AppStatus } from "../../shell/app-status";
 import type { WorkspaceModel } from "../../state/workspace-model";
+import { activeWorkspaceItems } from "../../state/workspace-selectors";
 import type { UnloadGuard } from "../../../browser/unload-guard";
 import type { AdvancedView, AdvancedViewState } from "./advanced-view";
 
@@ -51,7 +52,8 @@ export function createAdvancedController(options: AdvancedControllerOptions) {
   let pendingTask = Promise.resolve();
 
   function primaryRows() {
-    const files = options.model.snapshot().files.flatMap((item) => item.file ? [item.file] : []);
+    const files = activeWorkspaceItems(options.model.snapshot())
+      .flatMap((item) => item.file ? [item.file] : []);
     return collectAdvancedPrimaryRows(files);
   }
 
@@ -73,7 +75,7 @@ export function createAdvancedController(options: AdvancedControllerOptions) {
       reference?.table.sheetName,
       keyColumnIndex,
       [...selectedColumnIndices].sort((left, right) => left - right),
-      snapshot.files.map((item) => [
+      activeWorkspaceItems(snapshot).map((item) => [
         item.id,
         item.state,
         item.file?.rows.filter((row) => row.included).map((row) => row.sourceRow),
@@ -83,7 +85,7 @@ export function createAdvancedController(options: AdvancedControllerOptions) {
 
   function render(): void {
     const lookupResult = result();
-    const processingFileCount = options.model.snapshot().files
+    const processingFileCount = activeWorkspaceItems(options.model.snapshot())
       .filter((item) => item.state === "processing").length;
     options.view.render({
       busy,

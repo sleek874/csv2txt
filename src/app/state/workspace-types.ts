@@ -1,4 +1,4 @@
-import type { OutputFormat } from "../../core/file-formats";
+import type { FileFormat, OutputFormat } from "../../core/file-formats";
 import type { InternalFile } from "../../core/internal-model";
 
 export type WorkspaceFileState = "processing" | "ready" | "error" | "ignored";
@@ -18,6 +18,7 @@ export interface WorkspaceItem {
   ignoredReason?: WorkspaceIgnoredReason;
   size: number;
   sourceId: string;
+  sourceFormat?: FileFormat;
   state: WorkspaceFileState;
   relativePath: string;
   unread?: boolean;
@@ -26,6 +27,7 @@ export interface WorkspaceItem {
 
 export interface WorkspaceSnapshot {
   files: readonly WorkspaceItem[];
+  inputFormat: FileFormat;
   outputFormat: OutputFormat;
   selectedFileId: string | null;
   sources: readonly WorkspaceSource[];

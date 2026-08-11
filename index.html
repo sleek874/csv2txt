@@ -64,31 +64,26 @@
       </noscript>
 
       <main id="app-content" aria-label="離線資料轉換流程" inert>
-        <section id="rules-step" class="panel rules-panel" aria-labelledby="rules-heading">
-          <details id="rules-disclosure">
-            <summary>
-              <span class="step-heading rules-summary-heading">
-                <span aria-hidden="true">0</span>
-                <span>
-                  <strong id="rules-heading" class="section-title">欄位規則</strong>
-                  <small>固定 15 欄／208 bytes</small>
-                </span>
-              </span>
-              <span class="schema-summary" aria-label="固定規格摘要">
-                <span><strong>15</strong> 欄</span>
-                <span><strong>208</strong> bytes／筆</span>
-              </span>
-            </summary>
-            <div class="rules-content">
-              <div class="table-scroll" tabindex="0" aria-label="固定欄位規則表格，可左右捲動">
-                <table class="rules-table">
-                  <caption class="visually-hidden">固定 15 欄的 BIG-5E 位元組寬度與驗證規則</caption>
-                  <thead><tr><th scope="col">欄位</th><th scope="col">寬度</th><th scope="col">格式</th><th scope="col">額外規則</th></tr></thead>
-                  <tbody id="fixed-rules-body"></tbody>
-                </table>
-              </div>
+        <section id="format-step" class="panel" aria-labelledby="format-heading">
+          <div class="step-heading">
+            <span aria-hidden="true">0</span>
+            <div>
+              <h2 id="format-heading">選擇格式</h2>
+              <p class="help-text">先選這次要處理的檔案格式與下載格式。</p>
             </div>
-          </details>
+          </div>
+          <div class="format-controls">
+            <label class="format-control" for="input-format">
+              <span>輸入檔案</span>
+              <select id="input-format"><option value="txt">TXT</option><option value="csv">CSV</option><option value="xlsx">XLSX</option></select>
+            </label>
+            <label class="format-control" for="selected-output-format">
+              <span>輸出檔案</span>
+              <select id="selected-output-format"><option value="txt">TXT</option><option value="csv">CSV</option><option value="xlsx">XLSX</option></select>
+            </label>
+          </div>
+          <p id="format-summary" class="format-summary">將把 TXT 檔轉換成 TXT 檔。</p>
+          <p class="help-text">仍可加入其他格式；它們會保留在「其他檔案」。XLS 歸入 XLSX，ZIP 內的檔案會依格式分開。</p>
         </section>
 
         <section id="input-step" class="panel" aria-labelledby="input-heading">
@@ -96,7 +91,7 @@
             <span aria-hidden="true">1</span>
             <div>
               <h2 id="input-heading">輸入檔案</h2>
-              <p class="help-text">加入 CSV、Excel、BIG-5E TXT 或 ZIP；可分次新增。</p>
+              <p class="help-text">可加入 TXT、CSV、XLS、XLSX 或 ZIP；可分次新增。</p>
             </div>
           </div>
 
@@ -124,18 +119,23 @@
 
           <div id="workspace-results">
             <div class="workspace-layout">
+              <div class="workspace-tabs" role="tablist" aria-label="檔案分類">
+                <button id="active-files-tab" type="button" role="tab" aria-selected="true" aria-controls="active-files-panel"><span id="active-files-format">TXT</span> <span id="active-files-count">0</span></button>
+                <button id="other-files-tab" type="button" role="tab" aria-selected="false" aria-controls="other-files-panel">其他檔案 <span id="other-files-count">0</span></button>
+              </div>
+              <div id="active-files-panel" role="tabpanel" aria-labelledby="active-files-tab">
               <p id="file-tree-help" class="visually-hidden">上下方向鍵可移動，左右方向鍵可展開或收合。選擇檔案可在下方查看內容；移除只會影響目前清單，不會刪除電腦中的原始檔案。</p>
               <div class="table-scroll inventory-table-scroll" tabindex="0" aria-label="檔案清單與摘要，可左右捲動">
                 <table id="file-tree-table" class="inventory-table" role="treegrid" aria-describedby="file-tree-help">
-                  <caption class="visually-hidden">已加入檔案的資料列、檢查結果、已選列數與目前輸出格式問題</caption>
+                  <caption class="visually-hidden">所選輸入格式檔案的來源記錄、檢查結果、已選資料列與目前輸出問題</caption>
                   <thead>
-                    <tr><th scope="col">檔案</th><th scope="col">資料</th><th scope="col">正確</th><th scope="col">錯誤</th><th scope="col">警告</th><th scope="col">已選列數</th><th id="inventory-output-heading" scope="col">輸出問題</th><th scope="col">移除</th></tr>
+                    <tr><th scope="col">檔案</th><th scope="col">空白列</th><th scope="col">無法解析</th><th scope="col">資料</th><th scope="col">正確</th><th scope="col">錯誤</th><th scope="col">警告</th><th scope="col">已選</th><th id="inventory-output-heading" scope="col">輸出問題</th><th scope="col">移除</th></tr>
                   </thead>
                   <tbody id="file-tree"></tbody>
                   <tfoot>
                     <tr id="file-tree-total">
                       <th data-total-label scope="row">全部 0 個檔案</th>
-                      <td data-total-value>0</td><td data-total-value>0</td><td data-total-value>0</td><td data-total-value>0</td><td data-total-value>0</td><td data-total-value>0</td><td></td>
+                      <td data-total-value>—</td><td data-total-value>—</td><td data-total-value>—</td><td data-total-value>—</td><td data-total-value>—</td><td data-total-value>—</td><td data-total-value>—</td><td data-total-value>—</td><td></td>
                     </tr>
                   </tfoot>
                 </table>
@@ -153,6 +153,7 @@
                   <label class="filter-control" for="row-filter">顯示
                     <select id="row-filter">
                       <option value="all">全部</option>
+                      <option value="rejected">無法解析</option>
                       <option value="error">錯誤</option>
                       <option value="warning">警告</option>
                       <option value="valid">正確</option>
@@ -190,29 +191,35 @@
                   </div>
                 </div>
               </div>
+              </div>
+              <div id="other-files-panel" role="tabpanel" aria-labelledby="other-files-tab" hidden>
+                <div class="table-scroll inventory-table-scroll" tabindex="0" aria-label="其他檔案清單，可上下及左右捲動">
+                  <table class="inventory-table other-files-table">
+                    <caption class="visually-hidden">目前保留但未使用所選輸入格式處理的檔案</caption>
+                    <thead><tr><th scope="col">檔案</th><th scope="col">格式</th><th scope="col">狀態</th><th scope="col">移除</th></tr></thead>
+                    <tbody id="other-files-list"></tbody>
+                    <tfoot>
+                      <tr id="other-files-total">
+                        <th data-total-label scope="row">全部 0 個檔案</th>
+                        <td data-total-value></td><td data-total-value></td><td data-total-value></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
             </div>
           </div>
-
-          <div id="cell-tooltip" class="cell-tooltip" role="tooltip" hidden></div>
         </section>
 
         <section id="output-step" class="panel" aria-labelledby="output-heading">
           <div class="step-heading">
             <span aria-hidden="true">2</span>
             <div>
-              <h2 id="output-heading">輸出格式</h2>
-              <p class="help-text">選擇整批輸出格式；有問題時，依下方提示處理後再下載。</p>
+              <h2 id="output-heading">下載結果</h2>
+              <p class="help-text">輸出格式已在第 0 區選定；有問題時，依下方提示處理後再下載。</p>
             </div>
           </div>
-          <div class="output-format-control">
-            <label for="output-format">輸出格式</label>
-            <select id="output-format" aria-describedby="output-format-help">
-              <option value="big5-txt" selected>TXT（BIG-5E）</option>
-              <option value="csv">CSV（UTF-8）</option>
-              <option value="xlsx">XLSX</option>
-            </select>
-            <p id="output-format-help" class="help-text">每筆固定 15 欄、208 bytes。</p>
-          </div>
+          <p class="output-format-summary">目前輸出：<strong id="output-format-label">TXT</strong></p>
           <div class="download-bar">
             <div>
               <strong id="download-status-title">尚未準備下載</strong>
@@ -220,7 +227,7 @@
               <a id="output-problem-link" class="inline-action-link" href="#file-tree-table" hidden>回到第 1 區查看問題</a>
               <ul id="output-issue-list" class="output-issue-list" hidden></ul>
             </div>
-            <button id="download-button" class="primary-button" type="button" disabled>下載 TXT（BIG-5E）</button>
+            <button id="download-button" class="primary-button" type="button" disabled>下載 TXT</button>
           </div>
         </section>
 
@@ -277,6 +284,27 @@
               </div>
             </div>
           </div>
+        </section>
+
+        <section id="rules-step" class="panel rules-panel" aria-labelledby="rules-heading">
+          <details id="rules-disclosure">
+            <summary>
+              <span>
+                <strong id="rules-heading" class="section-title">欄位規則與說明</strong>
+                <small>固定 15 欄／208 bytes</small>
+              </span>
+              <span class="schema-summary" aria-label="固定規格摘要"><span><strong>15</strong> 欄</span><span><strong>208</strong> bytes／筆</span></span>
+            </summary>
+            <div class="rules-content">
+              <div class="table-scroll" tabindex="0" aria-label="固定欄位規則表格，可左右捲動">
+                <table class="rules-table">
+                  <caption class="visually-hidden">固定 15 欄的 BIG-5E 位元組寬度與驗證規則</caption>
+                  <thead><tr><th scope="col">欄位</th><th scope="col">寬度</th><th scope="col">格式</th><th scope="col">額外規則</th></tr></thead>
+                  <tbody id="fixed-rules-body"></tbody>
+                </table>
+              </div>
+            </div>
+          </details>
         </section>
 
         <p id="app-status" class="visually-hidden" role="status" aria-live="polite"></p>

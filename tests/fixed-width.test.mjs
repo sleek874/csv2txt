@@ -51,12 +51,17 @@ test("normalizes one shared row, records the telephone change, and emits 208-byt
     "20260803",
   );
 
-  assert.equal(file.summary.sourceRows, 2);
-  assert.equal(file.summary.errorCount, 1, "the extra source column remains a visible error");
-  assert.equal(file.summary.warningCount, 1, "the blank row contributes one warning");
-  assert.equal(file.summary.outputRows, 0);
-  assert.equal(file.rows[0]?.included, true);
-  assert.equal(file.summary.includedRows, 1);
+  assert.equal(file.summary.sourceRecords, 2);
+  assert.equal(file.summary.blankRows, 1);
+  assert.equal(file.summary.rejectedRows, 1, "the extra source column stays outside the IR");
+  assert.equal(file.summary.dataRows, 0);
+  assert.equal(file.summary.errorRows, 0);
+  assert.equal(file.summary.warningRows, 0, "blank rows are counted separately");
+  assert.equal(file.summary.correctRows, 0);
+  assert.equal(file.rows.length, 0);
+  assert.equal(file.summary.includedRows, 0);
+  assert.equal(file.rejectedRecords[0]?.original.endsWith("｜ignored"), true);
+  assert.match(file.rejectedRecords[0]?.technicalDetail ?? "", /16 個欄位/u);
 
   const validFile = createInternalFile(
     "file-2",
@@ -64,9 +69,9 @@ test("normalizes one shared row, records the telephone change, and emits 208-byt
     { rows: [[" A ", ...validRow().slice(1)]] },
     "20260803",
   );
-  assert.equal(validFile.summary.errorCount, 0);
-  assert.equal(validFile.summary.warningCount, 1);
-  assert.equal(validFile.summary.outputRows, 0);
+  assert.equal(validFile.summary.errorRows, 0);
+  assert.equal(validFile.summary.warningRows, 1);
+  assert.equal(validFile.summary.correctRows, 0);
   assert.equal(validFile.rows[0]?.included, true);
   assert.equal(validFile.rows[0]?.cells[9]?.finalValue, "0000000000");
 
@@ -112,7 +117,7 @@ test("keeps semantic validation in the shared IR without applying an output code
     issueFieldIndices(issues.find((issue) => issue.code === "DATE_ORDER_INVALID")),
     [13, 14],
   );
-  assert.equal(file.summary.errorCount > 0, true);
+  assert.equal(file.summary.errorRows > 0, true);
 });
 
 test("recovers known legacy PUA values and warns for verification", async () => {
@@ -155,14 +160,12 @@ test("recovers an unambiguous CNS character for review before output gating", as
   assert.equal(file.rows[0]?.cells[6]?.normalizedValue, privateUse);
   assert.equal(file.rows[0]?.cells[6]?.finalValue, "𥠄");
   assert.equal(issuesFor(file).some((issue) => issue.code === "PRIVATE_USE_RECOVERED"), true);
-  assert.equal(file.summary.errorCount, 0);
-  assert.equal(file.summary.warningCount, 1);
+  assert.equal(file.summary.errorRows, 0);
+  assert.equal(file.summary.warningRows, 1);
 
   assert.equal((await outputAdapter.create([file], "csv")).filename, "cns-recovery.csv");
-  await assert.rejects(
-    outputAdapter.create([file], "big5-txt"),
-    /儲存格 G1：.*U\+25804.*沒有 BIG-5E 對照/u,
-  );
+  const txt = await outputAdapter.create([file], "big5-txt");
+  assert.equal(parseBig5Txt(txt.bytes).rows[0]?.[6], "？");
 });
 
 test("keeps U+E088 unresolved instead of guessing the address character", async () => {
@@ -178,8 +181,8 @@ test("keeps U+E088 unresolved instead of guessing the address character", async 
   assert.equal(file.rows[0]?.cells[6]?.finalValue, undefined);
   assert.equal(issue?.severity, "error");
   assert.equal(issue?.message, "字元無法還原。");
-  assert.equal(file.summary.errorCount, 1);
-  assert.equal(file.summary.warningCount, 0);
+  assert.equal(file.summary.errorRows, 1);
+  assert.equal(file.summary.warningRows, 0);
   assert.equal(file.rows[0]?.included, true);
 });
 
@@ -199,15 +202,13 @@ test("keeps unresolved PUA values for review and defers output compatibility", a
   assert.equal(file.rows[0]?.cells[6]?.normalizedValue, `王${privateUse}`);
   assert.equal(file.rows[0]?.cells[6]?.finalValue, undefined);
   assert.equal(file.rows[0]?.changes.some((change) => change.fieldIndex === 7), false);
-  assert.equal(file.summary.errorCount, 1);
-  assert.equal(file.summary.warningCount, 0);
+  assert.equal(file.summary.errorRows, 1);
+  assert.equal(file.summary.warningRows, 0);
   assert.equal(file.rows[0]?.included, true);
 
   assert.equal((await outputAdapter.create([file], "csv")).filename, "private-use-unresolved.csv");
-  await assert.rejects(
-    outputAdapter.create([file], "big5-txt"),
-    /儲存格 G1：.*U\+F0000.*沒有 BIG-5E 對照/u,
-  );
+  const txt = await outputAdapter.create([file], "big5-txt");
+  assert.equal(parseBig5Txt(txt.bytes).rows[0]?.[6], "王？");
 });
 
 test("records recovered characters and keeps unresolved characters for review", async () => {
@@ -226,26 +227,24 @@ test("records recovered characters and keeps unresolved characters for review", 
   assert.equal(file.rows[0]?.changes.some((change) => change.kind === "private-use-recovery"), true);
   assert.equal(issues.some((issue) => issue.code === "PRIVATE_USE_RECOVERED"), false);
   assert.equal(issues.some((issue) => issue.code === "PRIVATE_USE_REMAINS"), true);
-  assert.equal(file.summary.errorCount, 1);
-  assert.equal(file.summary.warningCount, 0);
+  assert.equal(file.summary.errorRows, 1);
+  assert.equal(file.summary.warningRows, 0);
   assert.equal(file.rows[0]?.included, true);
 });
 
-test("uses one concise preview warning for Unicode without a BIG5 mapping", async () => {
+test("keeps valid Unicode out of shared row findings regardless of BIG-5E mapping", async () => {
   const file = await createInternalFileWithRecovery(
     "unicode-review",
     "unicode-review.xlsx",
-    { rows: [validRow({ 7: "台中市外埔區廍子路" })] },
+    { rows: [validRow({ 7: "台中市外埔區廍子路", 10: "0212345678" })] },
     "20260803",
   );
-  const reviewIssues = issuesFor(file).filter(
-    (issue) => issue.code === "CHARACTER_REVIEW_REQUIRED",
+  assert.equal(
+    issuesFor(file).some((issue) => issue.code === "CHARACTER_REVIEW_REQUIRED"),
+    false,
   );
-
-  assert.equal(reviewIssues.length, 1);
-  assert.equal(reviewIssues[0]?.fieldIndex, 7);
-  assert.equal(reviewIssues[0]?.message, "請確認字元。");
-  assert.equal(file.summary.warningCount, 1);
+  assert.equal(file.summary.correctRows, 1);
+  assert.equal(file.summary.warningRows, 0);
   assert.equal(file.rows[0]?.included, true);
 });
 
@@ -267,7 +266,7 @@ test("uses regex for the contract but presents friendly format errors", () => {
     { rows: [validRow({ 5: "ab123", 7: "中", 9: "台北", 14: "", 15: "" })] },
     "20260803",
   );
-  assert.equal(validFile.summary.errorCount, 0, "only the field 14/15 pair may be empty");
+  assert.equal(validFile.summary.errorRows, 0, "only the field 14/15 pair may be empty");
 
   const invalidFile = createInternalFile(
     "regex-invalid",
@@ -348,8 +347,8 @@ test("accepts valid field-5 IDs and corrects a mismatched gender with a warning"
     after: "1",
     reason: "依欄位5有效證號修正性別",
   });
-  assert.equal(mismatchFile.summary.errorCount, 0);
-  assert.equal(mismatchFile.summary.warningCount, 1);
+  assert.equal(mismatchFile.summary.errorRows, 0);
+  assert.equal(mismatchFile.summary.warningRows, 1);
   assert.equal(mismatchFile.rows[0]?.included, true);
 
   const invalidFile = createInternalFile(
@@ -362,8 +361,8 @@ test("accepts valid field-5 IDs and corrects a mismatched gender with a warning"
     issuesFor(invalidFile).some((issue) => issue.code === "OPTIONAL_ID_INVALID"),
     true,
   );
-  assert.equal(invalidFile.summary.warningCount, 1);
-  assert.equal(invalidFile.summary.errorCount, 0);
+  assert.equal(invalidFile.summary.warningRows, 1);
+  assert.equal(invalidFile.summary.errorRows, 0);
   assert.equal(invalidFile.rows[0]?.included, true);
 });
 
@@ -394,4 +393,21 @@ test("defaults every IR row to selected and honors explicit row deselection", as
 
   file.rows[1].included = false;
   assert.equal((await outputAdapter.create([file], "big5-txt")).bytes.length, FIXED_RECORD_WIDTH_BYTES + 2);
+});
+
+test("flags literal question marks for review without deselecting the row", () => {
+  const file = createInternalFile(
+    "question-mark",
+    "question-mark.csv",
+    { rows: [validRow({ 7: "王?明" })] },
+    "20260803",
+  );
+
+  const issue = issuesFor(file).find((candidate) => candidate.code === "QUESTION_MARK_PRESENT");
+  assert.equal(issue?.severity, "warning");
+  assert.equal(issue?.fieldIndex, 7);
+  assert.equal(file.rows[0]?.cells[6]?.sourceValue, "王?明");
+  assert.equal(file.rows[0]?.cells[6]?.normalizedValue, "王？明");
+  assert.equal(file.rows[0]?.included, true);
+  assert.equal(file.summary.warningRows, 1);
 });

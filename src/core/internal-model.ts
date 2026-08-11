@@ -7,9 +7,11 @@ export interface DataIssue {
   stage: IssueStage;
   code: string;
   message: string;
+  replacementCharacterIndices?: readonly number[];
   sourceRow?: number;
   fieldIndex?: number;
   relatedFieldIndices?: readonly number[];
+  technicalDetail?: string;
 }
 
 export function issueFieldIndices(issue: DataIssue): readonly number[] {
@@ -45,14 +47,26 @@ export interface InternalRow {
 }
 
 export interface FileSummary {
-  sourceRows: number;
+  blankRows: number;
+  correctRows: number;
+  dataRows: number;
+  errorRows: number;
   includedRows: number;
-  outputRows: number;
-  errorCount: number;
-  warningCount: number;
+  rejectedRows: number;
+  sourceRecords: number;
+  warningRows: number;
+}
+
+export interface RejectedSourceRecord {
+  fieldIndex?: number;
+  message: string;
+  original: string;
+  sourceRow: number;
+  technicalDetail?: string;
 }
 
 export interface InternalFile {
+  blankSourceRows: number[];
   id: string;
   virtualPath: string;
   rows: InternalRow[];
@@ -62,6 +76,7 @@ export interface InternalFile {
     decoderLabel?: string;
     sheetName?: string;
   };
+  rejectedRecords: RejectedSourceRecord[];
 }
 
 export function cellValue(cell: InternalCell): string {
@@ -90,19 +105,15 @@ export function collectRowIssues(
 }
 
 export function summarizeInternalFile(
-  file: Pick<InternalFile, "issues" | "rows">,
-  sourceRows: number,
+  file: Pick<InternalFile, "blankSourceRows" | "issues" | "rejectedRecords" | "rows">,
+  sourceRecords: number,
 ): FileSummary {
   const errorRows = new Set<number>();
   const warningRows = new Set<number>();
-  let fileErrors = 0;
-  let fileWarnings = 0;
 
   for (const issue of collectIssues(file)) {
-    if (issue.sourceRow === undefined) {
-      if (issue.severity === "error") fileErrors += 1;
-      else fileWarnings += 1;
-    } else if (issue.severity === "error") {
+    if (issue.sourceRow === undefined) continue;
+    if (issue.severity === "error") {
       errorRows.add(issue.sourceRow);
     } else {
       warningRows.add(issue.sourceRow);
@@ -110,16 +121,21 @@ export function summarizeInternalFile(
   }
   file.rows.filter((row) => row.changes.length > 0).forEach((row) => warningRows.add(row.sourceRow));
   errorRows.forEach((sourceRow) => warningRows.delete(sourceRow));
+  const correctRows = Math.max(0, file.rows.length - errorRows.size - warningRows.size);
 
   return {
-    sourceRows,
+    blankRows: file.blankSourceRows.length,
+    correctRows,
+    dataRows: file.rows.length,
+    errorRows: errorRows.size,
     includedRows: file.rows.filter((row) => row.included).length,
-    outputRows: Math.max(0, sourceRows - errorRows.size - warningRows.size),
-    errorCount: fileErrors + errorRows.size,
-    warningCount: fileWarnings + warningRows.size,
+    rejectedRows: file.rejectedRecords.length,
+    sourceRecords,
+    warningRows: warningRows.size,
   };
 }
 
 export function hasBlockingFileIssues(file: InternalFile): boolean {
-  return file.issues.some((issue) => issue.severity === "error" && issue.sourceRow === undefined);
+  return file.rejectedRecords.length > 0
+    || file.issues.some((issue) => issue.severity === "error" && issue.sourceRow === undefined);
 }

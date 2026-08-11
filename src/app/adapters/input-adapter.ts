@@ -7,7 +7,15 @@ export interface InputAdapter {
   parse(type: SourceFileType, bytes: Uint8Array): Promise<AdapterRows>;
 }
 
-function parseIssues(issues: readonly { message: string; severity: "error" | "warning"; sourceRow?: number }[]) {
+function parseIssues(issues: readonly {
+  code?: string;
+  fieldIndex?: number;
+  message: string;
+  replacementCharacterIndices?: readonly number[];
+  severity: "error" | "warning";
+  sourceRow?: number;
+  technicalDetail?: string;
+}[]) {
   return issues.map(adapterIssue);
 }
 
@@ -17,27 +25,33 @@ export function createInputAdapter(codecs: CodecManager): InputAdapter {
       if (type === "csv") {
         const parsed = (await codecs.csv()).parseCsv(bytes);
         return {
+          blankSourceRows: parsed.blankSourceRows,
           rows: parsed.rows,
           issues: parseIssues(parsed.issues),
           decoderLabel: parsed.decoderLabel,
+          rejectedRecords: parsed.rejectedRecords,
         };
       }
 
       if (type === "txt") {
         const parsed = (await codecs.big5Txt()).parseBig5Txt(bytes);
         return {
+          blankSourceRows: parsed.blankSourceRows,
           rows: parsed.rows,
           issues: parseIssues(parsed.issues),
           decoderLabel: "臺灣政府 BIG-5E 固定 208 bytes",
           sourceRowNumbers: parsed.sourceRowNumbers,
           sourceRowCount: parsed.sourceRowCount,
+          rejectedRecords: parsed.rejectedRecords,
         };
       }
 
       const parsed = (await codecs.spreadsheet()).parseSpreadsheet(bytes, FIXED_WIDTHS.length);
       return {
+        blankSourceRows: parsed.blankSourceRows,
         rows: parsed.rows,
         issues: parseIssues(parsed.issues),
+        rejectedRecords: parsed.rejectedRecords,
         sheetName: parsed.sheetName,
       };
     },

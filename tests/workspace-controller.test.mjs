@@ -13,13 +13,18 @@ function sourceFile(name, contents) {
   };
 }
 
-function controllerHarness({ archiveError, archiveExtraction, confirmClear = true, parsedRows } = {}) {
+function parsedRow(label) {
+  return [label, ...Array(14).fill("x")];
+}
+
+function controllerHarness({ archiveError, archiveExtraction, confirmClear = true, onArchiveExtract, parsedRows } = {}) {
   let callbacks;
-  let snapshot = { files: [], selectedFileId: null, outputFormat: "big5-txt", sources: [] };
+  let snapshot = { files: [], inputFormat: "csv", selectedFileId: null, outputFormat: "big5-txt", sources: [] };
   const announcements = [];
   const messages = [];
   const undos = [];
   const model = createWorkspaceModel();
+  model.setInputFormat("csv");
   const view = {
     bind(value) { callbacks = value; },
     clear() {},
@@ -36,6 +41,7 @@ function controllerHarness({ archiveError, archiveExtraction, confirmClear = tru
       async zip() {
         return {
           async extractZip() {
+            onArchiveExtract?.();
             if (archiveError) throw archiveError;
             return archiveExtraction ?? {
               files: [{
@@ -51,7 +57,7 @@ function controllerHarness({ archiveError, archiveExtraction, confirmClear = tru
       },
     },
     inputAdapter: {
-      async parse() { return { rows: parsedRows ?? [["A", "01"]] }; },
+      async parse() { return { rows: parsedRows ?? [parsedRow("A")] }; },
     },
     model,
     offlineCache: {
@@ -95,6 +101,30 @@ test("ZIP extraction appends files using their virtual paths", async () => {
   assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["bundle/folder/from-zip.csv"]);
   assert.deepEqual(harness.snapshot().files.map((file) => file.relativePath), ["folder/from-zip.csv"]);
   assert.deepEqual(harness.snapshot().sources.map((source) => source.name), ["bundle.zip"]);
+});
+
+test("lets the browser paint the spinner before ZIP extraction", async () => {
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+  const events = [];
+  globalThis.requestAnimationFrame = (callback) => {
+    events.push("paint");
+    callback(0);
+    return 1;
+  };
+  try {
+    const harness = controllerHarness({
+      onArchiveExtract() { events.push("extract"); },
+    });
+    harness.callbacks().onFilesChosen([sourceFile("bundle.zip", "zip")]);
+    await harness.controller.whenIdle();
+    assert.deepEqual(events, ["paint", "extract"]);
+  } finally {
+    if (originalRequestAnimationFrame) {
+      globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+    } else {
+      delete globalThis.requestAnimationFrame;
+    }
+  }
 });
 
 test("individual removal and clear all only change the browser workspace", async () => {
@@ -160,7 +190,7 @@ test("a row output decision updates the shared model summary", async () => {
 
 test("bulk row actions update only the current filtered page", async () => {
   const harness = controllerHarness({
-    parsedRows: [["A", "01"], ["B", "02"], ["C", "03"]],
+    parsedRows: [parsedRow("A"), parsedRow("B"), parsedRow("C")],
   });
   harness.callbacks().onFilesChosen([sourceFile("invalid.csv", "A,01")]);
   await harness.controller.whenIdle();
@@ -181,6 +211,25 @@ test("output format is global workspace state", () => {
   const harness = controllerHarness();
   harness.model.setOutputFormat("csv");
   assert.equal(harness.model.snapshot().outputFormat, "csv");
+});
+
+test("stores mixed uploads by family and treats XLS as XLSX", async () => {
+  const harness = controllerHarness();
+  harness.callbacks().onFilesChosen([
+    sourceFile("legacy.txt", "A,01"),
+    sourceFile("current.csv", "A,01"),
+    sourceFile("legacy.xls", "A,01"),
+    sourceFile("current.xlsx", "A,01"),
+  ]);
+  await harness.controller.whenIdle();
+
+  assert.deepEqual(
+    harness.snapshot().files.map((file) => file.sourceFormat),
+    ["txt", "csv", "xlsx", "xlsx"],
+  );
+  assert.equal(harness.model.selectedItem()?.virtualPath, "current.csv");
+  harness.model.setInputFormat("xlsx");
+  assert.equal(harness.model.selectedItem()?.virtualPath, "legacy.xls");
 });
 
 test("excluded ZIP entries are shown as separate path messages", async () => {
@@ -247,4 +296,22 @@ test("technical archive failures are presented with a helpful next step", async 
     "壓縮檔內有受密碼保護的檔案，請先解除密碼後再試：private/data.csv",
   );
   assert.doesNotMatch(harness.snapshot().files[0]?.error, /ZIP|項目|加密/u);
+  assert.deepEqual(harness.messages, [{
+    details: ["protected.zip：壓縮檔內有受密碼保護的檔案，請先解除密碼後再試：private/data.csv"],
+    title: "有些檔案未加入",
+    tone: "error",
+  }]);
+});
+
+test("an empty archive keeps an actionable not-added message", async () => {
+  const harness = controllerHarness({
+    archiveExtraction: { files: [], skippedEntries: [] },
+  });
+  harness.callbacks().onFilesChosen([sourceFile("empty.zip", "zip")]);
+  await harness.controller.whenIdle();
+
+  assert.equal(harness.snapshot().files[0]?.state, "error");
+  assert.deepEqual(harness.messages[0]?.details, [
+    "empty.zip：壓縮檔內沒有可加入的 TXT、CSV 或 Excel 檔案。",
+  ]);
 });

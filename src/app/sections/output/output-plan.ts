@@ -1,6 +1,7 @@
 import { outputPath } from "../../../core/file-formats";
 import { hasBlockingFileIssues, type InternalFile } from "../../../core/internal-model";
 import { validateOutput, type OutputIssue } from "../../../core/output-validation";
+import { activeWorkspaceItems } from "../../state/workspace-selectors";
 import type { WorkspaceSnapshot } from "../../state/workspace-types";
 
 export interface OutputScopeSummary {
@@ -16,18 +17,20 @@ export interface OutputPlan {
   outputIssues: readonly OutputIssue[];
   problems: readonly string[];
   processingFileCount: number;
+  replacementRowCount: number;
   selectedLabel: string;
   selectedSummary: OutputScopeSummary;
   totalSummary: OutputScopeSummary & { fileCount: number };
 }
 
 export function createOutputPlan(snapshot: WorkspaceSnapshot): OutputPlan {
-  const outputEntries = snapshot.files.filter((item) => item.state !== "ignored");
-  const files = snapshot.files.flatMap((item) => item.file ? [item.file] : []);
+  const outputEntries = activeWorkspaceItems(snapshot);
+  const files = outputEntries.flatMap((item) => item.file ? [item.file] : []);
   const outputIssues = validateOutput(files, snapshot.outputFormat);
-  const processingFileCount = snapshot.files.filter((item) => item.state === "processing").length;
+  const blockingOutputIssues = outputIssues.filter((issue) => issue.blocking);
+  const processingFileCount = outputEntries.filter((item) => item.state === "processing").length;
   const issueRows = new Map<string, Set<number>>();
-  outputIssues.forEach((issue) => {
+  blockingOutputIssues.forEach((issue) => {
     const rows = issueRows.get(issue.fileId) ?? new Set<number>();
     rows.add(issue.sourceRow);
     issueRows.set(issue.fileId, rows);
@@ -46,6 +49,9 @@ export function createOutputPlan(snapshot: WorkspaceSnapshot): OutputPlan {
     ...files.flatMap((file) => file.issues
       .filter((issue) => issue.severity === "error" && issue.sourceRow === undefined)
       .map((issue) => `${file.virtualPath}：${issue.message}`)),
+    ...files.flatMap((file) => file.rejectedRecords.length > 0
+      ? [`${file.virtualPath}：有 ${file.rejectedRecords.length} 列無法解析，請修正來源或移除此檔案。`]
+      : []),
     ...files.flatMap((file) => file.summary.includedRows === 0
       ? [`${file.virtualPath}：尚未勾選輸出列。`]
       : []),
@@ -87,7 +93,7 @@ export function createOutputPlan(snapshot: WorkspaceSnapshot): OutputPlan {
     canDownload: outputEntries.length > 0
       && processingFileCount === 0
       && problems.length === 0
-      && outputIssues.length === 0,
+      && blockingOutputIssues.length === 0,
     files,
     omittedRowCount: files.reduce(
       (total, file) => total + file.rows.length - file.summary.includedRows,
@@ -96,6 +102,9 @@ export function createOutputPlan(snapshot: WorkspaceSnapshot): OutputPlan {
     outputIssues,
     problems,
     processingFileCount,
+    replacementRowCount: new Set(outputIssues
+      .filter((issue) => !issue.blocking)
+      .map((issue) => `${issue.fileId}:${issue.sourceRow}`)).size,
     selectedLabel: selected?.virtualPath.split("/").at(-1) ?? "尚未選擇檔案",
     selectedSummary: scope(selectedIds),
     totalSummary: { ...scope(allIds), fileCount: outputEntries.length },

@@ -1,20 +1,20 @@
 # 站點健康檢查
 
-檢查日期：2026-08-05
-範圍：BIG-5E mapping／PUA recovery、共同資料管線、CSV／XLSX／TXT／ZIP I/O、工作區 UI、可及性、響應式版面、離線建置、安全、dependency、測試與文件。
+檢查日期：2026-08-12
+範圍：格式分流、來源證據、共同資料管線、CSV／XLSX／TXT／ZIP I/O、工作區 UI 契約、離線建置、安全、dependency、測試與文件。
 
 ## 結論
 
-目前分支是健康的 release candidate。完整本機 gate、dependency 安全檢查、正式建置 DOM 與桌面／窄螢幕截圖均通過；沒有保留舊 settings、方向 tabs、HKSCS fallback 或第二套 summary state。
+目前分支完成重大流程更新，TypeScript、Node tests、正式建置與 static build verifier 已通過。新版桌面／窄螢幕、鍵盤與螢幕閱讀器人工旅程仍須在發布前重跑，因此本文件不把舊版截圖或 Lighthouse 結果當作新版證據。
 
 本次 audit 額外修正一個資料契約偏差：CSV serializer 曾將每個值改寫成 Excel 文字公式。CSV 現在恢復為標準 literal-value 輸出，固定 UTF-8 BOM、CRLF、無標題列並保存最終 IR；需要可靠的試算表文字型別與前置零時使用 XLSX。
 
 ## 目前架構
 
-File／ZIP 依序經過 safe inventory 與 virtual path、format adapter、normalized Unicode IR、來源驗證、可稽核 transformation、最終驗證與 row selection、所選格式 output gate，再輸出 CSV／BIG-5E TXT／XLSX；單檔直接下載，多檔建立保留路徑的 ZIP。
+File／ZIP 先依 `TXT`／`CSV`／`XLSX` family 分類；只有目前輸入 family 經 format adapter、normalized Unicode IR、來源驗證、可稽核 transformation、最終驗證與 row selection，再通過獨立輸出格式的 gate。其他格式仍保留，ZIP 只負責安全容器路徑。
 
 - 固定 profile、IR、validation、transformation、output validation 與 serializer 分層；瀏覽器 view 不持有 domain rule。
-- workspace-model.ts 是檔案、選取列與整批輸出格式的唯一狀態；tree、preview 與 download plan 都由 snapshot 即時計算。
+- workspace-model.ts 是輸入 family、檔案、選取列與整批輸出格式的唯一狀態；active selector、tree、preview 與 download plan 都由 snapshot 即時計算。
 - CSV／BIG-5E TXT 是 base codec；Spreadsheet、ZIP 與預覽字型依需求延遲載入並加入對應離線資源群組。
 
 ## BIG-5E 與資料完整性
@@ -24,16 +24,16 @@ File／ZIP 依序經過 safe inventory 與 virtual path、format adapter、norma
 - 測試逐一枚舉所有 runtime BIG-5E code，確認 decode／encode round-trip 與 provenance entry count 相符。
 - Recovery table 含 4,107 筆官方資料可唯一收斂的 BMP PUA；測試確認輸出皆為 formal Unicode。
 - 未解決 PUA 不猜字義、不消失、不被通用 replacement 取代；預覽只遮罩 glyph，IR 與問題明細保留 code point。
-- BIG-5E 無對照或 byte overflow 只阻止 BIG-5E TXT；CSV／XLSX 仍可表示已確認的 Unicode。
+- BIG-5E 無對照字元在 TXT 逐字以全形 `？` 代替，不阻止下載；只有替代後 byte overflow 阻止 TXT。CSV／XLSX 保留 Unicode，未解決 PUA 也不改寫。
 
 ## UI 與可及性
 
-- 四區順序、原生 rules disclosure、單一 multiple picker、treegrid、100-row preview、三態 page-scoped selection、原生 output select 與獨立的 Section 3 reference picker／mapping controls 都存在於正式 DOM。
-- Section 1 合併來源結果、選取列與目前格式 output issue；Section 2 不再複製完整摘要。
+- Section 0 使用兩個原生 dropdown，畫面只顯示 `TXT`、`CSV`、`XLSX`；XLS 歸入 XLSX。Section 1 將目前格式與其他檔案分開，treegrid 顯示空白列、無法解析、資料、正確、錯誤、警告、已選與 output issue。
+- 可解析的 error／warning 列預設勾選且不形成一般 gate；無法解析列保存原始證據、不可勾選並形成結構性 gate。
+- 100-row preview 不另設問題欄，由狀態儲存格展開該筆全寬說明，初始保持收合。未還原 PUA 的可見值固定使用 `■`，code point 保持可見，技術資訊另行展開。
+- Section 2 不再選格式，只顯示 Section 0 選擇與下載狀態；Section 3 維持既有 minimal lookup contract，欄位規則移到流程後方。
 - 移除與清空 copy 明確表示只影響頁面記憶體；ZIP 內 symlink 對使用者顯示為「捷徑」。
-- 問題 detail 支援 hover、focus 與 click；大量 table body 不作為 live region，只有事件型狀態使用安靜的 polite announcement。
-- 1440×1200 與 390×844 正式建置截圖沒有版面溢位、重疊或不可見主要控制。
-- Node 24.18.0、Chrome 151.0.7922.71、Lighthouse 13.4.1 對正式 preview root 的本機診斷為 Performance 99、Accessibility 100、Best Practices 100、SEO 92。
+- 預覽已移除 hover tooltip；狀態儲存格是唯一可用鍵盤操作的 disclosure 控制。大量 table body 不作為 live region，只有事件型狀態使用安靜的 polite announcement。固定 table viewport、spinner slot、摘要高度與 stable scrollbar 降低內容切換位移，按鈕不再用位移式 active 效果。
 
 自動與 headless 證據不能取代螢幕閱讀器、完整鍵盤操作、原生 file picker、下載 dialog 或真實裝置測試；這些仍列為發布前人工檢查。
 
@@ -51,15 +51,15 @@ File／ZIP 依序經過 safe inventory 與 virtual path、format adapter、norma
 - npm run verify：Node tests、TypeScript、Vite production build、static build verifier。
 - Mapping：已知 BIG-5E／HKSCS 衝突、未知 bytes、完整 mapping round-trip、PUA recovery／unresolved cases。
 - Data：CSV quoting／CRLF／literal values、Excel formatted values／formula cache、208-byte TXT／padding／final CRLF。
-- Pipeline：日期、證號、性別、跨欄、空白列、TEL transformation、row inclusion、format-specific output gate。
-- Batch／ZIP：Unicode Path、CP950／CP437 filename fallback、nested ZIP、symlink、unsafe path、collision、fail-closed output。
-- UI contracts：tree aggregation、row filter、page-scoped bulk selection、focus continuity、ARIA references、responsive/static style rules。
+- Pipeline：日期、證號、性別、問號 warning、跨欄、空白列、rejected evidence、TEL transformation、row inclusion、format-specific output gate。
+- Batch／ZIP：Unicode Path、CP950／CP437 filename fallback、nested ZIP、symlink、unsafe path、collision、fail-closed output，以及 51 個 BIG-5E TXT／306,051 列極限 fixture 的 entry、expanded bytes、CRLF 與抽樣 parser 契約。
+- UI contracts：雙格式分類、tree aggregation、rejected filter、page-scoped bulk selection、ARIA references、responsive/static style rules。
 - Production：CSP、agent discovery、offline manifest groups、no source maps、base／Excel JavaScript budgets。
 
 ## 剩餘風險
 
 1. 接收端是否接受這份官方 BIG-5E profile、padding 與 CRLF 尚需核准的去識別 fixture 實測；本機 round-trip 不能替代外部系統 acceptance。
-2. 大型 Excel／ZIP 仍在主執行緒處理；25 MiB／100 MiB 是安全上限，不代表已證明互動延遲可接受。
+2. 大型 Excel／ZIP 仍在主執行緒處理；極限 ZIP fixture 的自動測試只證明解壓與資料契約，不證明 306,051 列的瀏覽器互動延遲或記憶體可接受。25 MiB／100 MiB 是安全上限，不是效能保證。
 3. 部署 origin 的 service-worker 安裝、更新與完全離線 reload 尚需瀏覽器 smoke test。
 4. Screen reader、forced-colors、reduced-motion 與完整鍵盤／觸控旅程需要人工或正式 browser automation 覆蓋。
 5. 專案本身尚未選定 license；在此之前不應接受第三方 contribution。

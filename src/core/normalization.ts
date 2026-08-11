@@ -1,8 +1,15 @@
 import { FIXED_FIELD_COUNT } from "./fixed-profile";
-import type { DataIssue, InternalCell, InternalRow } from "./internal-model";
+import type {
+  DataIssue,
+  InternalCell,
+  InternalRow,
+  RejectedSourceRecord,
+} from "./internal-model";
 
 export interface NormalizationResult {
+  blankSourceRows: number[];
   issues: DataIssue[];
+  rejectedRecords: RejectedSourceRecord[];
   rows: InternalRow[];
   sourceRows: number;
 }
@@ -12,19 +19,29 @@ function removeWhitespace(value: string): string {
 }
 
 function normalizeCell(value: string, fieldIndex: number): string {
-  const compact = removeWhitespace(value);
+  const compact = removeWhitespace(value).replaceAll("?", "？");
   return fieldIndex === 5 || fieldIndex === 11
     ? compact.toUpperCase()
     : compact;
 }
 
-function createStructureIssue(sourceRow: number, actualCount: number): DataIssue {
+export function normalizedCharacterIndex(
+  value: string,
+  characterIndex: number,
+  fieldIndex: number,
+): number {
+  return [...normalizeCell([...value].slice(0, characterIndex).join(""), fieldIndex)].length;
+}
+
+function rejectedColumnCount(
+  source: readonly string[],
+  sourceRow: number,
+): RejectedSourceRecord {
   return {
-    severity: "error",
-    stage: "source",
-    code: "INVALID_COLUMN_COUNT",
+    message: `共有 ${source.length} 欄，應為 ${FIXED_FIELD_COUNT} 欄。`,
+    original: source.map(String).join("｜"),
     sourceRow,
-    message: `共有 ${actualCount} 欄，應為 ${FIXED_FIELD_COUNT} 欄。`,
+    technicalDetail: `來源記錄有 ${source.length} 個欄位；固定格式要求 ${FIXED_FIELD_COUNT} 個欄位。`,
   };
 }
 
@@ -37,6 +54,8 @@ export function normalizeRows(
 ): NormalizationResult {
   const rows: InternalRow[] = [];
   const issues: DataIssue[] = [];
+  const blankSourceRows: number[] = [];
+  const rejectedRecords: RejectedSourceRecord[] = [];
 
   sourceRows.forEach((source, rowIndex) => {
     const sourceRow = options.sourceRowNumbers?.[rowIndex] ?? rowIndex + 1;
@@ -44,19 +63,14 @@ export function normalizeRows(
       normalizeCell(String(value), columnIndex + 1));
 
     if (normalizedSource.every((value) => value === "")) {
-      issues.push({
-        severity: "warning",
-        stage: "source",
-        code: "EMPTY_ROW",
-        message: "空白列不會輸出。",
-        sourceRow,
-      });
+      blankSourceRows.push(sourceRow);
       return;
     }
 
-    const rowIssues = source.length === FIXED_FIELD_COUNT
-      ? []
-      : [createStructureIssue(sourceRow, source.length)];
+    if (source.length !== FIXED_FIELD_COUNT) {
+      rejectedRecords.push(rejectedColumnCount(source, sourceRow));
+      return;
+    }
     const cells: InternalCell[] = Array.from(
       { length: FIXED_FIELD_COUNT },
       (_, columnIndex) => {
@@ -76,13 +90,15 @@ export function normalizeRows(
       sourceRow,
       included: true,
       cells,
-      issues: rowIssues,
+      issues: [],
       changes: [],
     });
   });
 
   return {
+    blankSourceRows,
     issues,
+    rejectedRecords,
     rows,
     sourceRows: options.sourceRowCount ?? sourceRows.length,
   };

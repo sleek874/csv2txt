@@ -2,11 +2,61 @@
 
 Thank you for helping improve Offline Data Conversion.
 
+## Engineering principles
+
+Optimize for code that a human can understand and verify. These are judgment
+guidelines, not mechanical limits on function length or file count:
+
+- Treat current requirements as the contract. Remove obsolete paths instead of
+  adding compatibility layers, fallbacks, or migrations unless compatibility is
+  an explicit requirement.
+- Choose the simplest end-to-end implementation that meets the contract. Avoid
+  speculative abstractions, configuration, indirection, and extension points.
+- Grow the product in working vertical increments. Each increment must leave the
+  existing conversion workflow usable and verified.
+- Keep modules cohesive and concerns clearly separated, but preserve useful
+  locality; do not split straightforward logic into trivial wrappers.
+- Prefer intention-revealing names, focused responsibilities, simple control
+  flow, and comments that explain why. Remove duplicated knowledge, but do not
+  force unrelated code behind a premature abstraction.
+- Reuse platform features and existing dependencies first. Check their
+  documentation and types before writing replacements; add a maintained library
+  only when it reduces total complexity or improves reliability.
+- Make durable architectural decisions. Do not introduce a knowingly temporary
+  path that is expected to be replaced later.
+
+For project-specific ownership boundaries, dependency requirements, and the
+fresh-start policy, see [the architecture guide](docs/ARCHITECTURE.md).
+
+## Working with coding agents
+
+- State the intended outcome, constraints, invariants, and allowed behavior
+  changes. Keep requirements separate from a proposed implementation.
+- For non-obvious or architectural work, ask for analysis and trade-offs before
+  mutation; the repository owner chooses the direction.
+- Prefer small, focused, reviewable patches. Treat generated code as untrusted
+  until tests, static checks, runtime evidence, and diff review support it.
+- Require facts, deductions, and assumptions to be distinguishable. Preserve
+  error semantics, ordering, output bytes, and public behavior unless the task
+  explicitly changes them.
+
+Use this sequence when the change is not trivial:
+
+```text
+intent -> constraints and invariants -> analysis -> alternatives and trade-offs
+       -> chosen direction -> minimal implementation -> verification -> diff review
+```
+
 ## Before implementation
 
 Read the [design specification](docs/DESIGN.md). Changes to encoding, byte
 widths, defaults, required fields, privacy behavior, or output bytes must
 update the design and tests in the same pull request.
+
+Before a major update, document and agree on the intended outcome, invariants,
+allowed behavior changes, ownership boundaries, first working increment, and
+verification evidence. Update the design, architecture, and roadmap according
+to their documented ownership before broad implementation begins.
 
 The 15 preset widths and fixed labels are documented in `docs/DESIGN.md`. Use
 only synthetic fixtures. An external-system compatibility fixture may be added

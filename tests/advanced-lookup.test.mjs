@@ -9,6 +9,7 @@ import {
 
 function internalRow(sourceRow, values, included = true) {
   return {
+    blankSourceRows: [],
     cells: values.map((normalizedValue, index) => ({
       fieldIndex: index + 1,
       issues: [],
@@ -26,13 +27,17 @@ function internalFile(virtualPath, rows) {
     id: virtualPath,
     issues: [],
     metadata: {},
+    rejectedRecords: [],
     rows,
     summary: {
-      errorCount: 0,
+      blankRows: 0,
+      correctRows: rows.length,
+      dataRows: rows.length,
+      errorRows: 0,
       includedRows: rows.filter((row) => row.included).length,
-      outputRows: rows.length,
-      sourceRows: rows.length,
-      warningCount: 0,
+      rejectedRows: 0,
+      sourceRecords: rows.length,
+      warningRows: 0,
     },
     virtualPath,
   };

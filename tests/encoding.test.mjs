@@ -8,8 +8,10 @@ import {
 } from "../src/core/private-use-recovery-mapping.ts";
 import {
   decodeBig5E,
+  decodeBig5EPartially,
   decodeSource,
   encodeBig5E,
+  encodeBig5EWithReplacement,
   privateUseCodePoints,
 } from "../src/core/encoding.ts";
 import { recoverPrivateUse } from "../src/core/private-use-recovery.ts";
@@ -64,6 +66,29 @@ test("uses the pinned Taiwan-government BIG-5E mapping instead of HKSCS", () => 
     sourceVersion: "20260505",
     sourceSha256: "f59dacc4dbdef334d7a887c3da671af02778e2c80adb2a7fd1053f64dbf9e659",
   });
+});
+
+test("partially decodes BIG-5E without swallowing valid neighboring bytes", () => {
+  assert.deepEqual(
+    decodeBig5EPartially(new Uint8Array([0xa6, 0xf3, 0xfb, 0xa9, 0xaa, 0xe5, 0xff, 0x41])),
+    {
+      text: "何？芸？A",
+      unrecognized: [
+        { bytes: [0xfb, 0xa9], characterIndex: 1, offset: 2 },
+        { bytes: [0xff], characterIndex: 3, offset: 6 },
+      ],
+    },
+  );
+});
+
+test("replaces only unmappable BIG-5E output characters with full-width questions", () => {
+  const encoded = encodeBig5EWithReplacement("甲廍乙");
+  assert.equal(decodeBig5E(encoded.bytes), "甲？乙");
+  assert.deepEqual(encoded.substitutions, [{
+    character: "廍",
+    characterIndex: 1,
+    codePoint: 0x5ecd,
+  }]);
 });
 
 test("round-trips every pinned non-ASCII BIG-5E mapping", () => {

@@ -1,9 +1,12 @@
 import { requireDescendant, requireElement } from "../../../browser/dom";
+import { FILE_FORMAT_LABELS, type FileFormat } from "../../../core/file-formats";
 import { validateOutput } from "../../../core/output-validation";
+import { activeWorkspaceItems, activeWorkspaceSnapshot, otherWorkspaceItems } from "../../state/workspace-selectors";
 import type { WorkspaceSnapshot } from "../../state/workspace-types";
 import { createDataPreviewView } from "./data-preview-view";
 import { createFilePickerView } from "./file-picker-view";
 import { createFileTreeView, type InventoryFilter } from "./file-tree-view";
+import { createOtherFilesView } from "./other-files-view";
 
 export interface InputSectionView {
   bind(options: {
@@ -34,14 +37,20 @@ export function createInputSectionView(): InputSectionView {
   const root = requireElement<HTMLElement>("#input-step");
   const dataRoot = requireDescendant<HTMLElement>(root, "#data-workspace");
   const selectionMessage = requireDescendant<HTMLElement>(root, "#selection-message");
+  const activeTab = requireDescendant<HTMLButtonElement>(root, "#active-files-tab");
+  const otherTab = requireDescendant<HTMLButtonElement>(root, "#other-files-tab");
+  const activePanel = requireDescendant<HTMLElement>(root, "#active-files-panel");
+  const otherPanel = requireDescendant<HTMLElement>(root, "#other-files-panel");
+  const activeFormat = requireDescendant<HTMLElement>(root, "#active-files-format");
+  const activeCount = requireDescendant<HTMLElement>(root, "#active-files-count");
+  const otherCount = requireDescendant<HTMLElement>(root, "#other-files-count");
   const previewName = requireDescendant<HTMLElement>(root, "#preview-file-name");
   const previewPath = requireDescendant<HTMLElement>(root, "#preview-file-path");
   const picker = createFilePickerView(root);
   const tree = createFileTreeView(root);
-  const preview = createDataPreviewView(
-    dataRoot,
-    requireDescendant<HTMLElement>(root, "#cell-tooltip"),
-  );
+  const otherFiles = createOtherFilesView(root);
+  const preview = createDataPreviewView(dataRoot);
+  let currentInputFormat: FileFormat = "txt";
 
   function hideSelectionMessage(): void {
     selectionMessage.hidden = true;
@@ -58,6 +67,30 @@ export function createInputSectionView(): InputSectionView {
     selectionMessage.classList.toggle("info-notice", tone === "info");
     selectionMessage.replaceChildren(heading, text);
     selectionMessage.hidden = false;
+  }
+
+  function showTab(tab: "active" | "other"): void {
+    const active = tab === "active";
+    activeTab.setAttribute("aria-selected", String(active));
+    otherTab.setAttribute("aria-selected", String(!active));
+    activeTab.tabIndex = active ? 0 : -1;
+    otherTab.tabIndex = active ? -1 : 0;
+    activePanel.hidden = !active;
+    otherPanel.hidden = active;
+  }
+
+  function moveTab(event: KeyboardEvent): void {
+    const tabs = [activeTab, otherTab];
+    const current = tabs.indexOf(event.currentTarget as HTMLButtonElement);
+    const requested = event.key === "ArrowRight" ? tabs[(current + 1) % tabs.length]
+      : event.key === "ArrowLeft" ? tabs[(current - 1 + tabs.length) % tabs.length]
+      : event.key === "Home" ? tabs[0]
+      : event.key === "End" ? tabs.at(-1)
+      : null;
+    if (!requested) return;
+    event.preventDefault();
+    showTab(requested === activeTab ? "active" : "other");
+    requested.focus();
   }
 
   return {
@@ -81,12 +114,22 @@ export function createInputSectionView(): InputSectionView {
         onVisibleRowsIncludedChange: options.onVisibleRowsIncludedChange,
         onRowIncludedChange: options.onRowIncludedChange,
       });
+      otherFiles.bind(options.onRemoveFile);
+      activeTab.addEventListener("click", () => showTab("active"));
+      otherTab.addEventListener("click", () => showTab("other"));
+      activeTab.addEventListener("keydown", moveTab);
+      otherTab.addEventListener("keydown", moveTab);
     },
     clear() {
       picker.clear();
       picker.setProcessing(false);
-      tree.clear();
+      tree.clear(currentInputFormat);
       preview.clear();
+      otherFiles.clear();
+      activeFormat.textContent = FILE_FORMAT_LABELS[currentInputFormat];
+      activeCount.textContent = "0";
+      otherCount.textContent = "0";
+      showTab("active");
       hideSelectionMessage();
     },
     clearMessage: picker.clearMessage,
@@ -94,23 +137,34 @@ export function createInputSectionView(): InputSectionView {
     fileInput: picker.fileInput,
     render(snapshot, pendingArchives) {
       const files = snapshot.files;
+      currentInputFormat = snapshot.inputFormat;
+      activeFormat.textContent = FILE_FORMAT_LABELS[snapshot.inputFormat];
       if (snapshot.sources.length === 0) {
         picker.clear();
         picker.setProcessing(pendingArchives > 0);
-        tree.clear();
+      } else {
+        picker.renderSummary(files);
+        picker.setProcessing(pendingArchives > 0 || files.some((file) => file.state === "processing"));
+      }
+      const activeSnapshot = activeWorkspaceSnapshot(snapshot);
+      const activeFiles = activeWorkspaceItems(snapshot);
+      const otherFilesItems = otherWorkspaceItems(snapshot);
+      activeCount.textContent = String(activeFiles.length);
+      otherCount.textContent = String(otherFilesItems.length);
+      otherFiles.render(snapshot);
+      const outputIssues = validateOutput(
+        activeFiles.flatMap((item) => item.file ? [item.file] : []),
+        snapshot.outputFormat,
+      );
+      tree.render(activeSnapshot, outputIssues);
+
+      if (activeFiles.length === 0) {
         preview.clear();
         hideSelectionMessage();
         return;
       }
-      picker.renderSummary(files);
-      picker.setProcessing(pendingArchives > 0 || files.some((file) => file.state === "processing"));
-      const outputIssues = validateOutput(
-        files.flatMap((item) => item.file ? [item.file] : []),
-        snapshot.outputFormat,
-      );
-      tree.render(snapshot, outputIssues);
 
-      const active = files.find((file) => file.id === snapshot.selectedFileId) ?? null;
+      const active = activeFiles.find((file) => file.id === activeSnapshot.selectedFileId) ?? null;
       if (!active) {
         hideSelectionMessage();
         preview.clear();

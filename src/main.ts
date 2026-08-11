@@ -6,6 +6,8 @@ import { createAdvancedController } from "./app/sections/advanced/advanced-contr
 import { createAdvancedView } from "./app/sections/advanced/advanced-view";
 import { createInputController } from "./app/sections/input/input-controller";
 import { createInputSectionView } from "./app/sections/input/input-section-view";
+import { createFormatController } from "./app/sections/format/format-controller";
+import { createFormatView } from "./app/sections/format/format-view";
 import { createOutputController } from "./app/sections/output/output-controller";
 import { createOutputView } from "./app/sections/output/output-view";
 import { bindRulesView } from "./app/sections/rules/rules-view";
@@ -37,8 +39,8 @@ const inputController = createInputController({
   unloadGuard,
   view: createInputSectionView(),
 });
+const formatController = createFormatController({ codecs, model, view: createFormatView() });
 const outputController = createOutputController({
-  codecs,
   model,
   outputAdapter: createOutputAdapter(codecs),
   status,
@@ -53,6 +55,7 @@ const advancedController = createAdvancedController({
 });
 
 inputController.bind();
+formatController.bind();
 outputController.bind();
 advancedController.bind();
 void offlineCache.prepareOfflineUse();

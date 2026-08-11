@@ -1,21 +1,25 @@
 import type { OutputFormat } from "./file-formats";
 import {
-  encodeBig5E,
+  encodeBig5EWithReplacement,
+  UNKNOWN_CHARACTER,
   UNRECOGNIZED_CHARACTER,
-  unencodableBig5ECharacters,
   type UnencodableBig5ECharacter,
 } from "./encoding";
 import { FIXED_FIELDS } from "./fixed-profile";
 import { cellValue, type InternalFile } from "./internal-model";
 
-export type OutputIssueCode = "OUTPUT_UNENCODABLE" | "OUTPUT_WIDTH_OVERFLOW";
+export type OutputIssueCode =
+  | "OUTPUT_UNENCODABLE"
+  | "OUTPUT_WIDTH_OVERFLOW";
 
 export interface OutputIssue {
+  blocking: boolean;
   code: OutputIssueCode;
   fieldIndex: number;
   fileId: string;
   message: string;
   sourceRow: number;
+  replacementCharacterIndices?: readonly number[];
   unsupportedCharacters?: readonly UnencodableBig5ECharacter[];
   virtualPath: string;
 }
@@ -39,33 +43,39 @@ export function validateOutput(
     return row.cells.flatMap((cell): OutputIssue[] => {
       const field = FIXED_FIELDS[cell.fieldIndex - 1];
       if (!field) return [];
-      const encoded = encodeBig5E(cellValue(cell));
-      if (!encoded) {
-        const unsupportedCharacters = unencodableBig5ECharacters(cellValue(cell));
+      const encoded = encodeBig5EWithReplacement(cellValue(cell));
+      const issues: OutputIssue[] = [];
+      if (encoded.substitutions.length > 0) {
+        const unsupportedCharacters = [...new Map(encoded.substitutions.map((item) => (
+          [item.codePoint, { character: item.character, codePoint: item.codePoint }]
+        ))).values()];
         const characterDetails = unsupportedCharacters
           .map(({ codePoint }) => `「${UNRECOGNIZED_CHARACTER}」（${unicodeLabel(codePoint)}）`)
           .join("、");
-        return [{
+        issues.push({
+          blocking: false,
           code: "OUTPUT_UNENCODABLE",
           fieldIndex: cell.fieldIndex,
           fileId: file.id,
-          message: `${characterDetails ? `字元${characterDetails}` : "這個字元"}沒有 BIG-5E 對照。`,
+          message: `${characterDetails ? `字元${characterDetails}` : "這個字元"}沒有 BIG-5E 對照；TXT 將以${UNKNOWN_CHARACTER}代替。`,
+          replacementCharacterIndices: encoded.substitutions.map((item) => item.characterIndex),
           sourceRow: row.sourceRow,
           unsupportedCharacters,
           virtualPath: file.virtualPath,
-        }];
+        });
       }
-      if (encoded.length > field.widthBytes) {
-        return [{
+      if (encoded.bytes.length > field.widthBytes) {
+        issues.push({
+          blocking: true,
           code: "OUTPUT_WIDTH_OVERFLOW",
           fieldIndex: cell.fieldIndex,
           fileId: file.id,
-          message: `內容長度為 ${encoded.length} bytes，超過 ${field.widthBytes} bytes。`,
+          message: `替代後內容長度為 ${encoded.bytes.length} bytes，超過 ${field.widthBytes} bytes。`,
           sourceRow: row.sourceRow,
           virtualPath: file.virtualPath,
-        }];
+        });
       }
-      return [];
+      return issues;
     });
   }));
 }

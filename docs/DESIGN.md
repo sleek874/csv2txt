@@ -6,7 +6,8 @@
 
 - 同一個檔案選擇區接受 CSV、XLS、XLSX、臺灣政府 BIG-5E TXT 及 ZIP。
 - 每個支援檔案由自動選定的 input adapter 解析為共用內部表示。
-- 使用者完成驗證與修改後，才為整批選擇 BIG-5E TXT、UTF-8 CSV 或 XLSX 輸出。
+- 使用者先獨立選擇輸入與輸出 `TXT`、`CSV` 或 `XLSX`；畫面不顯示編碼名稱。
+- 所有支援檔案都會保留，但只有目前輸入格式進入工作樹、預覽與輸出。
 
 本文件定義目前主要版本的固定契約。舊設定檔、舊 localStorage、方向式 UI、舊 DOM selector 與舊行為相容層已移除，不屬於支援範圍；尚未完成的能力不得在 UI、README 或部署說明中宣稱已完成。
 
@@ -21,6 +22,22 @@
 7. 大型批次只呈現目前需要的摘要與分頁資料，不一次渲染全部內容。
 8. 來源格式只決定 input adapter，不建立方向模式、分頁或平行工作流程。
 9. 輸出格式決定 serializer 與格式相容性 gate；共用 IR 不因格式切換而重建或改寫。
+10. 只要資料結構仍可可靠判讀，encoding repertoire 問題不取消勾選也不阻止下載。未知輸入片段在 IR 使用 `？`，Unicode 輸出保留未解決 PUA，TXT 無 mapping 字元在輸出邊界改為 `？`；`■` 只用於預覽。
+
+### 重大更新契約
+
+重大更新先修改並確認本文件，再開始廣泛實作。提案必須簡短定義：
+
+- 使用者要完成的結果，以及明確不在範圍內的項目。
+- 必須維持的資料、bytes／CRLF、隱私、安全、離線與可及性契約。
+- 允許改變或移除的現有行為；未列出的行為視為必須保留。
+- 第一個可端到端使用、可獨立驗證的最小版本。
+- 可觀察的完成條件、測試與仍需人工確認的證據。
+
+產品行為只在本文件定義；模組責任與 dependency 決策屬於
+[架構文件](ARCHITECTURE.md)，實作順序屬於 [更新計畫](ROADMAP.md)。目前
+需求不包含的舊路徑應連同對應 types、tests 與文件一起移除，不建立隱藏
+fallback 或 migration。
 
 ## 3. 固定 208-byte profile
 
@@ -32,9 +49,9 @@
 | 4 | 10 | `^[0-9]{10}$` | 必填；視為文字，不自動補零 |
 | 5 | 10 | `^[a-z0-9]{5,10}$` | 不分大小寫；移除空白後轉大寫；不是有效國民身分證或新式外來人口統一證號時顯示警告；若有效，性別與欄位8不符時依證號修正欄位8並顯示警告 |
 | 6 | 8 | `^[0-9]{8}$` | 必填；真實西元日期且嚴格早於臺北當地今天 |
-| 7 | 12 | `^.+$` | 必填；BIG-5E TXT 輸出時須可編碼且不得超過 12 bytes |
+| 7 | 12 | `^.+$` | 必填；BIG-5E TXT 替代後不得超過 12 bytes |
 | 8 | 1 | `^[12]$` | 必填；欄位5為有效證號時，以 `1↔8`、`2↔9` 對應性別；不一致時依證號改為 `1` 或 `2` 並顯示警告 |
-| 9 | 120 | `^.+$` | 必填；BIG-5E TXT 輸出時須可編碼且不得超過 120 bytes |
+| 9 | 120 | `^.+$` | 必填；BIG-5E TXT 替代後不得超過 120 bytes |
 | 10 | 15 | `^[0-9()+#-]{1,15}$` | 來源可空；在輸出修改階段補為 `0000000000`；最終值必須通過規則 |
 | 11 | 10 | `^[A-Z][12][0-9]{8}$` | 必填；移除空白後轉大寫；必須通過臺灣身分證檢查碼 |
 | 12 | 1 | `^[ABCD]$` | 必填 |
@@ -58,8 +75,9 @@ CSV、XLS 與 XLSX 每個來源儲存格依序處理：
 
 1. 保留必要的原始值供問題或變更說明使用。
 2. 移除全部 Unicode 空白字元，不只頭尾空白。
-3. 欄位5與欄位11轉成 ASCII 大寫。
-4. 寫入共用內部表示。
+3. 所有半形 `?`（U+003F）轉成全形 `？`（U+FF1F）；不套用 NFKC，也不改寫其他相似符號。
+4. 欄位5與欄位11轉成 ASCII 大寫。
+5. 寫入共用內部表示。
 
 不執行數字推斷、日期格式轉換、自動補零或科學記號還原。
 
@@ -68,9 +86,10 @@ CSV、XLS 與 XLSX 每個來源儲存格依序處理：
 1. 以 byte 檢查換行與 record 邊界；空白或只含空白的實體行先移除並計數。
 2. 每個其餘 record 必須在不含 CRLF 時恰為 208 bytes。
 3. 依固定欄寬切成 15 個 byte slice。
-4. 只使用數位發展部全字庫官方對照表嚴格解碼臺灣政府 BIG-5E，不使用 WHATWG／HKSCS 對照。
-5. 移除右側 `0x20` padding。
-6. 移除剩餘空白字元並寫入共用內部表示。
+4. 只使用數位發展部全字庫官方對照表解碼臺灣政府 BIG-5E，不使用 WHATWG／HKSCS 對照。欄位內無法對照的連續 byte segment 在 IR 以一個 `？` 代替，前後可確認的內容仍保留；issue 只記錄該 segment、欄內位置與替代字元位置，預覽才顯示 `■`。
+5. 只有 record 寬度或換行結構不成立時才把整列列為無法解析；局部 byte 問題仍建立資料列並預先勾選。
+6. 移除右側 `0x20` padding。
+7. 移除剩餘空白字元並寫入共用內部表示。
 
 不得以文字字元位置切割 BIG-5E 固定寬資料。
 
@@ -83,7 +102,7 @@ CSV、XLS 與 XLSX 每個來源儲存格依序處理：
 - 每個 Excel 儲存格皆空白的列。
 - `,,,` 這類所有解析欄位皆空的 CSV record。
 
-移除的列必須以結構化 warning 保留原始來源列號；不得另設空白列摘要欄位，也不得因後續欄位10補值而復活。
+移除的列只保留原始來源列號並計入「空白列」摘要，不產生 warning、不進入預覽，也不得因後續欄位10補值而復活。
 
 ## 5. 內部表示與兩次驗證
 
@@ -95,7 +114,9 @@ CSV、XLS 與 XLSX 每個來源儲存格依序處理：
 - 欄位與列層級 issue。
 - 修改前後差異與原因。
 
-內部值以 Unicode 為共同表示。CSV 或試算表來源若含舊式 Windows CP950 外字位置的 BMP Private Use Area 字元，自動修正階段會查詢由官方完整 CNS／Unicode、BIG5-2003、BIG-5E、電信、稅務、工商、財稅及各地政對照表產生的 recovery-only table。標準 BIG5 對照優先；其餘只有所有可用官方來源得到單一 formal Unicode candidate 時才還原。成功時保留 normalized original、寫入 final value 與 change log，並顯示簡短 verification warning；無法唯一還原的 BMP、Plane 15 或 Plane 16 PUA 保留原值並顯示簡短 error。不得使用 HKSCS fallback，也不得在結果有歧義時猜測字義。
+檔案另保留空白列號與無法解析的來源記錄。無法解析記錄保存來源列號、使用者可理解的原因、必要的原始內容，以及按需展開的技術證據；它不建立假 IR 列，也不能勾選。成功解析的原始資料不重複保存。`normalizedValue` 是主要 Unicode 值，`finalValue` 只在修正時 copy-on-write。
+
+內部值以 Unicode 為共同表示。CSV 或試算表來源若含舊式 Windows CP950 外字位置的 BMP Private Use Area 字元，自動修正階段會查詢由官方完整 CNS／Unicode、BIG5-2003、BIG-5E、電信、稅務、工商、財稅及各地政對照表產生的 recovery-only table。標準 BIG5 對照優先；其餘只有所有可用官方來源得到單一 formal Unicode candidate 時才還原。成功時保留 normalized original、寫入 final value 與 change log，並顯示簡短 verification warning；無法唯一還原的 BMP、Plane 15 或 Plane 16 PUA 保留原 code point 並顯示簡短 error。CSV／XLSX 仍輸出該 PUA；TXT 在輸出邊界以 `？` 代替。不得使用 HKSCS fallback，也不得在結果有歧義時猜測字義。
 
 處理順序固定為：
 
@@ -108,13 +129,17 @@ CSV、XLS 與 XLSX 每個來源儲存格依序處理：
 
 ## 6. 嚴重程度
 
-- `error`：該列預設納入輸出；使用者可在預覽中明確取消勾選。無法歸屬資料列的檔案層級 error 仍阻止輸出。
-- `warning`：該列預設納入輸出；包含來源 warning、空白列與任何自動修正。使用者可在預覽中明確取消勾選。
-- `output error`：只屬於 Section 2 的所選格式，不寫回 IR；不可強制略過，必須排除該列、修正內容或改選可表示該 Unicode 的格式。
+- `error`：可解析的該列預設納入輸出且不形成一般輸出 gate；使用者可在預覽中明確取消勾選。
+- `warning`：可解析的該列預設納入輸出且不形成一般輸出 gate；包含來源 warning 與任何自動修正。
+- `rejected`：來源列無法可靠解析；不可勾選，保留原始證據，並阻止不完整批次輸出。
+- `output notice`：只屬於 Section 2 的所選格式，不寫回 IR；BIG-5E 沒有 mapping 時逐字以 `？` 代替，保持勾選且不阻止下載。
+- `fatal output error`：替代後仍超出固定 byte 欄寬等無法建立合約輸出的問題；只計這類 output problem，並停用下載。
 - `valid`：沒有 error、warning 或自動修正，可直接輸出。
 - `excluded`：使用者或固定檔案篩選明確排除，不算 error，但必須計數。
 
-Section 1 的每個來源列只計入 `valid`、`error` 或 `warning` 一次；同列同時有 error 與 warning 時只計 error，但 hover／focus 詳情仍顯示全部 issue 與 change。
+Section 1 的來源記錄滿足 `來源記錄 = 空白列 + 無法解析 + 資料`，資料列滿足 `資料 = 正確 + 錯誤 + 警告`。同列同時有 error 與 warning 時只計 error，但展開後仍列出全部 issue 與 change。
+
+任何欄位含 `?` 或 `？` 時，正規化值一律使用 `？` 並顯示 warning，提醒它可能是原始內容或先前轉碼的替代字元。Decoder 產生的 `？` 使用更具體的 byte issue，不重複一般問號 warning。
 
 欄位5不是有效國民身分證或新式外來人口統一證號時為 warning；有效欄位5與欄位8性別不一致時，依證號覆寫欄位8並顯示 warning。欄位11仍只接受國民身分證，格式或檢查碼錯誤時為 error。
 
@@ -154,7 +179,9 @@ Section 1 的每個來源列只計入 `valid`、`error` 或 `warning` 一次；�
 
 ### 支援輸入
 
-同一個 file picker 接受 `.csv`、`.xls`、`.xlsx`、`.txt` 與 `.zip`。輸入格式不建立不同 tab、步驟或操作模式。
+同一個 file picker 接受 `.csv`、`.xls`、`.xlsx`、`.txt` 與 `.zip`。`.xls` 與 `.xlsx` 都歸為 `XLSX`；ZIP 只是一個容器，entry 依自己的格式分類。
+
+目前輸入格式的 regular files 顯示在以所選格式命名的分頁（`TXT`、`CSV` 或 `XLSX`），並進入解析、預覽與輸出；其他支援格式、symlink 與不支援項目顯示在「其他檔案」。切換輸入格式重用已保存項目，不重複上傳。
 
 所有支援的 regular file 預設保留；使用者可逐檔移除，也可從頂層移除一般檔案或整個 ZIP 來源，另可一次全部清除。這些操作不修改原始檔案。普通多檔選擇沒有原始資料夾資訊，因此各自置於頂層；ZIP 內安全相對路徑會保留。
 
@@ -172,17 +199,15 @@ Section 1 的每個來源列只計入 `valid`、`error` 或 `warning` 一次；�
 
 ZIP 與資料夾依子節點聚合嚴重程度：`error > warning > valid`。錯誤與警告同時存在時仍各自顯示計數，並以 `·` 分隔；色彩只採最高嚴重程度。
 
-## 10. 四區工作流程
+## 10. 工作流程
 
 頁面不使用方向 tabs，依固定順序呈現四個 section。
 
-### Section 0 — 欄位規則
+### Section 0 — 選擇格式
 
-- 顯示固定 15 欄、寬度、regex 與額外 validation hook，不提供編輯控制。
-- 頁面初始時收合，只顯示「15 欄／208 bytes」摘要與展開提示。
-- 使用原生或等效的 disclosure control；點擊、Enter 或 Space 可展開及再次收合。
-- 展開後顯示欄位1至欄位15；regex 直接可見，額外 hook 可由 hover、focus 及觸控開啟說明。
-- 不顯示業務欄位名稱、真實範例值或使用者資料。
+- 兩個原生 dropdown 分別選擇輸入與輸出；可見選項只有 `TXT`、`CSV`、`XLSX`。
+- 輸入與輸出可任意組合，選擇只改變 active family 或 serializer，不重建已解析 IR。
+- 一句固定高度摘要清楚說明「將把 X 檔轉換成 Y 檔」，避免選擇後版面位移。
 
 ### Section 1 — 輸入檔案
 
@@ -190,8 +215,12 @@ ZIP 與資料夾依子節點聚合嚴重程度：`error > warning > valid`。錯
 - 再次選取會追加至目前工作區，不覆蓋已載入的檔案。
 - 每個檔案右側提供清楚標示的移除按鈕，單檔移除可復原，整個來源與「清空清單」先顯示原生確認對話框；所有操作只影響瀏覽器記憶體。
 - 選取後立即建立安全虛擬目錄樹，並開始 inventory、decoder、IR、validation pipeline。
-- Tree table 保留 disclosure、縮排、狀態點與 `error > warning > valid` 聚合狀態，另以 archive／folder／file 圖示及文字區分種類，不只使用顏色。
-- 欄位依序為檔案、資料、正確、錯誤、警告、已選列數、目前輸出格式問題與移除；來源、資料夾與總計列都由子檔案即時計算，不建立第二份摘要狀態。
+- 所選格式分頁直接顯示 `TXT`、`CSV` 或 `XLSX`，與「其他檔案」分頁都顯示穩定數量；只有所選格式分頁顯示 tree table 與預覽。
+- 兩個分頁共用相同的 24rem 清單 viewport、sticky 表頭／表尾、sticky 檔名欄、移除按鈕與 site tokens；只有實際欄位內容不同。
+- 初始載入、逐檔移除、清空清單或切換格式造成的空清單，都在同一表格本體置中顯示「目前沒有 TXT／CSV／XLSX 檔案。」或「目前沒有其他檔案。」，並保留表頭、表尾及完整高度。
+- 「其他檔案」只區分「已保留」與「未加入」：已保留項目的格式顯示 `TXT`、`CSV` 或 `XLSX`；不支援項目的格式顯示「不支援（副檔名）」或「不支援（捷徑）」。無法開啟的 ZIP 顯示為「壓縮檔／未加入」，並在新增結果訊息保留可採取行動的原因；ZIP 不成為處理格式。
+- Tree table 保留 disclosure、縮排、文字狀態與 `error > warning > valid` 聚合，不只使用顏色。
+- 欄位依序為檔案、空白列、無法解析、資料、正確、錯誤、警告、已選、目前輸出問題與移除；來源、資料夾與總計列都由子檔案即時計算。
 - 成功新增不顯示重複通知卡；尚未由使用者開啟的檔案顯示可累計的「新加入」，不支援項目顯示持續存在的「未加入」。
 - 點選 regular file 後，在同一區顯示該檔案的 IR preview 與 error／warning。
 - 預覽不因 input adapter 改變版面，也不建立來源格式資訊 panel。
@@ -200,30 +229,30 @@ ZIP 與資料夾依子節點聚合嚴重程度：`error > warning > valid`。錯
 
 檔案樹保留安全目錄順序。選取單一檔案後，以 15 欄表格顯示共用內部表示：
 
-- 預設順序為 error、warning、valid；同級依原始來源列號。
+- 預設順序為 rejected、error、warning、valid；同級依原始來源列號。
 - 每頁最多 100 列，不提供一次顯示全部。
-- 可篩選全部、錯誤、警告、正確、未選取與目前格式輸出問題；自動修正由警告篩選涵蓋。
+- 可篩選全部、無法解析、錯誤、警告、正確、未選取與目前格式輸出問題；自動修正由警告篩選涵蓋。
 - 每列顯示「輸出」核取方塊；所有進入共同 IR 的資料列預設勾選，不因 error、warning 或自動修正而改變。
 - 「輸出」表頭使用三態核取方塊選取或取消選取本頁；只套用至目前篩選結果的當前分頁，不改變其他篩選結果或頁面。
 - 篩選器位於表格上方；分頁控制保留在表格下方，以單列顯示頁碼、列範圍及內容寬的上一頁／下一頁按鈕。
 - 只請求並渲染目前頁面。
 - Error cell 使用紅色狀態；warning 與自動修正 cell 使用黃色狀態。
 - 不只使用顏色，必須同時提供圖示、文字或邊框。
-- Hover、focus 與觸控都可從狀態欄開啟 issue 或自動修正說明。
-- 預覽中的無法還原 PUA 以全形 `■` 代替顯示；IR、問題明細與實際輸出值仍保留原始 code point。
+- 每筆有問題的資料後方提供預設收合的全寬說明；預覽不另設問題欄，點擊狀態儲存格即可展開，也可用鍵盤操作。不提供 hover tooltip。
+- 預覽中的無法還原 PUA、decoder 替代位置，以及所選 TXT 無法編碼的位置以 `■` 顯示；展開說明顯示 byte 或 `U+XXXX`。`■` 不得進入 IR 或輸出，使用者原本輸入的 `？` 仍顯示為 `？`。
+- 無法解析的列顯示原始證據，不提供輸出核取方塊；技術代碼、byte 或 decoder 細節置於「查看技術資訊」。
 - Error／warning 清單以完整邏輯資料列為單位，不把同一列拆成 15 筆 cell issue table；有問題的 cell 仍在該列中以底線標示，跨欄規則會標示全部相關欄位。
 - 格式錯誤顯示可直接採取行動的繁中說明；空值明確顯示「此欄位不能空白」，不向使用者顯示 regex。格式未通過時，不再疊加日期有效性或證號檢查碼錯誤。
 - UI 只顯示欄位編號。
 - 除非發生 decoder issue，預覽不另設來源格式或轉換方向資訊區。
 
-### Section 2 — 輸出格式
+### Section 2 — 下載結果
 
-- 以原生 dropdown 為整批選擇 `TXT（BIG-5E）`、`CSV（UTF-8）` 或 `XLSX`，不能逐檔混用格式；TXT（BIG-5E）為預設。
-- Dropdown 維持符合內容的緊湊寬度；Section 2 不再建立第二張檔案摘要表，只顯示簡短下載狀態、返回 Section 1 查看問題的連結與下載按鈕。
-- Section 1 tree table 的輸出問題欄隨 dropdown 在 TXT、CSV 與 XLSX 間更新；非零數字可直接選取檔案並篩選受影響資料列。
+- 不提供格式選擇；只顯示 Section 0 已選的 `TXT`、`CSV` 或 `XLSX`、簡短下載狀態、返回 Section 1 查看問題的連結與下載按鈕。
+- Section 1 tree table 的輸出問題欄隨 Section 0 輸出選擇更新，只計 fatal output findings；非阻擋的 `？` 替代只在受影響列與下載提示顯示。
 - 選擇只切換 output adapter，不重新解析來源或建立第二份 IR。
-- Section 2 只對目前勾選列執行格式相容性 gate。BIG-5E TXT 檢查官方 mapping 與 byte 寬度；CSV／XLSX 不因字元不在 BIG-5E 而被阻擋。
-- BIG-5E TXT 無法輸出時由 Section 1 預覽列出虛擬檔案路徑、來源列、欄位、沒有對照的字元及 Unicode code point；無法辨識字元固定以全形 `■` 顯示。
+- Section 2 只對目前勾選列執行格式相容性檢查。BIG-5E TXT 對無 mapping Unicode 逐字以 `？` 代替，再檢查 byte 寬度；mapping 與局部來源 byte 問題本身不阻擋任何格式，替代後 overflow 才是 fatal。
+- TXT 替代提示由 Section 1 預覽列出虛擬檔案路徑、來源列、欄位、`■` 及 Unicode code point。Section 2 保持下載可用並明說有幾列會以 `？` 代替；fatal count 不包含這些列。
 - 選擇變更可在背景預備對應 codec，但不得顯示吵雜的 live-region resource 訊息。
 - 可在驗證完成前選擇格式；任何仍會阻止下載的問題都停用下載並顯示完整問題清單。
 - Error／warning 列依預覽中的逐列勾選決定是否輸出；單一檔案直接下載，兩個以上檔案以 ZIP 保留安全虛擬目錄。
@@ -244,9 +273,14 @@ Section 3 明確是最小可運作模型（minimal working model），沒有 err
 - 輸出單一 `進階輸出-YYYYMMDDHHmm.xlsx`，worksheet 名稱為 `整理結果`，時間使用 `Asia/Taipei`。
 - 參照 workbook 與 lookup 結果同樣只保留在目前瀏覽器記憶體中。
 
+### 流程後方 — 欄位規則與說明
+
+- 固定 15 欄、208 bytes、寬度與 validation hook 位於 Section 3 後方的原生 disclosure。
+- 初始收合，只顯示摘要；展開後仍只顯示欄位編號與技術規格，不顯示業務欄位名稱或真實資料。
+
 ## 11. 輸出
 
-使用者在下載階段為整批選擇一種輸出格式：BIG-5E TXT、CSV 或 XLSX。這個選擇不改變正規化、自動修正或 IR 的 error／warning；它會建立獨立、非持久化的 output issues，並只在所選格式可表示全部勾選值時允許下載。
+使用者在 Section 0 為整批選擇一種輸出格式：BIG-5E TXT、CSV 或 XLSX。這個選擇不改變正規化、自動修正或 IR 的 error／warning；它會建立獨立、非持久化的 output findings。只有 blocking finding 影響 fatal count 與下載資格，非阻擋替代另行提示。
 
 ### BIG-5E TXT
 
@@ -254,7 +288,8 @@ Section 3 明確是最小可運作模型（minimal working model），沒有 err
 - 所有值靠左，右側以 `0x20` 補齊。
 - 每列後接 CRLF，包括最後一列。
 - 依固定的數位發展部 CNS11643／BIG-5E 對照表編碼，不使用 HKSCS fallback。
-- 任何值沒有官方 BIG-5E 對照或超出 byte 寬度時為 error。
+- Unicode 沒有官方 BIG-5E 對照時，TXT 逐字輸出全形 `？` 並顯示非阻擋提示；共用 IR 不改寫。
+- 以替代後 bytes 檢查欄寬；超出時為 fatal output error。
 
 ### XLSX
 
@@ -272,7 +307,7 @@ Section 3 明確是最小可運作模型（minimal working model），沒有 err
 
 - 每列都有是否輸出的明確決策；所有進入共同 IR 的資料列預設輸出，使用者可在預覽取消勾選。
 - 工作區只有一個檔案時直接下載所選格式；兩個以上檔案時才建立 ZIP。
-- 任一檔案仍在處理、無法讀取、含無法歸屬資料列的檔案層級 error，或完全沒有勾選輸出列時，阻止完整批次下載，不靜默略過檔案。
+- 任一目前所選格式檔案仍在處理、無法讀取、含無法解析來源記錄、檔案層級 error，或完全沒有勾選輸出列時，阻止完整批次下載，不靜默略過檔案。
 - 所有保留檔案的輸出副檔名依批次輸出選擇統一改為 `.txt`、`.csv` 或 `.xlsx`。
 - 保留安全虛擬目錄；巢狀 ZIP 名稱保留為資料夾 segment。
 - ZIP 檔名為 `<output-codec>-<YYYYMMDDHHmm>.zip`，時間在下載時以 `Asia/Taipei` 產生，例如 `big5-txt-202608041530.zip`。
@@ -286,7 +321,8 @@ Section 3 明確是最小可運作模型（minimal working model），沒有 err
 - 不把檔案內容、路徑、issue、內部表示或輸出放入 localStorage、IndexedDB、URL 或 log。
 - 預覽僅呈現目前選取檔案及分頁資料。
 - 狀態變化以簡潔事件訊息回報，不逐列在 live region 宣告。
-- 樹狀清單、分頁、tooltip/popover、水平捲動與下載必須可用鍵盤操作。
+- 格式選擇、檔案分頁、樹狀清單、問題 disclosure、分頁、水平捲動與下載必須可用鍵盤操作。
+- 控制項使用清楚完整文字；問題與警告由狀態儲存格明確提示，完整說明預設收合，技術細節再按需展開。表格 viewport、spinner slot、摘要高度與捲軸空間預留，避免內容切換造成不必要位移。
 - 動畫遵守 reduced-motion，狀態不只以顏色表達。
 
 ## 13. 不做的事

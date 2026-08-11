@@ -1,4 +1,4 @@
-import { privateUseCodePoints, unencodableBig5ECharacters } from "./encoding";
+import { privateUseCodePoints } from "./encoding";
 import { FIXED_FIELDS } from "./fixed-profile";
 import {
   cellValue,
@@ -15,7 +15,6 @@ const TAIWAN_ID_LETTER_CODES: Readonly<Record<string, number>> = {
   Y: 31, Z: 33,
 };
 
-const CHARACTER_REVIEW_MESSAGE = "請確認字元。";
 const CHARACTER_RECOVERY_FAILED_MESSAGE = "字元無法還原。";
 
 function issue(
@@ -169,17 +168,25 @@ function validateCell(
   if (stage === "final" && (
     privateUse.length > 0
     || recoveredPrivateUse
-    || unencodableBig5ECharacters(value).length > 0
   )) {
     issues.push(issue(
       stage,
       privateUse.length > 0 ? "error" : "warning",
       privateUse.length > 0
         ? "PRIVATE_USE_REMAINS"
-        : recoveredPrivateUse
-          ? "PRIVATE_USE_RECOVERED"
-          : "CHARACTER_REVIEW_REQUIRED",
-      privateUse.length > 0 ? CHARACTER_RECOVERY_FAILED_MESSAGE : CHARACTER_REVIEW_MESSAGE,
+        : "PRIVATE_USE_RECOVERED",
+      privateUse.length > 0 ? CHARACTER_RECOVERY_FAILED_MESSAGE : "請確認字元。",
+      row.sourceRow,
+      field.index,
+    ));
+  }
+
+  if (stage === "final" && /[?？]/u.test(value)) {
+    issues.push(issue(
+      stage,
+      "warning",
+      "QUESTION_MARK_PRESENT",
+      "偵測到問號；可能是原始內容，也可能是先前轉碼留下的替代字元，請核對來源。",
       row.sourceRow,
       field.index,
     ));
@@ -288,15 +295,9 @@ export function validateRows(
       issues: validateCell(cell, row, stage, today),
     }));
     const rowWithCells = { ...row, cells };
-    const retainedStructureIssues = row.issues.filter(
-      (currentIssue) => currentIssue.code === "INVALID_COLUMN_COUNT",
-    );
     return {
       ...rowWithCells,
-      issues: [
-        ...retainedStructureIssues,
-        ...validateCrossField(rowWithCells, stage),
-      ],
+      issues: validateCrossField(rowWithCells, stage),
     };
   });
 

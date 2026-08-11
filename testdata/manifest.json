@@ -5,7 +5,7 @@
   "fixedRecordWidthBytes": 208,
   "maximumRowsPerFile": 6000,
   "maximumDistinctDataFiles": 300,
-  "generatedDataFileCount": 45,
+  "generatedDataFileCount": 46,
   "fieldNames": [
     {
       "field": 1,
@@ -95,11 +95,14 @@
       "rowCount": 1,
       "category": "clean",
       "expectedSummary": {
-        "sourceRows": 1,
+        "blankRows": 0,
+        "correctRows": 1,
+        "dataRows": 1,
+        "errorRows": 0,
         "includedRows": 1,
-        "outputRows": 1,
-        "errorCount": 0,
-        "warningCount": 0
+        "rejectedRows": 0,
+        "sourceRecords": 1,
+        "warningRows": 0
       }
     },
     {
@@ -107,11 +110,14 @@
       "rowCount": 25,
       "category": "clean",
       "expectedSummary": {
-        "sourceRows": 25,
+        "blankRows": 0,
+        "correctRows": 25,
+        "dataRows": 25,
+        "errorRows": 0,
         "includedRows": 25,
-        "outputRows": 25,
-        "errorCount": 0,
-        "warningCount": 0
+        "rejectedRows": 0,
+        "sourceRecords": 25,
+        "warningRows": 0
       }
     },
     {
@@ -119,11 +125,14 @@
       "rowCount": 250,
       "category": "clean",
       "expectedSummary": {
-        "sourceRows": 250,
+        "blankRows": 0,
+        "correctRows": 250,
+        "dataRows": 250,
+        "errorRows": 0,
         "includedRows": 250,
-        "outputRows": 250,
-        "errorCount": 0,
-        "warningCount": 0
+        "rejectedRows": 0,
+        "sourceRecords": 250,
+        "warningRows": 0
       }
     },
     {
@@ -131,11 +140,14 @@
       "rowCount": 6000,
       "category": "clean",
       "expectedSummary": {
-        "sourceRows": 6000,
+        "blankRows": 0,
+        "correctRows": 6000,
+        "dataRows": 6000,
+        "errorRows": 0,
         "includedRows": 6000,
-        "outputRows": 6000,
-        "errorCount": 0,
-        "warningCount": 0
+        "rejectedRows": 0,
+        "sourceRecords": 6000,
+        "warningRows": 0
       }
     },
     {
@@ -143,11 +155,14 @@
       "rowCount": 4,
       "category": "clean",
       "expectedSummary": {
-        "sourceRows": 4,
+        "blankRows": 0,
+        "correctRows": 4,
+        "dataRows": 4,
+        "errorRows": 0,
         "includedRows": 4,
-        "outputRows": 4,
-        "errorCount": 0,
-        "warningCount": 0
+        "rejectedRows": 0,
+        "sourceRecords": 4,
+        "warningRows": 0
       }
     },
     {
@@ -155,11 +170,14 @@
       "rowCount": 30,
       "category": "modified",
       "expectedSummary": {
-        "sourceRows": 30,
+        "blankRows": 0,
+        "correctRows": 0,
+        "dataRows": 30,
+        "errorRows": 0,
         "includedRows": 30,
-        "outputRows": 0,
-        "errorCount": 0,
-        "warningCount": 30
+        "rejectedRows": 0,
+        "sourceRecords": 30,
+        "warningRows": 30
       }
     },
     {
@@ -167,11 +185,14 @@
       "rowCount": 40,
       "category": "warning",
       "expectedSummary": {
-        "sourceRows": 40,
+        "blankRows": 0,
+        "correctRows": 0,
+        "dataRows": 40,
+        "errorRows": 0,
         "includedRows": 40,
-        "outputRows": 0,
-        "errorCount": 0,
-        "warningCount": 40
+        "rejectedRows": 0,
+        "sourceRecords": 40,
+        "warningRows": 40
       }
     },
     {
@@ -179,11 +200,14 @@
       "rowCount": 40,
       "category": "error",
       "expectedSummary": {
-        "sourceRows": 40,
+        "blankRows": 0,
+        "correctRows": 0,
+        "dataRows": 40,
+        "errorRows": 35,
         "includedRows": 40,
-        "outputRows": 0,
-        "errorCount": 35,
-        "warningCount": 5
+        "rejectedRows": 0,
+        "sourceRecords": 40,
+        "warningRows": 5
       }
     },
     {
@@ -191,11 +215,14 @@
       "rowCount": 200,
       "category": "mixed",
       "expectedSummary": {
-        "sourceRows": 200,
+        "blankRows": 0,
+        "correctRows": 146,
+        "dataRows": 200,
+        "errorRows": 10,
         "includedRows": 200,
-        "outputRows": 146,
-        "errorCount": 10,
-        "warningCount": 44
+        "rejectedRows": 0,
+        "sourceRecords": 200,
+        "warningRows": 44
       }
     },
     {
@@ -203,11 +230,14 @@
       "rowCount": 1200,
       "category": "mixed",
       "expectedSummary": {
-        "sourceRows": 1200,
+        "blankRows": 0,
+        "correctRows": 1012,
+        "dataRows": 1200,
+        "errorRows": 36,
         "includedRows": 1200,
-        "outputRows": 1012,
-        "errorCount": 36,
-        "warningCount": 152
+        "rejectedRows": 0,
+        "sourceRecords": 1200,
+        "warningRows": 152
       }
     }
   ],
@@ -331,6 +361,16 @@
           "reason": "symlink"
         }
       ]
+    }
+  ],
+  "extremeArchives": [
+    {
+      "entryCount": 51,
+      "name": "extreme-51-txt-6001-rows.zip",
+      "rowsPerEntry": 6001,
+      "expandedBytes": 64270710,
+      "format": "txt",
+      "purpose": "ZIP 解壓與大量批次的人工效能壓力情境；不屬於一般 6,000 列 dataset 上限。"
     }
   ]
 }

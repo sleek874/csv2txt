@@ -27,6 +27,11 @@ set_cptable(cptable);
 const GENERATED_TODAY = "20260804";
 const MAX_ROWS_PER_FILE = 6_000;
 const MAX_DATA_FILES = 300;
+const EXTREME_ARCHIVE = {
+  entryCount: 51,
+  name: "extreme-51-txt-6001-rows.zip",
+  rowsPerEntry: 6_001,
+};
 const testdataDirectory = fileURLToPath(new URL("../testdata/", import.meta.url));
 const formatDirectories = Object.fromEntries(
   ["csv", "xls", "xlsx", "txt", "zip"].map((format) => [
@@ -276,19 +281,19 @@ function summarizeRows(definition, rows) {
   );
   const summary = file.summary;
   if (definition.category === "clean") {
-    assert.equal(summary.errorCount, 0);
-    assert.equal(summary.warningCount, 0);
+    assert.equal(summary.errorRows, 0);
+    assert.equal(summary.warningRows, 0);
   } else if (definition.category === "modified") {
-    assert.equal(summary.errorCount, 0);
-    assert.ok(summary.warningCount > 0);
+    assert.equal(summary.errorRows, 0);
+    assert.ok(summary.warningRows > 0);
   } else if (definition.category === "warning") {
-    assert.equal(summary.errorCount, 0);
-    assert.ok(summary.warningCount > 0);
+    assert.equal(summary.errorRows, 0);
+    assert.ok(summary.warningRows > 0);
   } else if (definition.category === "error") {
-    assert.ok(summary.errorCount > 0);
+    assert.ok(summary.errorRows > 0);
   } else {
-    assert.ok(summary.errorCount > 0);
-    assert.ok(summary.warningCount > 0);
+    assert.ok(summary.errorRows > 0);
+    assert.ok(summary.warningRows > 0);
   }
   return summary;
 }
@@ -355,6 +360,8 @@ const exclusionArchiveDefinition = {
     { path: "excluded/link.csv", reason: "symlink" },
   ],
 };
+const archiveFixtureCount = archiveDefinitions.length + 2;
+const FIXTURE_MTIME = new Date("1980-01-01T00:00:00.000Z");
 
 async function writeArchives() {
   mkdirSync(formatDirectories.zip, { recursive: true });
@@ -367,15 +374,37 @@ async function writeArchives() {
   }
   const accepted = exclusionArchiveDefinition.acceptedEntry;
   writeFileSync(join(formatDirectories.zip, exclusionArchiveDefinition.name), zipSync({
-    [accepted.path]: new Uint8Array(readFileSync(
-      join(formatDirectories[accepted.format], `${accepted.dataset}.${accepted.format}`),
-    )),
-    "excluded/notes.md": strToU8("This unsupported extension should be skipped.\n"),
+    [accepted.path]: [
+      new Uint8Array(readFileSync(
+        join(formatDirectories[accepted.format], `${accepted.dataset}.${accepted.format}`),
+      )),
+      { mtime: FIXTURE_MTIME },
+    ],
+    "excluded/notes.md": [
+      strToU8("This unsupported extension should be skipped.\n"),
+      { mtime: FIXTURE_MTIME },
+    ],
     "excluded/link.csv": [
       strToU8("../accepted/clean-single.csv"),
-      { attrs: 0o120777 << 16, os: 3 },
+      { attrs: 0o120777 << 16, mtime: FIXTURE_MTIME, os: 3 },
     ],
   }));
+
+  const extremeRows = Array.from(
+    { length: EXTREME_ARCHIVE.rowsPerEntry },
+    (_, index) => baseRow(index),
+  );
+  extremeRows.forEach(assertSerializableRow);
+  const extremeTxt = serializeBig5Txt(
+    extremeRows.map((values, index) => ({ sourceRow: index + 1, values })),
+  );
+  writeFileSync(
+    join(formatDirectories.zip, EXTREME_ARCHIVE.name),
+    await serializeZip(Array.from({ length: EXTREME_ARCHIVE.entryCount }, (_, index) => ({
+      path: `batch/synthetic-${String(index + 1).padStart(3, "0")}.txt`,
+      bytes: extremeTxt,
+    }))),
+  );
 }
 
 async function generateAll() {
@@ -394,7 +423,7 @@ async function generateAll() {
 
   await writeArchives();
 
-  const dataFileCount = generatedDatasets.length * 4 + archiveDefinitions.length + 1;
+  const dataFileCount = generatedDatasets.length * 4 + archiveFixtureCount;
   assert.ok(dataFileCount <= MAX_DATA_FILES);
   const manifest = {
     generatedAt: "2026-08-04",
@@ -421,18 +450,26 @@ async function generateAll() {
       entries: archive.entries.map(([path, format, dataset]) => ({ path, format, dataset })),
     })),
     exclusionArchives: [exclusionArchiveDefinition],
+    extremeArchives: [{
+      ...EXTREME_ARCHIVE,
+      expandedBytes: EXTREME_ARCHIVE.entryCount
+        * EXTREME_ARCHIVE.rowsPerEntry
+        * (FIXED_RECORD_WIDTH_BYTES + 2),
+      format: "txt",
+      purpose: "ZIP 解壓與大量批次的人工效能壓力情境；不屬於一般 6,000 列 dataset 上限。",
+    }],
   };
   writeFileSync(join(testdataDirectory, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
 if (process.argv.includes("--archives-only")) {
   await writeArchives();
-  console.log(`Regenerated ${archiveDefinitions.length + 1} ZIP files from the current format folders.`);
+  console.log(`Regenerated ${archiveFixtureCount} ZIP files from the current format folders.`);
 } else {
   await generateAll();
   console.log(
-    `Generated ${generatedDatasets.length} logical datasets in CSV, XLS, XLSX, and BIG-5E TXT, plus ${archiveDefinitions.length + 1} ZIP fixtures.`,
+    `Generated ${generatedDatasets.length} logical datasets in CSV, XLS, XLSX, and BIG-5E TXT, plus ${archiveFixtureCount} ZIP fixtures.`,
   );
-  console.log(`Largest dataset: ${Math.max(...generatedDatasets.map((dataset) => dataset.rowCount))} rows; total data files: ${generatedDatasets.length * 4 + archiveDefinitions.length + 1}.`);
+  console.log(`Largest standard dataset: ${Math.max(...generatedDatasets.map((dataset) => dataset.rowCount))} rows; total repository fixtures: ${generatedDatasets.length * 4 + archiveFixtureCount}.`);
   console.log(`Example output: ${basename(join(formatDirectories.csv, "clean-large-6000.csv"))}`);
 }

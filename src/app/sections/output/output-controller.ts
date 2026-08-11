@@ -1,13 +1,12 @@
 import type { AppStatus } from "../../shell/app-status";
 import type { OutputAdapter } from "../../adapters/output-adapter";
-import type { CodecManager } from "../../resources/codec-manager";
 import type { WorkspaceModel } from "../../state/workspace-model";
+import { activeWorkspaceItems } from "../../state/workspace-selectors";
 import { OUTPUT_PRESENTATIONS } from "./output-presentations";
 import { createOutputPlan } from "./output-plan";
 import type { OutputView } from "./output-view";
 
 interface OutputControllerOptions {
-  codecs: CodecManager;
   model: WorkspaceModel;
   outputAdapter: OutputAdapter;
   status: AppStatus;
@@ -22,7 +21,7 @@ export function createOutputController(options: OutputControllerOptions) {
     const snapshot = options.model.snapshot();
     return JSON.stringify([
       snapshot.outputFormat,
-      snapshot.files.map((item) => [
+      activeWorkspaceItems(snapshot).map((item) => [
         item.id,
         item.state,
         item.file?.rows.filter((row) => row.included).map((row) => row.sourceRow),
@@ -69,13 +68,6 @@ export function createOutputController(options: OutputControllerOptions) {
     bind() {
       options.view.bind({
         onDownload: () => void download(),
-        onFormatChange: (format) => {
-          outputError = null;
-          options.model.setOutputFormat(format);
-          void options.codecs.prepareOutput(format).catch(() => {
-            // A visible error is shown only if the user actually requests output.
-          });
-        },
       });
       options.model.subscribe(() => {
         outputError = null;

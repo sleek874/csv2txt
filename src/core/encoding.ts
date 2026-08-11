@@ -9,6 +9,17 @@ export interface DecodedSource {
   ambiguous: boolean;
 }
 
+export interface UnrecognizedBig5EBytes {
+  bytes: readonly number[];
+  characterIndex: number;
+  offset: number;
+}
+
+export interface PartialBig5EDecode {
+  text: string;
+  unrecognized: readonly UnrecognizedBig5EBytes[];
+}
+
 function startsWith(bytes: Uint8Array, prefix: readonly number[]): boolean {
   return prefix.every((byte, index) => bytes[index] === byte);
 }
@@ -24,27 +35,63 @@ function strictUnicodeDecode(
   }
 }
 
-export function decodeBig5E(bytes: Uint8Array): string {
+export const UNKNOWN_CHARACTER = "？";
+export const UNRECOGNIZED_CHARACTER = "■";
+
+function isBig5Trail(byte: number): boolean {
+  return (byte >= 0x40 && byte <= 0x7e) || (byte >= 0xa1 && byte <= 0xfe);
+}
+
+function isBig5Lead(byte: number): boolean {
+  return byte >= 0x81 && byte <= 0xfe;
+}
+
+export function decodeBig5EPartially(bytes: Uint8Array): PartialBig5EDecode {
   let decoded = "";
+  let characterCount = 0;
+  const unrecognized: { bytes: number[]; characterIndex: number; offset: number }[] = [];
+
+  function appendUnrecognized(offset: number, values: readonly number[]): void {
+    const previous = unrecognized.at(-1);
+    if (previous && previous.offset + previous.bytes.length === offset) {
+      previous.bytes.push(...values);
+      return;
+    }
+    decoded += UNKNOWN_CHARACTER;
+    unrecognized.push({ bytes: [...values], characterIndex: characterCount, offset });
+    characterCount += 1;
+  }
+
   for (let index = 0; index < bytes.length; index += 1) {
     const first = bytes[index];
     if (first === undefined) break;
     if (first < 0x80) {
       decoded += String.fromCodePoint(first);
+      characterCount += 1;
       continue;
     }
 
     const second = bytes[index + 1];
-    const codePoint = second === undefined
-      ? undefined
-      : big5eCodePoint((first << 8) | second);
+    const pairLength = isBig5Lead(first) && second !== undefined && isBig5Trail(second) ? 2 : 1;
+    const codePoint = pairLength === 2 ? big5eCodePoint((first << 8) | (second ?? 0)) : undefined;
     if (codePoint === undefined) {
-      throw new Error("檔案含有無法依臺灣政府 BIG-5E 對照表解讀的位元組。");
+      appendUnrecognized(index, [...bytes.subarray(index, index + pairLength)]);
+      index += pairLength - 1;
+      continue;
     }
     decoded += String.fromCodePoint(codePoint);
+    characterCount += 1;
     index += 1;
   }
-  return decoded;
+  return { text: decoded, unrecognized };
+}
+
+export function decodeBig5E(bytes: Uint8Array): string {
+  const decoded = decodeBig5EPartially(bytes);
+  if (decoded.unrecognized.length > 0) {
+    throw new Error("檔案含有無法依臺灣政府 BIG-5E 對照表解讀的位元組。");
+  }
+  return decoded.text;
 }
 
 function utf16Hint(bytes: Uint8Array): "utf-16le" | "utf-16be" | null {
@@ -168,23 +215,39 @@ export function encodeBig5E(value: string): Uint8Array | null {
   return new Uint8Array(encoded);
 }
 
+export interface Big5EEncodeResult {
+  bytes: Uint8Array;
+  substitutions: readonly (UnencodableBig5ECharacter & { characterIndex: number })[];
+}
+
+export function encodeBig5EWithReplacement(value: string): Big5EEncodeResult {
+  const replacement = big5eEncodedCode(UNKNOWN_CHARACTER.codePointAt(0) ?? 0);
+  if (replacement === undefined) {
+    throw new Error("BIG-5E 對照表缺少全形問號。");
+  }
+  const encoded: number[] = [];
+  const substitutions: (UnencodableBig5ECharacter & { characterIndex: number })[] = [];
+  [...value].forEach((character, characterIndex) => {
+    const codePoint = character.codePointAt(0);
+    if (codePoint === undefined) return;
+    if (codePoint < 0x80) {
+      encoded.push(codePoint);
+      return;
+    }
+    const encodedCode = big5eEncodedCode(codePoint);
+    if (encodedCode === undefined) {
+      encoded.push(replacement >> 8, replacement & 0xff);
+      substitutions.push({ character, characterIndex, codePoint });
+      return;
+    }
+    encoded.push(encodedCode >> 8, encodedCode & 0xff);
+  });
+  return { bytes: new Uint8Array(encoded), substitutions };
+}
+
 export interface UnencodableBig5ECharacter {
   character: string;
   codePoint: number;
-}
-
-export const UNRECOGNIZED_CHARACTER = "■";
-
-export function unencodableBig5ECharacters(value: string): UnencodableBig5ECharacter[] {
-  const characters = new Map<number, string>();
-  for (const character of value) {
-    const codePoint = character.codePointAt(0);
-    if (codePoint === undefined || codePoint < 0x80 || big5eEncodedCode(codePoint) !== undefined) {
-      continue;
-    }
-    characters.set(codePoint, character);
-  }
-  return [...characters].map(([codePoint, character]) => ({ character, codePoint }));
 }
 
 export function isPrivateUseCodePoint(codePoint: number): boolean {

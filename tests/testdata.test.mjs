@@ -44,7 +44,8 @@ test("mock data stays within the requested file and row limits", () => {
     manifest.generatedDataFileCount,
     manifest.datasets.length * manifest.formats.length
       + manifest.archives.length
-      + manifest.exclusionArchives.length,
+      + manifest.exclusionArchives.length
+      + manifest.extremeArchives.length,
   );
   assert.equal(Math.max(...manifest.datasets.map((dataset) => dataset.rowCount)), 6_000);
   assert.ok(manifest.datasets.every((dataset) => dataset.rowCount <= 6_000));
@@ -54,6 +55,33 @@ test("mock data stays within the requested file and row limits", () => {
   ), 0);
   assert.equal(generatedFileCount, manifest.generatedDataFileCount);
 });
+
+for (const archive of manifest.extremeArchives) {
+  test(`${archive.name} preserves its documented archive stress boundary`, async () => {
+    const bytes = readFileSync(new URL(`zip/${archive.name}`, testdataDirectory));
+    const extraction = await extractZip(archive.name, bytes);
+    assert.equal(extraction.skippedEntries.length, 0);
+    assert.equal(extraction.files.length, archive.entryCount);
+    assert.equal(
+      extraction.files.reduce((total, file) => total + file.bytes.byteLength, 0),
+      archive.expandedBytes,
+    );
+    assert.deepEqual(
+      extraction.files.map((file) => file.relativePath),
+      Array.from({ length: archive.entryCount }, (_, index) => (
+        `batch/synthetic-${String(index + 1).padStart(3, "0")}.txt`
+      )),
+    );
+
+    const first = extraction.files[0];
+    const last = extraction.files.at(-1);
+    assert.ok(first && last);
+    assert.deepEqual(last.bytes, first.bytes);
+    assertCrLf(first.bytes, first.relativePath);
+    assert.equal(rowsFor("txt", basename(first.relativePath), first.bytes).length, archive.rowsPerEntry);
+    assert.ok(archive.rowsPerEntry > manifest.maximumRowsPerFile);
+  });
+}
 
 for (const dataset of manifest.datasets) {
   test(`CSV, XLS, XLSX, and TXT contain identical ${dataset.name} rows`, () => {

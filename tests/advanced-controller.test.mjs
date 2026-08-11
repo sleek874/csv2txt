@@ -10,6 +10,7 @@ function selectedFileWithIssues() {
   values[5] = "20000101";
   values[10] = "A123456789";
   return {
+    blankSourceRows: [],
     id: "primary",
     issues: [{
       code: "FILE_ISSUE",
@@ -18,6 +19,7 @@ function selectedFileWithIssues() {
       stage: "adapter",
     }],
     metadata: {},
+    rejectedRecords: [],
     rows: [{
       cells: values.map((normalizedValue, index) => ({
         fieldIndex: index + 1,
@@ -36,11 +38,14 @@ function selectedFileWithIssues() {
       sourceRow: 1,
     }],
     summary: {
-      errorCount: 2,
+      blankRows: 0,
+      correctRows: 0,
+      dataRows: 1,
+      errorRows: 1,
       includedRows: 1,
-      outputRows: 0,
-      sourceRows: 1,
-      warningCount: 0,
+      rejectedRows: 0,
+      sourceRecords: 1,
+      warningRows: 0,
     },
     virtualPath: "primary.csv",
   };
@@ -48,6 +53,7 @@ function selectedFileWithIssues() {
 
 test("advanced download ignores data issues and expands duplicate reference matches", async () => {
   const model = createWorkspaceModel();
+  model.setInputFormat("csv");
   model.addSource({ id: "input", kind: "file", name: "primary.csv" });
   model.add({
     file: selectedFileWithIssues(),
@@ -55,6 +61,7 @@ test("advanced download ignores data issues and expands duplicate reference matc
     relativePath: "primary.csv",
     size: 100,
     sourceId: "input",
+    sourceFormat: "csv",
     state: "ready",
     virtualPath: "primary.csv",
   });

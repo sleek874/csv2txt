@@ -8,14 +8,17 @@ import {
   type DataIssue,
   type InternalFile,
   type InternalRow,
+  type RejectedSourceRecord,
   type TransformationChange,
 } from "../../../core/internal-model";
 
-export type RowFilter = "all" | "error" | "warning" | "valid" | "excluded" | "output";
+export type RowFilter = "all" | "rejected" | "error" | "warning" | "valid" | "excluded" | "output";
 
 const PAGE_SIZE = 100;
 const PREVIEW_ROW_SLOTS = 14;
+const PREVIEW_COLUMN_COUNT = 18;
 const FILTERABLE_ROW_STATES: readonly RowFilter[] = [
+  "rejected",
   "error",
   "warning",
   "valid",
@@ -23,10 +26,15 @@ const FILTERABLE_ROW_STATES: readonly RowFilter[] = [
   "output",
 ];
 
-export function previewCellValue(value: string): string {
-  return [...value].map((character) => {
+export function previewCellValue(
+  value: string,
+  replacementCharacterIndices: readonly number[] = [],
+): string {
+  const replacements = new Set(replacementCharacterIndices);
+  return [...value].map((character, characterIndex) => {
     const codePoint = character.codePointAt(0);
-    return codePoint !== undefined && isPrivateUseCodePoint(codePoint)
+    return replacements.has(characterIndex)
+      || (codePoint !== undefined && isPrivateUseCodePoint(codePoint))
       ? UNRECOGNIZED_CHARACTER
       : character;
   }).join("");
@@ -39,6 +47,16 @@ export function previewChangeDetail(
   return change.before === ""
     ? `欄位${change.fieldIndex}：空白已改為 ${after}。`
     : `欄位${change.fieldIndex}：${previewCellValue(change.before)} 已改為 ${after}。`;
+}
+
+export function previewCellIssues(
+  row: InternalRow,
+  fileIssues: readonly DataIssue[],
+  fieldIndex: number,
+): DataIssue[] {
+  return collectRowIssues(row, fileIssues).filter(
+    (issue) => issueFieldIndices(issue).includes(fieldIndex),
+  );
 }
 
 export function visibleRowsSelectionState(
@@ -77,6 +95,7 @@ function rowMatches(
 ): boolean {
   const issues = rowIssues(row, file);
   switch (filter) {
+    case "rejected": return false;
     case "error": return issues.some((issue) => issue.severity === "error");
     case "warning": return !issues.some((issue) => issue.severity === "error")
       && (issues.some((issue) => issue.severity === "warning") || row.changes.length > 0);
@@ -103,9 +122,11 @@ function rowStatus(
   if (issues.some((issue) => issue.severity === "error")) {
     return { label: "錯誤", tone: "error" };
   }
-  if (outputIssuesForRow(row, outputIssues).length > 0) {
+  const rowOutputIssues = outputIssuesForRow(row, outputIssues);
+  if (rowOutputIssues.some((issue) => issue.blocking)) {
     return { label: "輸出問題", tone: "error" };
   }
+  if (rowOutputIssues.length > 0) return { label: "輸出提醒", tone: "warning" };
   if (issues.some((issue) => issue.severity === "warning") || row.changes.length > 0) {
     return { label: "警告", tone: "warning" };
   }
@@ -123,59 +144,36 @@ function issueDetail(issue: DataIssue): string {
     : `欄位${fields.join("、")}：${issue.message}`;
 }
 
-export function createDataPreviewView(root: HTMLElement, tooltip: HTMLElement): DataPreviewView {
+function privateUseDetails(row: InternalRow): string[] {
+  return row.cells.flatMap((cell) => {
+    const codePoints = [...new Set([...cellValue(cell)].flatMap((character) => {
+      const codePoint = character.codePointAt(0);
+      return codePoint !== undefined && isPrivateUseCodePoint(codePoint)
+        ? [`U+${codePoint.toString(16).toUpperCase().padStart(4, "0")}`]
+        : [];
+    }))];
+    return codePoints.length > 0
+      ? [`欄位${cell.fieldIndex}：■（${codePoints.join("、")}）沒有已確認的字元對照，請核對來源。`]
+      : [];
+  });
+}
+
+type PreviewRecord =
+  | { kind: "data"; row: InternalRow }
+  | { kind: "rejected"; record: RejectedSourceRecord };
+
+export function createDataPreviewView(root: HTMLElement): DataPreviewView {
   const rowFilter = requireDescendant<HTMLSelectElement>(root, "#row-filter");
   const visibleRowsCheckbox = requireDescendant<HTMLInputElement>(root, "#visible-rows-checkbox");
-  const visibleRowsControl = requireDescendant<HTMLLabelElement>(root, ".row-output-heading-control");
   const tableBody = requireDescendant<HTMLTableSectionElement>(root, "#data-table-body");
   const pageStatus = requireDescendant<HTMLElement>(root, "#data-page-status");
   const previousButton = requireDescendant<HTMLButtonElement>(root, "#previous-page-button");
   const nextButton = requireDescendant<HTMLButtonElement>(root, "#next-page-button");
-  const tableScroll = requireDescendant<HTMLElement>(root, ".data-table-scroll");
   let currentFile: InternalFile | null = null;
   let currentOutputIssues: readonly OutputIssue[] = [];
   let currentPage = 0;
   let visibleSourceRows: number[] = [];
-  let activeDetailTrigger: HTMLElement | null = null;
-
-  function detailTrigger(target: EventTarget | null): HTMLElement | null {
-    return target instanceof Element ? target.closest<HTMLElement>(".detail-trigger") : null;
-  }
-
-  function hideDetail(trigger?: HTMLElement | null): void {
-    if (trigger && activeDetailTrigger !== trigger) return;
-    activeDetailTrigger?.removeAttribute("aria-describedby");
-    activeDetailTrigger = null;
-    tooltip.hidden = true;
-    tooltip.textContent = "";
-  }
-
-  function showDetail(trigger: HTMLElement): void {
-    const detail = trigger.dataset.detail;
-    if (!detail) return;
-    activeDetailTrigger?.removeAttribute("aria-describedby");
-    activeDetailTrigger = trigger;
-    trigger.setAttribute("aria-describedby", "cell-tooltip");
-    tooltip.textContent = detail;
-    tooltip.hidden = false;
-    const triggerRect = trigger.getBoundingClientRect();
-    const tooltipRect = tooltip.getBoundingClientRect();
-    const edgeGap = 8;
-    const preferredLeft = triggerRect.left + triggerRect.width / 2 - tooltipRect.width / 2;
-    tooltip.style.left = `${Math.max(edgeGap, Math.min(preferredLeft, window.innerWidth - tooltipRect.width - edgeGap))}px`;
-    const below = triggerRect.bottom + edgeGap;
-    tooltip.style.top = `${below + tooltipRect.height <= window.innerHeight - edgeGap
-      ? below
-      : Math.max(edgeGap, triggerRect.top - tooltipRect.height - edgeGap)}px`;
-  }
-
-  function setDetail(element: HTMLElement, details: readonly string[], ariaLabel: string): void {
-    if (details.length === 0) return;
-    element.classList.add("detail-trigger");
-    element.dataset.detail = details.join("\n");
-    element.tabIndex = 0;
-    element.setAttribute("aria-label", ariaLabel);
-  }
+  const expandedIssues = new Set<string>();
 
   function resetFilterOptions(): void {
     Array.from(rowFilter.options).forEach((option) => { option.disabled = false; });
@@ -184,7 +182,9 @@ export function createDataPreviewView(root: HTMLElement, tooltip: HTMLElement): 
   function syncFilterOptions(file: InternalFile, outputIssues: readonly OutputIssue[]): void {
     FILTERABLE_ROW_STATES.forEach((filter) => {
       const option = Array.from(rowFilter.options).find((candidate) => candidate.value === filter);
-      if (option) option.disabled = !file.rows.some((row) => rowMatches(row, file, outputIssues, filter));
+      if (option) option.disabled = filter === "rejected"
+        ? file.rejectedRecords.length === 0
+        : !file.rows.some((row) => rowMatches(row, file, outputIssues, filter));
     });
     if (rowFilter.selectedOptions[0]?.disabled) rowFilter.value = "all";
   }
@@ -194,13 +194,19 @@ export function createDataPreviewView(root: HTMLElement, tooltip: HTMLElement): 
       ? document.activeElement.dataset.outputSourceRow
       : undefined;
     const filter = rowFilter.value as RowFilter;
-    const filteredRows = file.rows
+    const dataRecords: PreviewRecord[] = file.rows
       .filter((row) => rowMatches(row, file, currentOutputIssues, filter))
-      .sort((left, right) => rowRank(left, file) - rowRank(right, file) || left.sourceRow - right.sourceRow);
-    const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+      .sort((left, right) => rowRank(left, file) - rowRank(right, file) || left.sourceRow - right.sourceRow)
+      .map((row) => ({ kind: "data", row }));
+    const rejectedRecords: PreviewRecord[] = filter === "all" || filter === "rejected"
+      ? file.rejectedRecords.map((record) => ({ kind: "rejected", record }))
+      : [];
+    const filteredRecords = filter === "rejected" ? rejectedRecords : [...rejectedRecords, ...dataRecords];
+    const pageCount = Math.max(1, Math.ceil(filteredRecords.length / PAGE_SIZE));
     currentPage = Math.min(currentPage, pageCount - 1);
     const pageStart = currentPage * PAGE_SIZE;
-    const visibleRows = filteredRows.slice(pageStart, pageStart + PAGE_SIZE);
+    const visibleRecords = filteredRecords.slice(pageStart, pageStart + PAGE_SIZE);
+    const visibleRows = visibleRecords.flatMap((record) => record.kind === "data" ? [record.row] : []);
     visibleSourceRows = visibleRows.map((row) => row.sourceRow);
     const selection = visibleRowsSelectionState(visibleRows);
     visibleRowsCheckbox.checked = selection.checked;
@@ -209,18 +215,107 @@ export function createDataPreviewView(root: HTMLElement, tooltip: HTMLElement): 
     const selectionAction = selection.checked ? "取消選取" : "選取";
     const selectionLabel = `${selectionAction}目前篩選結果的本頁 ${visibleRows.length} 列`;
     visibleRowsCheckbox.setAttribute("aria-label", selectionLabel);
-    visibleRowsControl.title = selectionLabel;
     tableBody.replaceChildren();
 
-    if (visibleRows.length === 0) {
+    if (visibleRecords.length === 0) {
       const row = tableBody.insertRow();
       const cell = row.insertCell();
-      cell.colSpan = 18;
+      cell.colSpan = PREVIEW_COLUMN_COUNT;
       cell.className = "empty-table-message";
       cell.textContent = "沒有符合目前篩選條件的資料列。";
     }
 
-    visibleRows.forEach((row) => {
+    function appendIssueToggle(
+      cell: HTMLTableCellElement,
+      label: string,
+      issueId: string,
+      ariaLabel: string,
+    ): void {
+      const button = document.createElement("button");
+      button.className = "preview-issue-toggle row-status-text";
+      button.type = "button";
+      button.textContent = label;
+      button.dataset.issueId = issueId;
+      button.setAttribute("aria-controls", issueId);
+      button.setAttribute("aria-expanded", String(expandedIssues.has(issueId)));
+      button.setAttribute("aria-label", ariaLabel);
+      cell.append(button);
+    }
+
+    function appendProblemBlock(
+      issueId: string,
+      details: readonly string[],
+      technical: readonly string[],
+    ): void {
+      if (details.length === 0) return;
+      const issueRow = tableBody.insertRow();
+      issueRow.className = "preview-issue-row";
+      issueRow.id = issueId;
+      issueRow.hidden = !expandedIssues.has(issueId);
+      const issueCell = issueRow.insertCell();
+      issueCell.colSpan = PREVIEW_COLUMN_COUNT;
+      const block = document.createElement("div");
+      block.className = "preview-issue-block";
+      const heading = document.createElement("strong");
+      heading.textContent = "這列需要注意";
+      const list = document.createElement("ul");
+      details.forEach((detail) => {
+        const item = document.createElement("li");
+        item.textContent = detail;
+        list.append(item);
+      });
+      block.append(heading, list);
+      if (technical.length > 0) {
+        const disclosure = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = "查看技術資訊";
+        const code = document.createElement("code");
+        code.textContent = technical.join("\n");
+        disclosure.append(summary, code);
+        block.append(disclosure);
+      }
+      issueCell.append(block);
+    }
+
+    visibleRecords.forEach((record) => {
+      if (record.kind === "rejected") {
+        const rejected = record.record;
+        const issueId = `preview-issue-${file.id}-rejected-${rejected.sourceRow}`;
+        const tableRow = tableBody.insertRow();
+        tableRow.dataset.tone = "error";
+        const sourceRowCell = document.createElement("th");
+        sourceRowCell.scope = "row";
+        sourceRowCell.textContent = String(rejected.sourceRow);
+        tableRow.append(sourceRowCell);
+        const statusCell = tableRow.insertCell();
+        statusCell.className = "row-status-cell";
+        appendIssueToggle(
+          statusCell,
+          "無法解析",
+          issueId,
+          `展開第 ${rejected.sourceRow} 列無法解析的原因`,
+        );
+        const outputCell = tableRow.insertCell();
+        outputCell.className = "row-output-cell";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.disabled = true;
+        checkbox.setAttribute("aria-label", `第 ${rejected.sourceRow} 列無法解析，不能選取`);
+        outputCell.append(checkbox);
+        for (let fieldIndex = 1; fieldIndex <= 15; fieldIndex += 1) {
+          const cell = tableRow.insertCell();
+          cell.textContent = rejected.fieldIndex === fieldIndex ? "無法讀取" : "—";
+        }
+        appendProblemBlock(
+          issueId,
+          [rejected.message, `原始內容：${rejected.original}`],
+          rejected.technicalDetail ? [rejected.technicalDetail] : [],
+        );
+        return;
+      }
+
+      const row = record.row;
+      const issueId = `preview-issue-${file.id}-data-${row.sourceRow}`;
       const tableRow = tableBody.insertRow();
       const status = rowStatus(row, file, currentOutputIssues);
       tableRow.dataset.tone = status.tone;
@@ -231,17 +326,24 @@ export function createDataPreviewView(root: HTMLElement, tooltip: HTMLElement): 
 
       const statusCell = tableRow.insertCell();
       statusCell.className = "row-status-cell";
-      const statusText = document.createElement("span");
-      statusText.className = "row-status-text";
-      statusText.textContent = status.label;
+      const puaDetails = privateUseDetails(row);
       const rowDetails = uniqueDetails([
         ...rowIssues(row, file).map(issueDetail),
         ...row.changes.map(previewChangeDetail),
         ...outputIssuesForRow(row, currentOutputIssues)
           .map((issue) => `欄位${issue.fieldIndex}：${issue.message}`),
+        ...puaDetails,
       ]);
-      setDetail(statusText, rowDetails, `第 ${row.sourceRow} 列、${status.label}：${rowDetails.join("；")}`);
-      statusCell.append(statusText);
+      if (rowDetails.length > 0) {
+        appendIssueToggle(
+          statusCell,
+          status.label,
+          issueId,
+          `展開第 ${row.sourceRow} 列的${status.label}內容`,
+        );
+      } else {
+        statusCell.textContent = status.label;
+      }
 
       const outputCell = tableRow.insertCell();
       outputCell.className = "row-output-cell";
@@ -258,50 +360,58 @@ export function createDataPreviewView(root: HTMLElement, tooltip: HTMLElement): 
       row.cells.forEach((cell) => {
         const tableCell = tableRow.insertCell();
         const change = row.changes.find((item) => item.fieldIndex === cell.fieldIndex);
-        const relatedIssues = row.issues.filter(
-          (issue) => issueFieldIndices(issue).includes(cell.fieldIndex),
-        );
-        const cellIssues = [...cell.issues, ...relatedIssues];
+        const cellIssues = previewCellIssues(row, file.issues, cell.fieldIndex);
         const outputCellIssues = currentOutputIssues.filter((issue) => (
           issue.sourceRow === row.sourceRow && issue.fieldIndex === cell.fieldIndex
         ));
         const value = document.createElement("span");
         value.className = "data-cell-value";
         const displayedValue = cellValue(cell);
-        value.textContent = previewCellValue(displayedValue) || "∅";
+        const replacementCharacterIndices = [
+          ...cellIssues.flatMap((issue) => issue.replacementCharacterIndices ?? []),
+          ...outputCellIssues.flatMap((issue) => issue.replacementCharacterIndices ?? []),
+        ];
+        value.textContent = previewCellValue(displayedValue, replacementCharacterIndices) || "∅";
         if (displayedValue === "") {
           value.classList.add("is-empty");
           value.setAttribute("aria-label", "空白");
         }
-        if (cellIssues.some((item) => item.severity === "error") || outputCellIssues.length > 0) {
+        if (
+          cellIssues.some((item) => item.severity === "error")
+          || outputCellIssues.some((item) => item.blocking)
+        ) {
           tableCell.dataset.tone = "error";
-        } else if (cellIssues.some((item) => item.severity === "warning")) {
+        } else if (
+          cellIssues.some((item) => item.severity === "warning")
+          || outputCellIssues.length > 0
+        ) {
           tableCell.dataset.tone = "warning";
         } else if (change) {
           tableCell.dataset.tone = "warning";
         }
-        if (outputCellIssues.length > 0) {
-          setDetail(
-            value,
-            outputCellIssues.map((issue) => issue.message),
-            `第 ${row.sourceRow} 列、欄位${cell.fieldIndex}、輸出問題：${outputCellIssues.map((issue) => issue.message).join("；")}`,
-          );
-        }
         tableCell.append(value);
       });
+      appendProblemBlock(
+        issueId,
+        rowDetails,
+        uniqueDetails([
+          ...rowIssues(row, file).map((issue) => issue.technicalDetail ?? issue.code),
+          ...outputIssuesForRow(row, currentOutputIssues).map((issue) => issue.code),
+        ]),
+      );
     });
 
-    const renderedRowCount = Math.max(visibleRows.length, 1);
+    const renderedRowCount = Math.max(visibleRecords.length, 1);
     for (let index = renderedRowCount; index < PREVIEW_ROW_SLOTS; index += 1) {
       const placeholder = tableBody.insertRow();
       placeholder.className = "preview-placeholder-row";
       placeholder.setAttribute("aria-hidden", "true");
-      for (let column = 0; column < 18; column += 1) placeholder.insertCell();
+      for (let column = 0; column < PREVIEW_COLUMN_COUNT; column += 1) placeholder.insertCell();
     }
 
-    pageStatus.textContent = filteredRows.length === 0
+    pageStatus.textContent = filteredRecords.length === 0
       ? "0 列"
-      : `第 ${currentPage + 1} / ${pageCount} 頁 · ${pageStart + 1}–${pageStart + visibleRows.length} / ${filteredRows.length} 列`;
+      : `第 ${currentPage + 1} / ${pageCount} 頁 · ${pageStart + 1}–${pageStart + visibleRecords.length} / ${filteredRecords.length} 列`;
     previousButton.disabled = currentPage === 0;
     nextButton.disabled = currentPage >= pageCount - 1;
     if (focusedSourceRow) {
@@ -314,23 +424,22 @@ export function createDataPreviewView(root: HTMLElement, tooltip: HTMLElement): 
 
   return {
     bind(options) {
-      root.addEventListener("pointerover", (event) => {
-        const trigger = detailTrigger(event.target);
-        if (trigger && trigger !== activeDetailTrigger) showDetail(trigger);
-      });
-      root.addEventListener("pointerout", (event) => {
-        const trigger = detailTrigger(event.target);
-        const relatedTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null;
-        if (trigger && !trigger.contains(relatedTarget)) hideDetail(trigger);
-      });
-      root.addEventListener("focusin", (event) => {
-        const trigger = detailTrigger(event.target);
-        if (trigger) showDetail(trigger);
-      });
-      root.addEventListener("focusout", (event) => hideDetail(detailTrigger(event.target)));
-      root.addEventListener("click", (event) => {
-        const trigger = detailTrigger(event.target);
-        if (trigger) showDetail(trigger);
+      tableBody.addEventListener("click", (event) => {
+        const toggle = event.target instanceof Element
+          ? event.target.closest<HTMLButtonElement>("[data-issue-id]")
+          : null;
+        const issueId = toggle?.dataset.issueId;
+        const issueRow = issueId ? document.getElementById(issueId) : null;
+        if (!issueId || !issueRow) return;
+        const expanded = issueRow.hidden;
+        issueRow.hidden = !expanded;
+        if (expanded) expandedIssues.add(issueId);
+        else expandedIssues.delete(issueId);
+        tableBody.querySelectorAll<HTMLButtonElement>("[data-issue-id]").forEach((button) => {
+          if (button.dataset.issueId === issueId) {
+            button.setAttribute("aria-expanded", String(expanded));
+          }
+        });
       });
       tableBody.addEventListener("change", (event) => {
         const checkbox = event.target instanceof HTMLInputElement
@@ -341,8 +450,6 @@ export function createDataPreviewView(root: HTMLElement, tooltip: HTMLElement): 
           options.onRowIncludedChange(sourceRow, checkbox.checked);
         }
       });
-      window.addEventListener("resize", () => hideDetail());
-      tableScroll.addEventListener("scroll", () => hideDetail(), { passive: true });
       rowFilter.addEventListener("change", () => {
         currentPage = 0;
         if (currentFile) renderTable(currentFile);
@@ -376,10 +483,9 @@ export function createDataPreviewView(root: HTMLElement, tooltip: HTMLElement): 
       visibleRowsCheckbox.indeterminate = false;
       visibleRowsCheckbox.disabled = true;
       visibleRowsCheckbox.setAttribute("aria-label", "選取目前篩選結果的本頁資料列");
-      visibleRowsControl.title = "";
       tableBody.replaceChildren();
       pageStatus.textContent = "";
-      hideDetail();
+      expandedIssues.clear();
       root.hidden = true;
     },
     render(file, outputIssues) {

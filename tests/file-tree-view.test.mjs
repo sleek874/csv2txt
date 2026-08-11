@@ -25,20 +25,24 @@ test("aggregates rows and output problems while excluding ignored entries", () =
     unread: true,
     file: {
       summary: {
-        sourceRows: 12,
-        outputRows: 8,
-        errorCount: 2,
-        warningCount: 2,
+        blankRows: 1,
+        rejectedRows: 1,
+        dataRows: 10,
+        correctRows: 6,
+        errorRows: 2,
+        warningRows: 2,
         includedRows: 9,
       },
     },
   };
   const ignored = { id: "ignored", sourceId: "source", state: "ignored" };
   assert.deepEqual(inventoryMetrics([ready, ignored], new Map([["ready", new Set([2, 4])]])), {
-    sourceRows: 12,
-    correctRows: 8,
-    errorCount: 2,
-    warningCount: 2,
+    blankRows: 1,
+    rejectedRows: 1,
+    dataRows: 10,
+    correctRows: 6,
+    errorRows: 2,
+    warningRows: 2,
     selectedRows: 9,
     outputProblems: 2,
     unreadCount: 1,

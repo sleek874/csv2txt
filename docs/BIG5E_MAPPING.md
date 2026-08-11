@@ -2,7 +2,7 @@
 
 ## 執行時契約
 
-固定寬 TXT codec 使用數位發展部「CNS11643 中文標準交換碼全字庫」公開的對照資料，不使用瀏覽器 WHATWG Big5、HKSCS 或其他 vendor fallback。輸入 bytes 先依官方 BIG-5E 對照轉成 formal Unicode IR；輸出時由同一份對照轉回 bytes。
+固定寬 TXT codec 使用數位發展部「CNS11643 中文標準交換碼全字庫」公開的對照資料，不使用瀏覽器 WHATWG Big5、HKSCS 或其他 vendor fallback。輸入欄位依官方 BIG-5E 對照逐段轉成 formal Unicode IR；無法對照的連續 byte segment 在 IR 以一個全形 `？` 代替，只保存該段、欄內位置及替代位置，前後有效文字不丟棄。預覽在該位置顯示 `■` 供核對，但 `■` 不進入 IR 或任何輸出。TXT 再輸出時會把 IR 中的 `？` 編為 BIG-5E；CSV／XLSX 輸出同一個 Unicode `？`。
 
 應用程式執行時只讀取 repository 內產生完成的 `src/core/big5e-mapping.ts`，不向外連線。
 
@@ -41,4 +41,4 @@ npm run generate:big5e-mapping -- /path/to/MapingTables.zip
 
 `U+E088` 是 CP950 私用位置 `FAEA`，固定的官方表沒有為該位置提供 formal Unicode candidate。`廍` 本身是 CNS `3-6474`／Unicode `U+5ECD`，但官方各 legacy profile 使用的是其他 local code，不能據此建立全域 `U+E088 → 廍` 對照；地址脈絡即使能推知字義，也只能由使用者確認與修正。
 
-這個處理只在來源驗證與最終驗證之間的 transformation 執行。Plane 15、Plane 16 與範圍外的 PUA 不猜測字義，也不使用 HKSCS fallback。沒有 BIG-5E output mapping 的 formal Unicode 在 Section 1 使用相同的簡短 verification warning。選擇 TXT（BIG-5E）時另以 17,454 筆 output mapping 檢查勾選列，並在 Section 1 tree table 與預覽列出檔案、來源列、欄位、全形 `■` 及 Unicode；超出欄位 byte 寬度時也成為 download problem。CSV／XLSX 可輸出已確認的 Unicode，不受 BIG-5E repertoire 限制。
+這個處理只在來源驗證與最終驗證之間的 transformation 執行。Plane 15、Plane 16 與範圍外的 PUA 不猜測字義，也不使用 HKSCS fallback；未解決 PUA code point 留在 Unicode IR，CSV／XLSX 也保留原值。選擇 `TXT` 輸出時，內部以 17,454 筆 BIG-5E output mapping 檢查勾選列；未對照 PUA 與其他無 mapping Unicode 逐字以全形 `？` 代替，預覽在替代位置顯示 `■` 並列出 code point。這類替代不阻擋下載；只有替代後仍超過固定 byte 欄寬才是 fatal download problem。

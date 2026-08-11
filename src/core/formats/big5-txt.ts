@@ -1,5 +1,5 @@
 import { concatenateBytes } from "../bytes";
-import { decodeBig5E, encodeBig5E } from "../encoding";
+import { decodeBig5EPartially, encodeBig5EWithReplacement } from "../encoding";
 import { FIXED_WIDTHS } from "../fixed-profile";
 import type { ParsedRows, SerializableRow } from "./types";
 
@@ -34,6 +34,10 @@ function removePadding(bytes: Uint8Array): Uint8Array {
   return bytes.subarray(0, end);
 }
 
+function hex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).toUpperCase().padStart(2, "0")).join(" ");
+}
+
 export function parseBig5Txt(
   bytes: Uint8Array,
   widths: readonly number[] = FIXED_WIDTHS,
@@ -51,24 +55,32 @@ export function parseBig5Txt(
 
   const records = splitRecords(bytes);
   const rows: string[][] = [];
+  const blankSourceRows: number[] = [];
+  const rejectedRecords: NonNullable<ParsedBig5Txt["rejectedRecords"]> = [];
   const sourceRowNumbers: number[] = [];
   const issues: ParsedBig5Txt["issues"] = [];
 
   records.forEach((record, rowIndex) => {
     const sourceRow = rowIndex + 1;
     if (record.length === 0 || record.every((byte) => byte === 0x20)) {
-      issues.push({ message: "空白列不會輸出。", severity: "warning", sourceRow });
+      blankSourceRows.push(sourceRow);
       return;
     }
     if (record.includes(0x0d)) {
-      issues.push({ message: "含有未配對的 CR 換行位元組。", severity: "error", sourceRow });
+      rejectedRecords.push({
+        message: "這列含有不完整的換行符號。",
+        original: hex(record),
+        sourceRow,
+        technicalDetail: "原始位元組中含有未配對的 CR（0D）。",
+      });
       return;
     }
     if (record.length !== recordWidthBytes) {
-      issues.push({
+      rejectedRecords.push({
         message: `共有 ${record.length} 位元組，應為 ${recordWidthBytes} 位元組。`,
-        severity: "error",
+        original: hex(record),
         sourceRow,
+        technicalDetail: `實際 ${record.length} bytes；固定格式要求 ${recordWidthBytes} bytes。`,
       });
       return;
     }
@@ -79,15 +91,24 @@ export function parseBig5Txt(
       const width = widths[columnIndex] ?? 0;
       const fieldBytes = removePadding(record.subarray(offset, offset + width));
       offset += width;
-      try {
-        row.push(fieldBytes.length === 0 ? "" : decodeBig5E(fieldBytes));
-      } catch {
+      const decoded = decodeBig5EPartially(fieldBytes);
+      row.push(decoded.text);
+      if (decoded.unrecognized.length > 0) {
+        const evidence = decoded.unrecognized.map((segment) => {
+          const segmentBytes = new Uint8Array(segment.bytes);
+          const start = segment.offset + 1;
+          const end = segment.offset + segment.bytes.length;
+          return `${hex(segmentBytes)}（欄內第 ${start}${end === start ? "" : `–${end}`} 位元組）`;
+        }).join("；");
         issues.push({
-          message: `欄位${columnIndex + 1}含有無法依臺灣政府 BIG-5E 對照表解讀的位元組。`,
+          code: "UNDECODABLE_BIG5E_BYTES",
+          fieldIndex: columnIndex + 1,
+          message: "部分內容無法辨識，已以？代替；預覽以 ■ 標示，請核對來源。",
+          replacementCharacterIndices: decoded.unrecognized.map((segment) => segment.characterIndex),
           severity: "error",
           sourceRow,
+          technicalDetail: `欄位${columnIndex + 1}無法對照的位元組：${evidence}。`,
         });
-        return;
       }
     }
     rows.push(row);
@@ -95,10 +116,12 @@ export function parseBig5Txt(
   });
 
   return {
+    blankSourceRows,
     rows,
     sourceRowNumbers,
     sourceRowCount: records.length,
     issues,
+    rejectedRecords,
     recordWidthBytes,
   };
 }
@@ -117,10 +140,7 @@ export function serializeBig5Txt(
       if (width === undefined) {
         throw new Error("固定欄位設定不完整。");
       }
-      const encoded = encodeBig5E(value);
-      if (!encoded) {
-        throw new Error(`第 ${row.sourceRow} 列、欄位${columnIndex + 1}無法輸出為 BIG-5E TXT。`);
-      }
+      const encoded = encodeBig5EWithReplacement(value).bytes;
       if (encoded.length > width) {
         throw new Error(`第 ${row.sourceRow} 列、欄位${columnIndex + 1}內容太長，無法輸出為 BIG-5E TXT。`);
       }

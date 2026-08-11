@@ -1,4 +1,4 @@
-import type { OutputFormat } from "../../core/file-formats";
+import type { FileFormat, OutputFormat } from "../../core/file-formats";
 import { summarizeInternalFile } from "../../core/internal-model";
 import type { WorkspaceItem, WorkspaceSnapshot, WorkspaceSource } from "./workspace-types";
 
@@ -25,6 +25,7 @@ export interface WorkspaceModel {
   select(fileId: string): boolean;
   selectedItem(): WorkspaceItem | null;
   markAllViewed(): number;
+  setInputFormat(format: FileFormat): void;
   setOutputFormat(format: OutputFormat): void;
   setRowsIncluded(sourceRows: readonly number[], included: boolean): number;
   setRowIncluded(sourceRow: number, included: boolean): boolean;
@@ -39,10 +40,11 @@ export function createWorkspaceModel(): WorkspaceModel {
   const sources: WorkspaceSource[] = [];
   const listeners = new Set<(snapshot: WorkspaceSnapshot) => void>();
   let selectedFileId: string | null = null;
+  let inputFormat: FileFormat = "txt";
   let outputFormat: OutputFormat = "big5-txt";
 
   function currentSnapshot(): WorkspaceSnapshot {
-    return { files: [...entries], outputFormat, selectedFileId, sources: [...sources] };
+    return { files: [...entries], inputFormat, outputFormat, selectedFileId, sources: [...sources] };
   }
 
   function emit(): void {
@@ -51,14 +53,17 @@ export function createWorkspaceModel(): WorkspaceModel {
   }
 
   function normalizeSelection(): void {
-    if (selectedFileId && !entries.some((entry) => entry.id === selectedFileId)) {
-      selectedFileId = entries[0]?.id ?? null;
+    const active = entries.filter((entry) => (
+      entry.state !== "ignored" && entry.sourceFormat === inputFormat
+    ));
+    if (selectedFileId && !active.some((entry) => entry.id === selectedFileId)) {
+      selectedFileId = active[0]?.id ?? null;
     }
-    selectedFileId ??= entries[0]?.id ?? null;
+    selectedFileId ??= active[0]?.id ?? null;
   }
 
   function refreshSummary(file: NonNullable<WorkspaceItem["file"]>): void {
-    file.summary = summarizeInternalFile(file, file.summary.sourceRows);
+    file.summary = summarizeInternalFile(file, file.summary.sourceRecords);
   }
 
   return {
@@ -67,7 +72,9 @@ export function createWorkspaceModel(): WorkspaceModel {
         throw new Error(`工作區來源不存在：${item.sourceId}`);
       }
       entries.push(item);
-      selectedFileId ??= item.id;
+      if (item.state !== "ignored" && item.sourceFormat === inputFormat) {
+        selectedFileId ??= item.id;
+      }
       emit();
     },
     addSource(source) {
@@ -144,7 +151,7 @@ export function createWorkspaceModel(): WorkspaceModel {
     },
     select(fileId) {
       const entry = entries.find((candidate) => candidate.id === fileId);
-      if (!entry) {
+      if (!entry || entry.state === "ignored" || entry.sourceFormat !== inputFormat) {
         return false;
       }
       selectedFileId = fileId;
@@ -153,7 +160,17 @@ export function createWorkspaceModel(): WorkspaceModel {
       return true;
     },
     selectedItem() {
-      return entries.find((entry) => entry.id === selectedFileId) ?? null;
+      return entries.find((entry) => (
+        entry.id === selectedFileId
+        && entry.state !== "ignored"
+        && entry.sourceFormat === inputFormat
+      )) ?? null;
+    },
+    setInputFormat(format) {
+      if (inputFormat === format) return;
+      inputFormat = format;
+      normalizeSelection();
+      emit();
     },
     setOutputFormat(format) {
       if (outputFormat === format) {
@@ -163,7 +180,7 @@ export function createWorkspaceModel(): WorkspaceModel {
       emit();
     },
     markAllViewed() {
-      const unread = entries.filter((entry) => entry.unread);
+      const unread = entries.filter((entry) => entry.unread && entry.sourceFormat === inputFormat);
       unread.forEach((entry) => { entry.unread = false; });
       if (unread.length > 0) emit();
       return unread.length;

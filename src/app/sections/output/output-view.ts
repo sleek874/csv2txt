@@ -1,6 +1,7 @@
 import { downloadBytes } from "../../../browser/download";
 import { requireDescendant, requireElement } from "../../../browser/dom";
-import { OUTPUT_FORMATS, type OutputFormat } from "../../../core/file-formats";
+import { FILE_FORMAT_LABELS, fileFormatForOutput, type OutputFormat } from "../../../core/file-formats";
+import { describeOutputIssue } from "../../../core/output-validation";
 import type { CreatedOutput } from "../../adapters/output-adapter";
 import { OUTPUT_PRESENTATIONS } from "./output-presentations";
 import type { OutputPlan } from "./output-plan";
@@ -8,21 +9,15 @@ import type { OutputPlan } from "./output-plan";
 export interface OutputView {
   bind(options: {
     onDownload: () => void;
-    onFormatChange: (format: OutputFormat) => void;
   }): void;
   render(plan: OutputPlan, format: OutputFormat, busy: boolean): void;
   renderError(detail: string): void;
   save(output: CreatedOutput): void;
 }
 
-function outputFormat(value: string): OutputFormat {
-  return OUTPUT_FORMATS.find((format) => format === value) ?? "big5-txt";
-}
-
 export function createOutputView(): OutputView {
   const root = requireElement<HTMLElement>("#output-step");
-  const select = requireDescendant<HTMLSelectElement>(root, "#output-format");
-  const help = requireDescendant<HTMLElement>(root, "#output-format-help");
+  const formatLabel = requireDescendant<HTMLElement>(root, "#output-format-label");
   const downloadButton = requireDescendant<HTMLButtonElement>(root, "#download-button");
   const downloadTitle = requireDescendant<HTMLElement>(root, "#download-status-title");
   const downloadDetail = requireDescendant<HTMLElement>(root, "#download-status-detail");
@@ -36,7 +31,10 @@ export function createOutputView(): OutputView {
   }
 
   function renderProblems(plan: OutputPlan): void {
-    const details = plan.problems;
+    const details = [
+      ...plan.problems,
+      ...plan.outputIssues.map(describeOutputIssue),
+    ];
     outputIssueList.replaceChildren(...details.map((detail) => {
       const item = document.createElement("li");
       item.textContent = detail;
@@ -47,29 +45,23 @@ export function createOutputView(): OutputView {
 
   return {
     bind(options) {
-      select.addEventListener("change", () => options.onFormatChange(outputFormat(select.value)));
       downloadButton.addEventListener("click", options.onDownload);
     },
     render(plan, format, busy) {
       clearOutputIssues();
-      if (select.value !== format) {
-        select.value = format;
-      }
       const presentation = OUTPUT_PRESENTATIONS[format];
-      help.textContent = presentation.help;
+      formatLabel.textContent = FILE_FORMAT_LABELS[fileFormatForOutput(format)];
       downloadButton.textContent = plan.totalSummary.fileCount > 1 ? "下載 ZIP" : presentation.buttonLabel;
       if (busy) {
-        select.disabled = true;
         downloadButton.disabled = true;
         downloadTitle.textContent = plan.totalSummary.fileCount > 1 ? "正在建立 ZIP" : presentation.preparingLabel;
         downloadDetail.textContent = "完成後會自動開始下載。";
         return;
       }
-      select.disabled = false;
       if (plan.totalSummary.fileCount === 0) {
         downloadButton.disabled = true;
         downloadTitle.textContent = "尚未準備下載";
-        downloadDetail.textContent = "請先在第 1 區加入檔案。";
+        downloadDetail.textContent = "請加入符合第 0 區輸入格式的檔案。";
         return;
       }
       if (plan.processingFileCount > 0) {
@@ -91,9 +83,16 @@ export function createOutputView(): OutputView {
       const target = plan.totalSummary.fileCount > 1
         ? `將把 ${plan.totalSummary.fileCount} 個檔案、共 ${plan.totalSummary.selectedRows} 列打包為 ZIP`
         : `將輸出 ${plan.totalSummary.selectedRows} 列`;
-      downloadDetail.textContent = plan.omittedRowCount > 0
+      const omitted = plan.omittedRowCount > 0
         ? `${target}；另有 ${plan.omittedRowCount} 列未勾選。`
         : `${target}。`;
+      downloadDetail.textContent = plan.replacementRowCount > 0
+        ? `${omitted} 其中 ${plan.replacementRowCount} 列會以？代替無法轉出的字元，請核對。`
+        : omitted;
+      if (plan.replacementRowCount > 0) {
+        problemLink.hidden = false;
+        renderProblems(plan);
+      }
     },
     renderError(detail) {
       clearOutputIssues();

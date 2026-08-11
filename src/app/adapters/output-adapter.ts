@@ -50,7 +50,7 @@ export function createOutputAdapter(codecs: CodecManager): OutputAdapter {
   return {
     async create(files, format, createdAt = new Date()) {
       if (files.length === 0) throw new Error("工作區沒有可輸出的檔案。");
-      const outputIssue = validateOutput(files, format)[0];
+      const outputIssue = validateOutput(files, format).find((issue) => issue.blocking);
       if (outputIssue) throw new Error(describeOutputIssue(outputIssue));
       const planned = files.map((file) => {
         if (hasBlockingFileIssues(file)) {

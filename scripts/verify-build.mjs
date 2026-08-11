@@ -38,8 +38,36 @@ const encodingSource = readFileSync(
   new URL("../src/core/encoding.ts", import.meta.url),
   "utf8",
 );
+const big5TxtSource = readFileSync(
+  new URL("../src/core/formats/big5-txt.ts", import.meta.url),
+  "utf8",
+);
 const outputValidationSource = readFileSync(
   new URL("../src/core/output-validation.ts", import.meta.url),
+  "utf8",
+);
+const normalizationSource = readFileSync(
+  new URL("../src/core/normalization.ts", import.meta.url),
+  "utf8",
+);
+const outputAdapterSource = readFileSync(
+  new URL("../src/app/adapters/output-adapter.ts", import.meta.url),
+  "utf8",
+);
+const outputPlanSource = readFileSync(
+  new URL("../src/app/sections/output/output-plan.ts", import.meta.url),
+  "utf8",
+);
+const otherFilesViewSource = readFileSync(
+  new URL("../src/app/sections/input/other-files-view.ts", import.meta.url),
+  "utf8",
+);
+const fileTableViewSource = readFileSync(
+  new URL("../src/app/sections/input/file-table-view.ts", import.meta.url),
+  "utf8",
+);
+const fileTreeViewSource = readFileSync(
+  new URL("../src/app/sections/input/file-tree-view.ts", import.meta.url),
   "utf8",
 );
 const themeSource = readFileSync(
@@ -224,18 +252,19 @@ assert.match(
   "The application must stay inert until its controller is ready.",
 );
 for (const sectionId of [
-  "rules-step",
+  "format-step",
   "input-step",
   "output-step",
   "advanced-step",
+  "rules-step",
 ]) {
   assert.match(indexHtml, new RegExp(`<section id="${sectionId}"`, "u"));
 }
 assert.ok(
-  ["rules-step", "input-step", "output-step", "advanced-step"]
+  ["format-step", "input-step", "output-step", "advanced-step", "rules-step"]
     .map((id) => indexHtml.indexOf(`id="${id}"`))
     .every((position, index, positions) => index === 0 || position > (positions[index - 1] ?? -1)),
-  "The four workflow sections must preserve their fixed order.",
+  "The workflow and trailing rules reference must preserve their fixed order.",
 );
 assert.match(
   indexHtml,
@@ -257,13 +286,12 @@ assert.doesNotMatch(
   /<th scope="row">欄位(?:[1-9]|1[0-5])<\/th>/u,
   "Fixed profile rows must come from the TypeScript profile instead of duplicated HTML.",
 );
-assert.match(indexHtml, /<label for="output-format">輸出格式<\/label>/u);
 assert.match(
   indexHtml,
-  /<select id="output-format"[^>]*aria-describedby="output-format-help"[\s\S]*?<option value="big5-txt" selected>TXT（BIG-5E）<\/option>[\s\S]*?<option value="csv">CSV（UTF-8）<\/option>[\s\S]*?<option value="xlsx">XLSX<\/option>[\s\S]*?<\/select>/u,
-  "Output formats must use one native select and expose all three codecs.",
+  /id="input-format"[\s\S]*?>TXT<\/option>[\s\S]*?>CSV<\/option>[\s\S]*?>XLSX<\/option>[\s\S]*?id="selected-output-format"[\s\S]*?>TXT<\/option>[\s\S]*?>CSV<\/option>[\s\S]*?>XLSX<\/option>/u,
+  "Section 0 must expose independent native input and output selects with concise labels.",
 );
-assert.doesNotMatch(indexHtml, /<input[^>]*name="output-format"|class="format-option"/u);
+assert.doesNotMatch(indexHtml, /id="output-format"|TXT（BIG-5E）|CSV（UTF-8）/u);
 assert.match(
   indexHtml,
   /id="row-filter"[\s\S]*?value="warning"[\s\S]*?value="valid">正確<\/option>[\s\S]*?value="excluded">未選取<\/option>/u,
@@ -292,7 +320,7 @@ assert.match(
 );
 assert.match(
   dataPreviewViewSource,
-  /`第 \$\{currentPage \+ 1\} \/ \$\{pageCount\} 頁 · \$\{pageStart \+ 1\}–\$\{pageStart \+ visibleRows\.length\} \/ \$\{filteredRows\.length\} 列`/u,
+  /`第 \$\{currentPage \+ 1\} \/ \$\{pageCount\} 頁 · \$\{pageStart \+ 1\}–\$\{pageStart \+ visibleRecords\.length\} \/ \$\{filteredRecords\.length\} 列`/u,
   "Preview pagination must use one concise page-and-range status line.",
 );
 assert.match(
@@ -302,23 +330,68 @@ assert.match(
 );
 assert.match(
   encodingSource,
+  /export const UNKNOWN_CHARACTER = "？"/u,
+  "Unknown input and output characters must use one shared fullwidth question mark.",
+);
+assert.match(
+  encodingSource,
   /export const UNRECOGNIZED_CHARACTER = "■"/u,
-  "Unrecognized characters must use one shared fullwidth-block marker.",
+  "Preview-only unrecognized characters must use one shared fullwidth-block marker.",
+);
+assert.match(
+  normalizationSource,
+  /removeWhitespace\(value\)\.replaceAll\("\?", "？"\)/u,
+  "Input normalization must convert ASCII question marks to fullwidth question marks.",
 );
 assert.match(
   dataPreviewViewSource,
-  /isPrivateUseCodePoint\(codePoint\)[\s\S]*?\? UNRECOGNIZED_CHARACTER[\s\S]*?previewCellValue\(displayedValue\)/u,
-  "Preview masking must render unresolved private-use characters as fullwidth blocks.",
+  /previewCellValue\([\s\S]*?replacements\.has\(characterIndex\)[\s\S]*?isPrivateUseCodePoint\(codePoint\)[\s\S]*?\? UNRECOGNIZED_CHARACTER[\s\S]*?previewCellValue\(displayedValue, replacementCharacterIndices\)/u,
+  "Preview masking must render unresolved PUA and tracked replacement positions as fullwidth blocks.",
 );
 assert.match(
   dataPreviewViewSource,
   /previewChangeDetail[\s\S]*?previewCellValue\(change\.before\)[\s\S]*?row\.changes\.map\(previewChangeDetail\)/u,
-  "Hover correction details must mask unresolved private-use characters.",
+  "Correction details must mask unresolved private-use characters.",
+);
+assert.match(
+  encodingSource,
+  /export function decodeBig5EPartially[\s\S]*?decoded \+= UNKNOWN_CHARACTER[\s\S]*?characterIndex: characterCount[\s\S]*?return \{ text: decoded, unrecognized \}/u,
+  "BIG-5E decoding must preserve valid text and record question-mark replacement positions.",
+);
+assert.match(
+  encodingSource,
+  /export function encodeBig5EWithReplacement[\s\S]*?big5eEncodedCode\(UNKNOWN_CHARACTER\.codePointAt\(0\)[\s\S]*?substitutions\.push\(\{ character, characterIndex, codePoint \}\)/u,
+  "BIG-5E output must replace only unmapped Unicode and retain its diagnostic positions.",
+);
+assert.match(
+  big5TxtSource,
+  /decodeBig5EPartially\(fieldBytes\)[\s\S]*?row\.push\(decoded\.text\)[\s\S]*?code: "UNDECODABLE_BIG5E_BYTES"[\s\S]*?replacementCharacterIndices[\s\S]*?technicalDetail/u,
+  "BIG-5E input must retain partially decoded fields and targeted byte evidence.",
+);
+assert.match(
+  big5TxtSource,
+  /serializeBig5Txt[\s\S]*?encodeBig5EWithReplacement\(value\)\.bytes[\s\S]*?encoded\.length > width/u,
+  "BIG-5E serialization must substitute before enforcing fixed byte width.",
 );
 assert.match(
   outputValidationSource,
   /\.map\(\(\{ codePoint \}\) => `「\$\{UNRECOGNIZED_CHARACTER\}」（\$\{unicodeLabel\(codePoint\)\}）`\)/u,
   "BIG-5E output problems must mask unsupported Unicode while retaining its code point.",
+);
+assert.match(
+  outputValidationSource,
+  /blocking: false,[\s\S]*?code: "OUTPUT_UNENCODABLE"[\s\S]*?blocking: true,[\s\S]*?code: "OUTPUT_WIDTH_OVERFLOW"/u,
+  "Unmapped characters must be notices while post-substitution width overflow remains blocking.",
+);
+assert.match(
+  outputPlanSource,
+  /blockingOutputIssues = outputIssues\.filter\(\(issue\) => issue\.blocking\)[\s\S]*?blockingOutputIssues\.length === 0/u,
+  "Download eligibility and problem counts must use only blocking output findings.",
+);
+assert.match(
+  outputAdapterSource,
+  /validateOutput\(files, format\)\.find\(\(issue\) => issue\.blocking\)/u,
+  "The output adapter must reject only blocking format findings.",
 );
 assert.match(
   dataPreviewViewSource,
@@ -340,7 +413,28 @@ assert.match(
   "The batch inventory tree-table must expose keyboard guidance.",
 );
 assert.match(indexHtml, /id="data-workspace"[^>]*\shidden(?:\s|>)/u);
-assert.match(indexHtml, /id="cell-tooltip"[^>]*role="tooltip"[^>]*hidden/u);
+assert.doesNotMatch(indexHtml, /id="cell-tooltip"|role="tooltip"/u);
+assert.match(
+  indexHtml,
+  /aria-label="來源列">列<\/th><th scope="col">狀態<\/th>\s*<th class="row-output-heading"/u,
+  "The preview must use status as its only issue disclosure column.",
+);
+assert.doesNotMatch(dataPreviewViewSource, /row-problem-cell|preview-issue-toggle--problem/u);
+assert.match(
+  dataPreviewViewSource,
+  /button\.dataset\.issueId = issueId[\s\S]*?button\.setAttribute\("aria-controls", issueId\)[\s\S]*?button\.setAttribute\("aria-expanded"[\s\S]*?issueRow\.hidden = !expandedIssues\.has\(issueId\)/u,
+  "Issue details must start collapsed and use explicit accessible controls.",
+);
+assert.match(
+  dataPreviewViewSource,
+  /tableBody\.addEventListener\("click"[\s\S]*?issueRow\.hidden = !expanded[\s\S]*?button\.setAttribute\("aria-expanded", String\(expanded\)\)/u,
+  "Status cells must toggle their detail row on click.",
+);
+assert.doesNotMatch(
+  dataPreviewViewSource,
+  /pointerover|pointerout|cell-tooltip|detail-trigger|\.title\s*=/u,
+  "Preview details must not depend on hover tooltips.",
+);
 assert.doesNotMatch(indexHtml, /file-issue-list|問題與修改/u);
 for (let fieldIndex = 1; fieldIndex <= 15; fieldIndex += 1) {
   assert.match(
@@ -403,15 +497,71 @@ assert.doesNotMatch(
   /deselect-source-button|start-over-button|清除檔案/u,
   "Legacy destructive-sounding source actions must not return.",
 );
+assert.doesNotMatch(indexHtml, /class="output-format-control"/u);
 assert.match(
   indexHtml,
-  /class="output-format-control"/u,
-  "Output choices must use the compact native-select control.",
+  /id="file-tree-table" class="inventory-table"[\s\S]*?<th scope="col">檔案<\/th><th scope="col">空白列<\/th><th scope="col">無法解析<\/th><th scope="col">資料<\/th><th scope="col">正確<\/th><th scope="col">錯誤<\/th><th scope="col">警告<\/th><th scope="col">已選<\/th><th id="inventory-output-heading" scope="col">輸出問題<\/th><th scope="col">移除<\/th>[\s\S]*?id="file-tree-total"/u,
+  "Section 1 must own the aggregated hierarchy and output-problem summary.",
 );
 assert.match(
   indexHtml,
-  /id="file-tree-table" class="inventory-table"[\s\S]*?<th scope="col">檔案<\/th><th scope="col">資料<\/th><th scope="col">正確<\/th><th scope="col">錯誤<\/th><th scope="col">警告<\/th><th scope="col">已選列數<\/th><th id="inventory-output-heading" scope="col">輸出問題<\/th><th scope="col">移除<\/th>[\s\S]*?id="file-tree-total"/u,
-  "Section 1 must own the aggregated hierarchy and output-problem summary.",
+  /id="active-files-tab"[^>]*>[\s\S]*?id="active-files-format">TXT<\/span>[\s\S]*?id="other-files-tab"[^>]*>其他檔案/u,
+  "The selected-format tab must use the visible input-format label.",
+);
+assert.match(
+  indexHtml,
+  /id="active-files-panel"[\s\S]*?class="table-scroll inventory-table-scroll"[\s\S]*?id="file-tree-table"[\s\S]*?id="file-tree-total"[\s\S]*?id="other-files-panel"[\s\S]*?class="table-scroll inventory-table-scroll"[\s\S]*?class="inventory-table other-files-table"[\s\S]*?<th scope="col">檔案<\/th><th scope="col">格式<\/th><th scope="col">狀態<\/th><th scope="col">移除<\/th>[\s\S]*?id="other-files-list"[\s\S]*?id="other-files-total"/u,
+  "Both tabs must use the same inventory shell with a persistent footer.",
+);
+assert.match(
+  otherFilesViewSource,
+  /nameCell\.className = "inventory-name-cell"[\s\S]*?itemCopy\.className = "file-tree-item other-file-item"[\s\S]*?format\.className = "other-file-format"[\s\S]*?status\.className = "other-file-status"[\s\S]*?removeCell\.className = "inventory-remove-cell"[\s\S]*?remove\.className = "file-tree-remove"[\s\S]*?remove\.textContent = "×"[\s\S]*?completeFileTableBody/u,
+  "Other files must reuse working-tree rows, aligned remove controls, and the shared table body completion.",
+);
+assert.match(
+  fileTableViewSource,
+  /row\.className = options\.hasRows \? "inventory-table-spacer" : "inventory-table-empty-row"[\s\S]*?cell\.colSpan = options\.columnCount[\s\S]*?cell\.className = "empty-table-message"[\s\S]*?message\.className = "empty-table-message-copy"[\s\S]*?`全部 \$\{fileCount\} 個檔案`/u,
+  "Both file tabs must use one shared spacer, empty row, and footer renderer.",
+);
+assert.match(
+  resultStyles,
+  /\.inventory-table-scroll\s*\{[^}]*height:\s*24rem[^}]*overflow:\s*auto/u,
+  "The shared inventory shell must preserve the same viewport height in every state.",
+);
+assert.match(
+  resultStyles,
+  /\.inventory-table \.inventory-table-empty-row\s*\{[^}]*height:\s*100%[\s\S]*?\.inventory-table \.inventory-table-empty-row \.empty-table-message\s*\{[^}]*width:\s*auto[^}]*min-width:\s*0[^}]*max-width:\s*none[^}]*padding:\s*0[^}]*vertical-align:\s*middle[\s\S]*?\.empty-table-message-copy\s*\{[^}]*position:\s*sticky[^}]*left:\s*0[^}]*width:\s*100cqw[^}]*text-align:\s*center/u,
+  "The shared inventory shell must center every empty state in the visible scroll viewport.",
+);
+assert.match(
+  fileTreeViewSource,
+  /completeFileTableBody\(tree,[\s\S]*?`目前沒有 \$\{FILE_FORMAT_LABELS\[[^\]]+\]\} 檔案。`[\s\S]*?updateFileTableFooter/u,
+  "The selected-format table must use the shared empty and footer renderers.",
+);
+assert.match(
+  fileTreeViewSource,
+  /clear\(inputFormat\)[\s\S]*?completeFileTableBody\(tree,[\s\S]*?hasRows: false[\s\S]*?updateFileTableFooter\(total, 0, Array\(8\)\.fill\("—"\)\)/u,
+  "Clearing must produce the same selected-format empty footer as normal rendering.",
+);
+assert.match(
+  otherFilesViewSource,
+  /completeFileTableBody\(list,[\s\S]*?emptyMessage: "目前沒有其他檔案。"[\s\S]*?updateFileTableFooter/u,
+  "The other-files table must use the same shared empty and footer renderers.",
+);
+assert.match(
+  otherFilesViewSource,
+  /ignoredReason === "symlink"\) return "不支援（捷徑）"[\s\S]*?`不支援（\$\{extension \|\| "檔案類型"\}）`[\s\S]*?item\.state === "error" && !item\.sourceFormat[\s\S]*?format: "壓縮檔"[\s\S]*?item\.state === "ignored"[\s\S]*?status: "未加入"[\s\S]*?FILE_FORMAT_LABELS\[item\.sourceFormat\][\s\S]*?status: "已保留"/u,
+  "Other-file format and kept/skipped status must remain independent.",
+);
+assert.doesNotMatch(
+  otherFilesViewSource,
+  /捷徑不會加入|不支援，未加入|status: "檢查中"|status: "無法開啟"/u,
+  "The other-files status column must not mix in format or lifecycle reasons.",
+);
+assert.doesNotMatch(
+  `${indexHtml}\n${resultStyles}\n${otherFilesViewSource}`,
+  /本次處理|這些檔案已保留，但不會列入本次預覽或輸出|other-files-table-scroll|other-files-empty-row/u,
+  "Obsolete tab copy, layout-shifting help, and one-off table markup must not return.",
 );
 assert.doesNotMatch(
   indexHtml,
@@ -441,7 +591,7 @@ assert.match(
 );
 assert.match(
   indexHtml,
-  /id="output-heading">輸出格式[\s\S]*?依下方提示處理後再下載[\s\S]*?id="output-format"[\s\S]*?id="output-problem-link"[^>]*href="#file-tree-table"/u,
+  /id="output-heading">下載結果[\s\S]*?輸出格式已在第 0 區選定[\s\S]*?id="output-format-label"[\s\S]*?id="output-problem-link"[^>]*href="#file-tree-table"/u,
   "Section 2 must stay concise and link back to Section 1 problems.",
 );
 assert.match(
@@ -614,8 +764,38 @@ assert.doesNotMatch(
 );
 assert.match(
   resultStyles,
-  /@container panel \(max-width:\s*36rem\)[\s\S]*?\.inventory-name-cell\s*\{[^}]*position:\s*static/u,
-  "Narrow inventory tables must scroll filename cells with their numeric columns.",
+  /\.inventory-table thead th:first-child\s*\{[^}]*left:\s*0[^}]*z-index:[^}]*background|\.inventory-table thead th:first-child\s*\{[^}]*left:\s*0[^}]*box-shadow/u,
+  "The filename header must share the sticky horizontal position and opaque layer.",
+);
+assert.match(
+  resultStyles,
+  /\.inventory-table thead th\s*\{[^}]*border-right:\s*var\(--border-ui\)[^}]*border-bottom:\s*var\(--border-ui\)[^}]*background:\s*var\(--color-surface-muted\)/u,
+  "Inventory headers must use visible shared-token separators against the muted surface.",
+);
+assert.match(
+  resultStyles,
+  /\.inventory-name-cell\s*\{[^}]*position:\s*sticky[^}]*left:\s*0[^}]*background:\s*var\(--inventory-row-background, var\(--color-surface\)\)[^}]*box-shadow/u,
+  "Filename cells must remain sticky and cover metrics scrolling underneath.",
+);
+assert.match(
+  resultStyles,
+  /tr\[data-selected="true"\]\s*\{[^}]*--inventory-row-background:\s*linear-gradient\(var\(--color-accent-bg\), var\(--color-accent-bg\)\),\s*var\(--color-surface\)/u,
+  "Selected sticky filename cells must composite the translucent accent over an opaque surface.",
+);
+assert.match(
+  resultStyles,
+  /\.inventory-table tfoot \[data-total-label\]\s*\{[^}]*position:\s*sticky[^}]*left:\s*0[^}]*background:\s*var\(--color-surface-muted\)[^}]*box-shadow/u,
+  "The inventory total label must stay aligned with the sticky filename column.",
+);
+assert.match(
+  resultStyles,
+  /\.inventory-table tfoot :is\(th, td\)\s*\{[^}]*border-top:\s*var\(--border-ui\)[^}]*border-right:\s*var\(--border-ui\)[^}]*border-bottom:\s*0/u,
+  "Inventory footers must have a visible top edge and aligned column separators.",
+);
+assert.doesNotMatch(
+  resultStyles,
+  /@container[^}]*[\s\S]*?\.inventory-name-cell\s*\{[^}]*position:\s*static/u,
+  "Responsive rules must not give filename cells a second non-sticky behavior.",
 );
 assert.match(
   resultStyles,
@@ -638,8 +818,13 @@ assert.match(
   "Preview field indexes 1 through 15 must align with left-aligned cell content.",
 );
 assert.match(
+  resultStyles,
+  /\.preview-issue-toggle\.row-status-text\s*\{[^}]*position:\s*relative[^}]*justify-content:\s*center[\s\S]*?\.preview-issue-toggle\.row-status-text::after\s*\{[^}]*position:\s*absolute[^}]*right:/u,
+  "The disclosure marker must not shift the centered status label.",
+);
+assert.match(
   dataPreviewViewSource,
-  /const FILTERABLE_ROW_STATES:[\s\S]*?function syncFilterOptions\(file: InternalFile, outputIssues: readonly OutputIssue\[\]\): void \{[\s\S]*?option\.disabled = !file\.rows\.some\(\(row\) => rowMatches\(row, file, outputIssues, filter\)\);[\s\S]*?rowFilter\.value = "all";/u,
+  /const FILTERABLE_ROW_STATES:[\s\S]*?function syncFilterOptions\(file: InternalFile, outputIssues: readonly OutputIssue\[\]\): void \{[\s\S]*?file\.rejectedRecords\.length === 0[\s\S]*?file\.rows\.some\(\(row\) => rowMatches\(row, file, outputIssues, filter\)\)[\s\S]*?rowFilter\.value = "all";/u,
   "Filters without matching rows must be disabled, with a safe fallback to all rows.",
 );
 assert.match(

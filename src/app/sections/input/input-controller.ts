@@ -1,7 +1,12 @@
 import type { OfflineCache } from "../../../browser/offline-cache";
 import type { UnloadGuard } from "../../../browser/unload-guard";
 import { createInternalFileWithRecovery } from "../../../core/conversion-pipeline";
-import { detectInputFileType, detectSourceFileType } from "../../../core/file-formats";
+import {
+  detectInputFileType,
+  detectSourceFileType,
+  fileFormatForSourceType,
+  type FileFormat,
+} from "../../../core/file-formats";
 import { taipeiDateStamp } from "../../../core/validation";
 import type { InputAdapter } from "../../adapters/input-adapter";
 import type { CodecManager } from "../../resources/codec-manager";
@@ -80,12 +85,14 @@ export function createInputController(options: InputControllerOptions) {
     virtualPath: string,
     size: number,
     message: string,
+    sourceFormat?: FileFormat,
   ): void {
     options.model.add({
       error: message,
       id: `source-${nextFileId++}`,
       size,
       sourceId,
+      ...(sourceFormat ? { sourceFormat } : {}),
       state: "error",
       relativePath,
       virtualPath,
@@ -98,12 +105,14 @@ export function createInputController(options: InputControllerOptions) {
     virtualPath: string,
     size: number,
     ignoredReason: "symlink" | "unsupported-type",
+    sourceFormat?: FileFormat,
   ): void {
     options.model.add({
       id: `source-${nextFileId++}`,
       ignoredReason,
       size,
       sourceId,
+      ...(sourceFormat ? { sourceFormat } : {}),
       state: "ignored",
       relativePath,
       virtualPath,
@@ -137,6 +146,7 @@ export function createInputController(options: InputControllerOptions) {
         size === 0
           ? "這個檔案是空的，請選擇有內容的檔案。"
           : "檔案超過 25 MB，請選擇較小的檔案。",
+        fileFormatForSourceType(type),
       );
       return null;
     }
@@ -149,6 +159,7 @@ export function createInputController(options: InputControllerOptions) {
       relativePath,
       unread: true,
       virtualPath,
+      sourceFormat: fileFormatForSourceType(type),
     };
     options.model.add(entry);
 
@@ -214,16 +225,19 @@ export function createInputController(options: InputControllerOptions) {
         name: sourceFile.name,
       };
       if (sourceFile.size === 0 || sourceFile.size > MAX_SOURCE_FILE_BYTES) {
+        const message = sourceFile.size === 0
+          ? "這個檔案是空的，請選擇有內容的檔案。"
+          : "檔案超過 25 MB，請選擇較小的檔案。";
         addSource(source);
         rejectedEntry(
           source.id,
           "",
           sourceFile.name,
           sourceFile.size,
-          sourceFile.size === 0
-            ? "這個檔案是空的，請選擇有內容的檔案。"
-            : "檔案超過 25 MB，請選擇較小的檔案。",
+          message,
+          inputType === "zip" ? undefined : fileFormatForSourceType(inputType),
         );
+        if (inputType === "zip") notices.push(`${sourceFile.name}：${message}`);
         continue;
       }
 
@@ -231,14 +245,17 @@ export function createInputController(options: InputControllerOptions) {
       try {
         bytes = new Uint8Array(await sourceFile.arrayBuffer());
       } catch {
+        const message = "無法讀取這個檔案，請確認檔案仍在原本的位置後再試一次。";
         addSource(source);
         rejectedEntry(
           source.id,
           "",
           sourceFile.name,
           sourceFile.size,
-          "無法讀取這個檔案，請確認檔案仍在原本的位置後再試一次。",
+          message,
+          inputType === "zip" ? undefined : fileFormatForSourceType(inputType),
         );
+        if (inputType === "zip") notices.push(`${sourceFile.name}：${message}`);
         continue;
       }
       if (currentGeneration !== generation) return;
@@ -263,25 +280,35 @@ export function createInputController(options: InputControllerOptions) {
       pendingArchiveCount += 1;
       render();
       try {
+        if (typeof requestAnimationFrame === "function") {
+          await new Promise<void>((resolve) => {
+            requestAnimationFrame(() => setTimeout(resolve, 0));
+          });
+        }
+        if (currentGeneration !== generation) return;
         const extraction = await (await options.codecs.zip()).extractZip(sourceFile.name, bytes);
         if (currentGeneration !== generation) return;
         addSource(source);
         if (extraction.files.length === 0 && extraction.skippedEntries.length === 0) {
+          const message = "壓縮檔內沒有可加入的 TXT、CSV 或 Excel 檔案。";
           rejectedEntry(
             source.id,
             "",
             sourceFile.name,
             sourceFile.size,
-            "壓縮檔內沒有可加入的 CSV、Excel 或 BIG-5E 文字檔。",
+            message,
           );
+          notices.push(`${sourceFile.name}：${message}`);
         }
         for (const skipped of extraction.skippedEntries) {
+          const skippedType = detectSourceFileType(skipped.virtualPath);
           ignoredEntry(
             source.id,
             skipped.relativePath ?? skipped.virtualPath.split("/").slice(1).join("/"),
             skipped.virtualPath,
             0,
             skipped.reason,
+            skippedType ? fileFormatForSourceType(skippedType) : undefined,
           );
         }
         for (const extracted of extraction.files) {
@@ -300,14 +327,16 @@ export function createInputController(options: InputControllerOptions) {
         }
       } catch (error) {
         if (currentGeneration === generation) {
+          const message = friendlyArchiveError(error);
           addSource(source);
           rejectedEntry(
             source.id,
             "",
             sourceFile.name,
             sourceFile.size,
-            friendlyArchiveError(error),
+            message,
           );
+          notices.push(`${sourceFile.name}：${message}`);
         }
       } finally {
         if (currentGeneration === generation) {

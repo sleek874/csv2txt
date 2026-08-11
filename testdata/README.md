@@ -5,10 +5,12 @@
 ## 目錄
 
 - `csv/`、`xls/`、`xlsx/`、`txt/`：四個目錄具有相同的 dataset basename、列數、順序與 15 欄值。CSV 為 UTF-8、TXT 為臺灣政府 BIG-5E 固定 208 bytes／列；所有檔案都沒有標題列。
-- `zip/`：四個混合格式情境 ZIP，另有 `excluded-entries.zip`；後者包含一個可處理 CSV、一個捷徑項目與一個不支援副檔名，用來確認可處理檔案保留、其餘項目逐筆排除。
-- `manifest.json`：機器可讀的欄位 mock 名稱、dataset 類型、列數、預期摘要與 ZIP entry 清單。
+- `zip/`：四個混合格式情境 ZIP、`excluded-entries.zip`，以及一個明確標示的極限壓力情境。`excluded-entries.zip` 包含一個可處理 CSV、一個捷徑項目與一個不支援副檔名，用來確認可處理檔案保留、其餘項目逐筆排除。
+- `manifest.json`：機器可讀的欄位 mock 名稱、dataset 類型、列數、預期摘要、一般 ZIP entry 清單與極限情境契約。
 
-最大檔案為 `clean-large-6000`（6,000 列）。目前共 45 個資料檔，低於 300 個上限。
+一般 dataset 最大為 `clean-large-6000`（6,000 列）。目前共 46 個 repository fixture，低於 300 個上限。
+
+`extreme-51-txt-6001-rows.zip` 是另外管理的合成壓力情境：內含 51 個相同結構的 BIG-5E TXT，每檔 6,001 列，共 306,051 列、64,270,710 expanded bytes。它刻意超過一般 dataset 的 6,000 列上限，但仍低於產品的 ZIP entry、單檔與總展開量安全上限。自動測試確認 archive entry、路徑、bytes、CRLF 與抽樣 parser 契約；完整瀏覽器載入、互動延遲與記憶體仍屬人工效能檢查，不由這份 fixture 宣稱通過。
 
 ## 推定欄位名稱
 
@@ -40,6 +42,7 @@
 - `error-validation`：涵蓋 regex、日期、checksum、欄位14／15跨欄錯誤，以及性別不一致自動修正 warning；所有來源值仍可安全放入 BIG-5E 固定欄寬，使四種格式可保持同值。
 - `mixed-*`：clean、modified、warning 與 error 混合。
 - `excluded-entries.zip`：`accepted/clean-single.csv` 應正常加入；`excluded/link.csv` 是捷徑項目，`excluded/notes.md` 是不支援副檔名，兩者應安全略過並分行顯示路徑。
+- `extreme-51-txt-6001-rows.zip`：驗證接近大量批次的 ZIP 解壓、entry/path 與固定寬 bytes 契約；不作為一般功能資料集，也不代表主執行緒效能已獲核准。
 
 重新產生：
 
