@@ -34,6 +34,10 @@ const dataPreviewViewSource = readFileSync(
   new URL("../src/app/sections/input/data-preview-view.ts", import.meta.url),
   "utf8",
 );
+const inputSectionViewSource = readFileSync(
+  new URL("../src/app/sections/input/input-section-view.ts", import.meta.url),
+  "utf8",
+);
 const encodingSource = readFileSync(
   new URL("../src/core/encoding.ts", import.meta.url),
   "utf8",
@@ -68,6 +72,22 @@ const fileTableViewSource = readFileSync(
 );
 const fileTreeViewSource = readFileSync(
   new URL("../src/app/sections/input/file-tree-view.ts", import.meta.url),
+  "utf8",
+);
+const fileOperationStatusViewSource = readFileSync(
+  new URL("../src/app/sections/input/file-operation-status-view.ts", import.meta.url),
+  "utf8",
+);
+const formatControllerSource = readFileSync(
+  new URL("../src/app/sections/format/format-controller.ts", import.meta.url),
+  "utf8",
+);
+const workspaceTypesSource = readFileSync(
+  new URL("../src/app/state/workspace-types.ts", import.meta.url),
+  "utf8",
+);
+const stateTransitionSource = readFileSync(
+  new URL("../src/app/shell/state-transition.ts", import.meta.url),
   "utf8",
 );
 const themeSource = readFileSync(
@@ -150,10 +170,13 @@ function verifyHtmlReferences(html) {
 const precachePaths = readPathGroup("PRECACHE_PATHS");
 const excelPaths = readPathGroup("EXCEL_PATHS");
 const archivePaths = readPathGroup("ARCHIVE_PATHS");
+const workerPaths = readPathGroup("WORKER_PATHS");
 const fontPaths = readPathGroup("FONT_PATHS");
 const expectedBaseFiles = collectManifestGroup(["index.html", "src/main.ts"]);
-const expectedExcelFiles = collectManifestGroup(["src/core/formats/spreadsheet.ts"]);
-const expectedArchiveFiles = collectManifestGroup(["src/core/archive/zip.ts"]);
+const emittedAssets = readdirSync(new URL("assets/", distUrl)).map((file) => `assets/${file}`);
+const expectedExcelFiles = new Set(emittedAssets.filter((file) => /\/(?:spreadsheet|worker-excel)-.*\.js$/u.test(file)));
+const expectedArchiveFiles = new Set(emittedAssets.filter((file) => /\/(?:zip|worker-archive)-.*\.js$/u.test(file)));
+const expectedWorkerFiles = new Set(emittedAssets.filter((file) => /\/(?:batch-worker|private-use-recovery-mapping)-.*\.js$/u.test(file)));
 const expectedFontFiles = collectManifestGroup([
   "src/styles/preview-font.css",
   "src/assets/fonts/SarasaMonoTC-Regular.woff2",
@@ -162,6 +185,7 @@ expectedFontFiles.forEach((file) => {
   expectedBaseFiles.delete(file);
   expectedExcelFiles.delete(file);
   expectedArchiveFiles.delete(file);
+  expectedWorkerFiles.delete(file);
 });
 expectedBaseFiles.forEach((file) => {
   expectedExcelFiles.delete(file);
@@ -185,6 +209,11 @@ assert.deepEqual(
   "Archive resources must match the Vite manifest graph.",
 );
 assert.deepEqual(
+  workerPaths,
+  relativePaths(expectedWorkerFiles),
+  "Worker resources must match the emitted worker graph.",
+);
+assert.deepEqual(
   fontPaths,
   relativePaths(expectedFontFiles),
   "Font resources must match the Vite manifest graph.",
@@ -192,6 +221,8 @@ assert.deepEqual(
 
 const expectedBuildId = createHash("sha256")
   .update(manifestSource)
+  .update("\n")
+  .update(JSON.stringify({ archivePaths, excelPaths, workerPaths }))
   .update("\n")
   .update(indexHtml)
   .update("\n")
@@ -207,7 +238,7 @@ assert.match(
   "Application cache version must derive from the Vite manifest and final HTML.",
 );
 
-for (const path of [...precachePaths, ...excelPaths, ...archivePaths, ...fontPaths]) {
+for (const path of [...precachePaths, ...excelPaths, ...archivePaths, ...workerPaths, ...fontPaths]) {
   if (path === "./") {
     continue;
   }
@@ -320,7 +351,7 @@ assert.match(
 );
 assert.match(
   dataPreviewViewSource,
-  /`第 \$\{currentPage \+ 1\} \/ \$\{pageCount\} 頁 · \$\{pageStart \+ 1\}–\$\{pageStart \+ visibleRecords\.length\} \/ \$\{filteredRecords\.length\} 列`/u,
+  /`第 \$\{currentPage \+ 1\} \/ \$\{page\.pageCount\} 頁 · \$\{page\.pageStart \+ 1\}–\$\{page\.pageStart \+ visibleRecords\.length\} \/ \$\{page\.totalRecords\} 列`/u,
   "Preview pagination must use one concise page-and-range status line.",
 );
 assert.match(
@@ -395,7 +426,7 @@ assert.match(
 );
 assert.match(
   dataPreviewViewSource,
-  /rowIssues\(row, file\)\.map\(issueDetail\)[\s\S]*?row\.changes\.map/u,
+  /rowIssues\(row, pageFile\)\.map\(issueDetail\)[\s\S]*?row\.changes\.map/u,
   "An error-dominant row must retain every warning and correction in its detail box.",
 );
 assert.doesNotMatch(dataPreviewViewSource, /PRIVATE_USE_RECOVERED[\s\S]*?filter/u);
@@ -465,21 +496,30 @@ assert.match(
   indexHtml,
   /id="app-status"[^>]*role="status"[^>]*aria-live="polite"/u,
 );
-assert.match(indexHtml, /id="file-processing-indicator"[\s\S]*?\shidden/u);
 assert.match(
   indexHtml,
-  /class="file-processing-slot"[\s\S]*?id="file-processing-indicator"/u,
-  "The file processing indicator must keep a stable layout slot.",
+  /id="source-file-picker"[\s\S]*?id="select-source-button"[\s\S]*?id="clear-workspace-button"[\s\S]*?id="file-operation-status"[^>]*class="notice file-operation-status"[^>]*data-tone="neutral"/u,
+  "The static picker must remain independent from the persistent operation banner.",
+);
+assert.doesNotMatch(
+  indexHtml,
+  /id="file-operation-status"[^>]*(?:aria-live|role)=/u,
+  "Operation details must not become a noisy live region.",
 );
 assert.match(
   indexHtml,
-  /id="file-status"[\s\S]*?class="file-processing-slot"/u,
-  "The file name must stay left-aligned while the stable spinner slot remains trailing.",
+  /class="file-operation-title"[\s\S]*?id="file-operation-title"[\s\S]*?id="file-operation-spinner"[^>]*hidden/u,
+  "The processing spinner must sit directly after the operation title.",
 );
 assert.match(
   indexHtml,
-  /id="file-status"[\s\S]*?id="source-file-name"[\s\S]*?class="file-processing-slot"/u,
-  "The friendly file status and stable processing slot must remain together.",
+  /id="cancel-file-operation"[^>]*hidden[^>]*>取消本次新增<\/button>/u,
+  "Slow processing must offer whole-selection cancellation in the banner.",
+);
+assert.match(
+  indexHtml,
+  /id="file-operation-status"[\s\S]*?id="mark-all-viewed-button"[\s\S]*?id="file-operation-details"[^>]*hidden[\s\S]*?id="file-operation-details-summary"[^>]*class="secondary-button notice-action"/u,
+  "Contextual acknowledgement and collapsed failure details must live in the shared banner.",
 );
 assert.doesNotMatch(indexHtml, /id="source-file-meta"/u, "The action area must not repeat file counts or total size.");
 assert.match(
@@ -487,11 +527,7 @@ assert.match(
   /id="clear-workspace-button"[^>]*>清空清單<\/button>/u,
   "Clearing the in-memory workspace must be explicit.",
 );
-assert.match(
-  indexHtml,
-  /id="mark-all-viewed-button"[\s\S]*?id="select-source-button"[\s\S]*?id="clear-workspace-button"/u,
-  "The optional mark-all-viewed action must appear before stable add and clear actions.",
-);
+assert.doesNotMatch(indexHtml, /id="source-file-picker"[\s\S]*?id="mark-all-viewed-button"[\s\S]*?id="select-source-button"/u);
 assert.doesNotMatch(
   indexHtml,
   /deselect-source-button|start-over-button|清除檔案/u,
@@ -550,13 +586,13 @@ assert.match(
 );
 assert.match(
   otherFilesViewSource,
-  /ignoredReason === "symlink"\) return "不支援（捷徑）"[\s\S]*?`不支援（\$\{extension \|\| "檔案類型"\}）`[\s\S]*?item\.state === "error" && !item\.sourceFormat[\s\S]*?format: "壓縮檔"[\s\S]*?item\.state === "ignored"[\s\S]*?status: "未加入"[\s\S]*?FILE_FORMAT_LABELS\[item\.sourceFormat\][\s\S]*?status: "已保留"/u,
-  "Other-file format and kept/skipped status must remain independent.",
+  /FILE_FORMAT_LABELS\[item\.sourceFormat\][\s\S]*?status: "已保留"/u,
+  "Other files must contain only retained supported formats.",
 );
 assert.doesNotMatch(
   otherFilesViewSource,
-  /捷徑不會加入|不支援，未加入|status: "檢查中"|status: "無法開啟"/u,
-  "The other-files status column must not mix in format or lifecycle reasons.",
+  /ignoredReason|state === "ignored"|state === "error"|status: "未加入"|不支援（|壓縮檔/u,
+  "Upload failures must not return to the retained other-files table.",
 );
 assert.doesNotMatch(
   `${indexHtml}\n${resultStyles}\n${otherFilesViewSource}`,
@@ -596,13 +632,39 @@ assert.match(
 );
 assert.match(
   indexHtml,
-  /id="source-file-message"[^>]*hidden/u,
+  /id="output-download-status"[\s\S]*?id="download-status-title"[\s\S]*?id="download-status-spinner"[^>]*hidden/u,
+  "Section 2 must reserve a spinner beside its stable download status title.",
 );
-assert.doesNotMatch(indexHtml, /id="source-file-message"[^>]*tabindex=/u);
+assert.doesNotMatch(indexHtml, /id="(?:processing-info|source-file-message|file-processing-indicator)"/u);
+assert.doesNotMatch(
+  `${workspaceTypesSource}\n${fileTreeViewSource}\n${outputPlanSource}`,
+  /WorkspaceFileState|item\.state|state === "processing"|normalizeFile\(/u,
+  "Published workspace files must not retain the obsolete processing or InternalFile compatibility paths.",
+);
+assert.match(
+  workspaceTypesSource,
+  /type OutputPreparationState = "error" \| "loading" \| "ready"/u,
+  "Output preparation must use an explicit finite state.",
+);
+assert.match(
+  formatControllerSource,
+  /setOutputFormat\(format, records\.length > 0 \? "loading" : "ready"\)[\s\S]*?setOutputPreparation\("ready"\)[\s\S]*?setOutputPreparation\([\s\S]*?"error"/u,
+  "Output-format preparation must settle in ready or error instead of leaving a permanent spinner.",
+);
 assert.match(
   indexHtml,
   /id="advanced-step"[\s\S]*?id="reference-file"[^>]*accept="\.xls,\.xlsx"[\s\S]*?id="reference-key-column"[\s\S]*?id="reference-column-options"[\s\S]*?id="advanced-download-button"[\s\S]*?<\/section>/u,
   "Section 3 must expose its separate reference picker, lookup mapping, and XLSX download.",
+);
+assert.match(
+  indexHtml,
+  /id="reference-file-name"[\s\S]*?id="reference-status-spinner"[^>]*hidden[\s\S]*?id="advanced-download-title"[\s\S]*?id="advanced-download-spinner"[^>]*hidden/u,
+  "Section 3 must reserve spinners beside its reference and download status titles.",
+);
+assert.match(
+  resultStyles,
+  /\.download-status-title-line\s*>\s*\.busy-spinner\[hidden\][\s\S]*?\.reference-status-title-line\s*>\s*\.busy-spinner\[hidden\]\s*\{\s*display:\s*none;/u,
+  "Section 2 and Section 3 status spinners must stay hidden after processing finishes.",
 );
 assert.doesNotMatch(
   indexHtml,
@@ -620,6 +682,16 @@ assert.doesNotMatch(
   baseCss,
   /!important/u,
   "Application styles must not rely on important overrides.",
+);
+assert.match(
+  reusableComponentStyles,
+  /\.state-transition\s*\{[\s\S]*?opacity var\(--transition-fast\)[\s\S]*?@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.state-transition\s*\{[\s\S]*?transition: none;[\s\S]*?animation: none;/u,
+  "Semantic UI state transitions must share one reduced-motion-safe primitive.",
+);
+assert.match(
+  stateTransitionSource,
+  /if \(currentKey !== null && currentKey !== stateKey\)[\s\S]*?root\.dataset\.stateTransition/u,
+  "State transitions must replay only for semantic state-key changes.",
 );
 assert.doesNotMatch(
   `${componentStyles}\n${reusableComponentStyles}\n${bootstrapStyles}\n${resultStyles}`,
@@ -737,8 +809,35 @@ assert.match(
 );
 assert.match(
   baseCss,
-  /\.file-processing-slot\{[^}]*width:var\(--indicator-size\)[^}]*height:var\(--indicator-size\)/u,
-  "File processing must keep a stable indicator slot.",
+  /\.file-operation-actions\{[^}]*grid-template-columns:repeat\(2,minmax\(0,12rem\)\)[^}]*width:24\.5rem/u,
+  "Contextual operations must use two fixed action slots.",
+);
+assert.match(baseCss, /\.file-operation-details,#cancel-file-operation,#undo-file-operation\{[^}]*grid-column:2/u);
+assert.match(baseCss, /#mark-all-viewed-button\{[^}]*grid-column:1/u);
+assert.match(
+  fileOperationStatusViewSource,
+  /document\.addEventListener\("pointerdown"[\s\S]*?!details\.contains\(event\.target\)[\s\S]*?details\.open = false/u,
+  "Clicking outside the floating failure details must close them.",
+);
+assert.match(
+  fileOperationStatusViewSource,
+  /document\.addEventListener\("keydown"[\s\S]*?event\.key === "Escape"[\s\S]*?details\.open = false/u,
+  "Escape must close the floating failure details.",
+);
+assert.match(
+  fileOperationStatusViewSource,
+  /markAllViewed\.hidden = busy \|\| unreadCount === 0/u,
+  "Mark-all-viewed must persist in its own slot while unread files remain.",
+);
+assert.match(
+  baseCss,
+  /\.file-operation-status\{[^}]*height:4\.5rem[^}]*overflow:visible/u,
+  "The operation banner must reserve a compact stable desktop height.",
+);
+assert.match(
+  baseCss,
+  /\.file-operation-details \.upload-failure-groups\{(?=[^}]*position:absolute)(?=[^}]*max-height:14rem)(?=[^}]*overflow:auto)[^}]*\}/u,
+  "Expanded upload failures must float and scroll without moving banner actions.",
 );
 assert.match(
   componentStyles,
@@ -750,10 +849,10 @@ assert.match(
   /@container panel \(max-width:\s*36rem\)[\s\S]*?\.rules-panel details > summary\s*\{[\s\S]*?flex-direction:\s*column/u,
   "The rules disclosure must reflow from panel width before it overflows.",
 );
-assert.match(
+assert.doesNotMatch(
   componentStyles,
-  /@container panel \(max-width:\s*36rem\)[\s\S]*?\.file-status-line\s*\{[\s\S]*?height:\s*4\.5rem[\s\S]*?min-height:\s*4\.5rem/u,
-  "Narrow filename states must reserve stable multi-line space.",
+  /@container panel \(max-width:\s*36rem\)[\s\S]*?\.file-status-line\s*\{[\s\S]*?height:\s*4\.5rem/u,
+  "The static source picker must not retain the obsolete mobile loading slot.",
 );
 const tableScrollRule = componentStyles.match(/\.table-scroll\s*\{[^}]*\}/u)?.[0];
 assert.ok(tableScrollRule, "Horizontal table scrolling must remain defined.");
@@ -814,6 +913,11 @@ assert.match(
 );
 assert.match(
   resultStyles,
+  /\.data-table thead th\s*\{[^}]*border-right:\s*var\(--border-ui\)[^}]*border-bottom:\s*var\(--border-ui\)[^}]*background:\s*var\(--color-surface-muted\)/u,
+  "Preview headers must use the file-tree header separators against the muted surface.",
+);
+assert.match(
+  resultStyles,
   /\.data-table thead th:nth-child\(n \+ 4\)\s*\{[^}]*text-align:\s*left/u,
   "Preview field indexes 1 through 15 must align with left-aligned cell content.",
 );
@@ -824,7 +928,7 @@ assert.match(
 );
 assert.match(
   dataPreviewViewSource,
-  /const FILTERABLE_ROW_STATES:[\s\S]*?function syncFilterOptions\(file: InternalFile, outputIssues: readonly OutputIssue\[\]\): void \{[\s\S]*?file\.rejectedRecords\.length === 0[\s\S]*?file\.rows\.some\(\(row\) => rowMatches\(row, file, outputIssues, filter\)\)[\s\S]*?rowFilter\.value = "all";/u,
+  /const FILTERABLE_ROW_STATES:[\s\S]*?function syncFilterOptions\(page: PreviewPage\): void \{[\s\S]*?option\.disabled = page\.filterCounts\[filter\] === 0[\s\S]*?rowFilter\.value = "all";/u,
   "Filters without matching rows must be disabled, with a safe fallback to all rows.",
 );
 assert.match(
@@ -858,6 +962,26 @@ assert.match(
   "The preview must pad short or empty result sets with hidden blank rows.",
 );
 assert.match(
+  dataPreviewViewSource,
+  /function setPending\(pending: boolean\): void \{[\s\S]*?root\.inert = pending;[\s\S]*?root\.toggleAttribute\("aria-busy", pending\);[\s\S]*?freeze\(\) \{[\s\S]*?if \(!currentPageData\) return;[\s\S]*?setPending\(true\);[\s\S]*?render\(page\) \{[\s\S]*?renderTable\(page\);[\s\S]*?setPending\(false\);/u,
+  "A pending file preview must remain visible but inert until its replacement page is rendered.",
+);
+assert.match(
+  inputSectionViewSource,
+  /if \(currentPreviewFileId !== active\.id\) \{[\s\S]*?preview\.freeze\(\);[\s\S]*?requestPreview\(active\.id, "all", 0\);[\s\S]*?renderPreviewPage\(page\) \{[\s\S]*?if \(page\.fileId !== currentPreviewFileId\) return;[\s\S]*?previewName\.textContent = basename\(page\.virtualPath\);[\s\S]*?preview\.render\(page\);/u,
+  "File switches must freeze the old preview and atomically commit only the latest requested page.",
+);
+assert.match(
+  inputSectionViewSource,
+  /previewErrorFileId === active\.id[\s\S]*?requestPreview\(active\.id, "all", 0\)[\s\S]*?renderPreviewError\(fileId\)[\s\S]*?preview\.fail\(\)/u,
+  "A failed preview switch must unfreeze retained content and retry when the selected file is opened again.",
+);
+assert.doesNotMatch(
+  inputSectionViewSource,
+  /if \(currentPreviewFileId !== active\.id\) \{[^}]*preview\.clear\(\)/u,
+  "Switching files must not collapse the preview while its next page is pending.",
+);
+assert.match(
   resultStyles,
   /\.filter-control\s*\{[^}]*white-space:\s*nowrap/u,
   "The preview filter label must not collapse into vertical text.",
@@ -866,6 +990,21 @@ assert.match(
   resultStyles,
   /\.data-cell-value\s*\{[^}]*font-family:\s*"Sarasa Mono TC"/u,
   "Preview cells must use the deferred fixed-width font when it is ready.",
+);
+assert.match(
+  resultStyles,
+  /\.data-cell-value\s*\{[^}]*display:\s*inline-block[^}]*min-width:\s*0/u,
+  "Preview issue markers must size to the displayed value instead of the whole cell.",
+);
+assert.doesNotMatch(
+  resultStyles,
+  /\.data-table td\[data-tone="(?:error|warning)"\]\s*\{[^}]*box-shadow/u,
+  "Preview issue markers must not paint across the whole table cell.",
+);
+assert.match(
+  resultStyles,
+  /\.data-table td\[data-tone="error"\] \.data-cell-value\s*\{[^}]*box-shadow:[^}]*var\(--color-error\)[\s\S]*?\.data-table td\[data-tone="warning"\] \.data-cell-value\s*\{[^}]*box-shadow:[^}]*var\(--color-warning\)/u,
+  "Preview error and warning markers must remain visible on their displayed values.",
 );
 assert.match(
   componentStyles,
@@ -981,6 +1120,11 @@ assert.match(
   indexHtml,
   /connect-src 'none'/u,
   "The production CSP must continue to block runtime connections.",
+);
+assert.match(
+  indexHtml,
+  /worker-src 'self'/u,
+  "The production CSP must explicitly allow only same-origin processing workers.",
 );
 assert.equal(
   generatedFiles.some((file) => file.endsWith(".map")),

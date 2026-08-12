@@ -23,7 +23,7 @@
 
 - CSV、BIG-5E TXT 與 Spreadsheet 各自由同一 codec 擁有 parse／serialize；ZIP 是獨立 container codec。
 - 單檔直接下載；多檔保留安全虛擬路徑並以臺北分鐘時間戳建立 ZIP。
-- 任何 active 檔案仍處理中／失敗、含無法解析記錄或檔案層級錯誤、零勾選列、fatal output issue 或路徑碰撞都使整批輸出 fail closed；一般列 error／warning 與可安全替代的 encoding issue 不阻止下載。
+- 任何 active 檔案含無法解析記錄或檔案層級錯誤、零勾選列、fatal output issue、路徑碰撞，或 output preparation 尚未完成／失敗，都使整批輸出 fail closed；一般列 error／warning 與可安全替代的 encoding issue 不阻止下載。
 - CSV 輸出固定 UTF-8 BOM、CRLF、無標題列並保存 literal IR 值；需要可靠試算表文字型別時使用 XLSX。
 
 ### BIG-5E 與舊系統字元
@@ -49,11 +49,11 @@
 
 ## 下一階段
 
-### 效能與 worker
+### UI 後續整理
 
-- 先量測 250、1,200、6,000 列，以及 `testdata/zip/extreme-51-txt-6001-rows.zip` 的 51 檔／306,051 列情境；另以接近 25 MiB 上限的代表性 CSV／XLS／XLSX／ZIP 補足單檔邊界。
-- 只有在量測顯示主執行緒阻塞時，才將 archive、Excel、validation 與 serialization 移入單一有界 worker。
-- Worker 必須支援取消、stale-result 防護與可驗證的記憶體釋放；UI 只取得摘要及目前頁面。
+- 資料預覽的欄寬在不同資料內容與 viewport 下仍不一致；下一次 UI pass 專門量測並統一欄寬策略，不在這次狀態轉場變更中混入 table sizing 行為。
+- 資料預覽的篩選下拉選單仍需補足開啟、選取與收合時的視覺效果；下一次 UI pass 應在不干擾鍵盤操作、reduced-motion 或固定版面的前提下統一細節。
+- 以實際鍵盤、reduced-motion、forced-colors 與窄螢幕檢查共用淡入淡出；動畫不得改變固定資訊區、預覽或下載狀態的幾何。
 
 ### Decoder 與來源診斷
 

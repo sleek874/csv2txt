@@ -17,11 +17,10 @@ test("lists file-tree error and warning counts without hiding either", () => {
   assert.equal(findingPresentation(0, 0), null);
 });
 
-test("aggregates rows and output problems while excluding ignored entries", () => {
+test("aggregates rows and output problems for accepted entries", () => {
   const ready = {
     id: "ready",
     sourceId: "source",
-    state: "ready",
     unread: true,
     file: {
       summary: {
@@ -35,8 +34,7 @@ test("aggregates rows and output problems while excluding ignored entries", () =
       },
     },
   };
-  const ignored = { id: "ignored", sourceId: "source", state: "ignored" };
-  assert.deepEqual(inventoryMetrics([ready, ignored], new Map([["ready", new Set([2, 4])]])), {
+  assert.deepEqual(inventoryMetrics([ready], new Map([["ready", new Set([2, 4])]])), {
     blankRows: 1,
     rejectedRows: 1,
     dataRows: 10,
@@ -46,7 +44,6 @@ test("aggregates rows and output problems while excluding ignored entries", () =
     selectedRows: 9,
     outputProblems: 2,
     unreadCount: 1,
-    ignoredCount: 1,
   });
 });
 
@@ -57,7 +54,6 @@ test("removes direct top-level files recoverably but confirms archive sources", 
     relativePath: "",
     size: 1,
     sourceId: directSource.id,
-    state: "ready",
     virtualPath: "direct.csv",
   };
   const archiveSource = { id: "archive", kind: "archive", name: "batch.zip" };
@@ -66,7 +62,6 @@ test("removes direct top-level files recoverably but confirms archive sources", 
     relativePath: "folder/file.csv",
     size: 1,
     sourceId: archiveSource.id,
-    state: "ready",
     virtualPath: "batch.zip/folder/file.csv",
   };
 

@@ -1,6 +1,8 @@
 import { requireDescendant } from "../../../browser/dom";
+import type { PreviewFilter, PreviewPage, PreviewRecord } from "../../batch/protocol";
 import { isPrivateUseCodePoint, UNRECOGNIZED_CHARACTER } from "../../../core/encoding";
 import type { OutputIssue } from "../../../core/output-validation";
+import { createStateTransition } from "../../shell/state-transition";
 import {
   cellValue,
   collectRowIssues,
@@ -8,13 +10,11 @@ import {
   type DataIssue,
   type InternalFile,
   type InternalRow,
-  type RejectedSourceRecord,
   type TransformationChange,
 } from "../../../core/internal-model";
 
-export type RowFilter = "all" | "rejected" | "error" | "warning" | "valid" | "excluded" | "output";
+export type RowFilter = PreviewFilter;
 
-const PAGE_SIZE = 100;
 const PREVIEW_ROW_SLOTS = 14;
 const PREVIEW_COLUMN_COUNT = 18;
 const FILTERABLE_ROW_STATES: readonly RowFilter[] = [
@@ -71,11 +71,16 @@ export function visibleRowsSelectionState(
 
 export interface DataPreviewView {
   bind(options: {
+    onPageRequest: (filter: RowFilter, page: number) => void;
     onVisibleRowsIncludedChange: (sourceRows: readonly number[], included: boolean) => void;
     onRowIncludedChange: (sourceRow: number, included: boolean) => void;
   }): void;
   clear(): void;
-  render(file: InternalFile, outputIssues: readonly OutputIssue[]): void;
+  fail(): "current" | "empty";
+  freeze(): void;
+  hasContent(): boolean;
+  refresh(): void;
+  render(page: PreviewPage): void;
   setFilter(filter: RowFilter): void;
 }
 
@@ -85,32 +90,6 @@ function rowIssues(row: InternalRow, file: InternalFile): DataIssue[] {
 
 function outputIssuesForRow(row: InternalRow, outputIssues: readonly OutputIssue[]): OutputIssue[] {
   return outputIssues.filter((issue) => issue.sourceRow === row.sourceRow);
-}
-
-function rowMatches(
-  row: InternalRow,
-  file: InternalFile,
-  outputIssues: readonly OutputIssue[],
-  filter: RowFilter,
-): boolean {
-  const issues = rowIssues(row, file);
-  switch (filter) {
-    case "rejected": return false;
-    case "error": return issues.some((issue) => issue.severity === "error");
-    case "warning": return !issues.some((issue) => issue.severity === "error")
-      && (issues.some((issue) => issue.severity === "warning") || row.changes.length > 0);
-    case "valid": return issues.length === 0 && row.changes.length === 0;
-    case "excluded": return !row.included;
-    case "output": return outputIssuesForRow(row, outputIssues).length > 0;
-    case "all": return true;
-  }
-}
-
-function rowRank(row: InternalRow, file: InternalFile): number {
-  const issues = rowIssues(row, file);
-  if (issues.some((issue) => issue.severity === "error")) return 0;
-  if (issues.some((issue) => issue.severity === "warning") || row.changes.length > 0) return 1;
-  return 2;
 }
 
 function rowStatus(
@@ -158,10 +137,6 @@ function privateUseDetails(row: InternalRow): string[] {
   });
 }
 
-type PreviewRecord =
-  | { kind: "data"; row: InternalRow }
-  | { kind: "rejected"; record: RejectedSourceRecord };
-
 export function createDataPreviewView(root: HTMLElement): DataPreviewView {
   const rowFilter = requireDescendant<HTMLSelectElement>(root, "#row-filter");
   const visibleRowsCheckbox = requireDescendant<HTMLInputElement>(root, "#visible-rows-checkbox");
@@ -169,43 +144,53 @@ export function createDataPreviewView(root: HTMLElement): DataPreviewView {
   const pageStatus = requireDescendant<HTMLElement>(root, "#data-page-status");
   const previousButton = requireDescendant<HTMLButtonElement>(root, "#previous-page-button");
   const nextButton = requireDescendant<HTMLButtonElement>(root, "#next-page-button");
-  let currentFile: InternalFile | null = null;
+  const transition = createStateTransition(root);
+  let currentPageData: PreviewPage | null = null;
   let currentOutputIssues: readonly OutputIssue[] = [];
   let currentPage = 0;
   let visibleSourceRows: number[] = [];
   const expandedIssues = new Set<string>();
+  let requestPage: (filter: RowFilter, page: number) => void = () => undefined;
+
+  function setPending(pending: boolean): void {
+    root.inert = pending;
+    root.toggleAttribute("aria-busy", pending);
+  }
+
+  function requestPending(filter: RowFilter, page: number): void {
+    setPending(true);
+    requestPage(filter, page);
+  }
 
   function resetFilterOptions(): void {
     Array.from(rowFilter.options).forEach((option) => { option.disabled = false; });
   }
 
-  function syncFilterOptions(file: InternalFile, outputIssues: readonly OutputIssue[]): void {
+  function syncFilterOptions(page: PreviewPage): void {
     FILTERABLE_ROW_STATES.forEach((filter) => {
       const option = Array.from(rowFilter.options).find((candidate) => candidate.value === filter);
-      if (option) option.disabled = filter === "rejected"
-        ? file.rejectedRecords.length === 0
-        : !file.rows.some((row) => rowMatches(row, file, outputIssues, filter));
+      if (option) option.disabled = page.filterCounts[filter] === 0;
     });
     if (rowFilter.selectedOptions[0]?.disabled) rowFilter.value = "all";
   }
 
-  function renderTable(file: InternalFile): void {
+  function renderTable(page: PreviewPage): void {
     const focusedSourceRow = document.activeElement instanceof HTMLInputElement
       ? document.activeElement.dataset.outputSourceRow
       : undefined;
-    const filter = rowFilter.value as RowFilter;
-    const dataRecords: PreviewRecord[] = file.rows
-      .filter((row) => rowMatches(row, file, currentOutputIssues, filter))
-      .sort((left, right) => rowRank(left, file) - rowRank(right, file) || left.sourceRow - right.sourceRow)
-      .map((row) => ({ kind: "data", row }));
-    const rejectedRecords: PreviewRecord[] = filter === "all" || filter === "rejected"
-      ? file.rejectedRecords.map((record) => ({ kind: "rejected", record }))
-      : [];
-    const filteredRecords = filter === "rejected" ? rejectedRecords : [...rejectedRecords, ...dataRecords];
-    const pageCount = Math.max(1, Math.ceil(filteredRecords.length / PAGE_SIZE));
-    currentPage = Math.min(currentPage, pageCount - 1);
-    const pageStart = currentPage * PAGE_SIZE;
-    const visibleRecords = filteredRecords.slice(pageStart, pageStart + PAGE_SIZE);
+    const visibleRecords: readonly PreviewRecord[] = page.records;
+    const pageFile: InternalFile = {
+      blankSourceRows: [],
+      id: page.fileId,
+      virtualPath: page.virtualPath,
+      rows: visibleRecords.flatMap((record) => record.kind === "data" ? [record.row] : []),
+      issues: [...page.fileIssues],
+      summary: { blankRows: 0, correctRows: 0, dataRows: 0, errorRows: 0, includedRows: 0, rejectedRows: 0, sourceRecords: 0, warningRows: 0 },
+      metadata: {},
+      rejectedRecords: visibleRecords.flatMap((record) => record.kind === "rejected" ? [record.record] : []),
+    };
+    currentPage = page.page;
+    currentOutputIssues = page.outputIssues;
     const visibleRows = visibleRecords.flatMap((record) => record.kind === "data" ? [record.row] : []);
     visibleSourceRows = visibleRows.map((row) => row.sourceRow);
     const selection = visibleRowsSelectionState(visibleRows);
@@ -280,7 +265,7 @@ export function createDataPreviewView(root: HTMLElement): DataPreviewView {
     visibleRecords.forEach((record) => {
       if (record.kind === "rejected") {
         const rejected = record.record;
-        const issueId = `preview-issue-${file.id}-rejected-${rejected.sourceRow}`;
+        const issueId = `preview-issue-${page.fileId}-rejected-${rejected.sourceRow}`;
         const tableRow = tableBody.insertRow();
         tableRow.dataset.tone = "error";
         const sourceRowCell = document.createElement("th");
@@ -315,9 +300,9 @@ export function createDataPreviewView(root: HTMLElement): DataPreviewView {
       }
 
       const row = record.row;
-      const issueId = `preview-issue-${file.id}-data-${row.sourceRow}`;
+      const issueId = `preview-issue-${page.fileId}-data-${row.sourceRow}`;
       const tableRow = tableBody.insertRow();
-      const status = rowStatus(row, file, currentOutputIssues);
+      const status = rowStatus(row, pageFile, currentOutputIssues);
       tableRow.dataset.tone = status.tone;
       const sourceRowCell = document.createElement("th");
       sourceRowCell.scope = "row";
@@ -328,7 +313,7 @@ export function createDataPreviewView(root: HTMLElement): DataPreviewView {
       statusCell.className = "row-status-cell";
       const puaDetails = privateUseDetails(row);
       const rowDetails = uniqueDetails([
-        ...rowIssues(row, file).map(issueDetail),
+        ...rowIssues(row, pageFile).map(issueDetail),
         ...row.changes.map(previewChangeDetail),
         ...outputIssuesForRow(row, currentOutputIssues)
           .map((issue) => `欄位${issue.fieldIndex}：${issue.message}`),
@@ -360,7 +345,7 @@ export function createDataPreviewView(root: HTMLElement): DataPreviewView {
       row.cells.forEach((cell) => {
         const tableCell = tableRow.insertCell();
         const change = row.changes.find((item) => item.fieldIndex === cell.fieldIndex);
-        const cellIssues = previewCellIssues(row, file.issues, cell.fieldIndex);
+        const cellIssues = previewCellIssues(row, pageFile.issues, cell.fieldIndex);
         const outputCellIssues = currentOutputIssues.filter((issue) => (
           issue.sourceRow === row.sourceRow && issue.fieldIndex === cell.fieldIndex
         ));
@@ -395,7 +380,7 @@ export function createDataPreviewView(root: HTMLElement): DataPreviewView {
         issueId,
         rowDetails,
         uniqueDetails([
-          ...rowIssues(row, file).map((issue) => issue.technicalDetail ?? issue.code),
+          ...rowIssues(row, pageFile).map((issue) => issue.technicalDetail ?? issue.code),
           ...outputIssuesForRow(row, currentOutputIssues).map((issue) => issue.code),
         ]),
       );
@@ -409,11 +394,11 @@ export function createDataPreviewView(root: HTMLElement): DataPreviewView {
       for (let column = 0; column < PREVIEW_COLUMN_COUNT; column += 1) placeholder.insertCell();
     }
 
-    pageStatus.textContent = filteredRecords.length === 0
+    pageStatus.textContent = page.totalRecords === 0
       ? "0 列"
-      : `第 ${currentPage + 1} / ${pageCount} 頁 · ${pageStart + 1}–${pageStart + visibleRecords.length} / ${filteredRecords.length} 列`;
+      : `第 ${currentPage + 1} / ${page.pageCount} 頁 · ${page.pageStart + 1}–${page.pageStart + visibleRecords.length} / ${page.totalRecords} 列`;
     previousButton.disabled = currentPage === 0;
-    nextButton.disabled = currentPage >= pageCount - 1;
+    nextButton.disabled = currentPage >= page.pageCount - 1;
     if (focusedSourceRow) {
       const replacement = Array.from(
         tableBody.querySelectorAll<HTMLInputElement>("[data-output-source-row]"),
@@ -424,6 +409,7 @@ export function createDataPreviewView(root: HTMLElement): DataPreviewView {
 
   return {
     bind(options) {
+      requestPage = options.onPageRequest;
       tableBody.addEventListener("click", (event) => {
         const toggle = event.target instanceof Element
           ? event.target.closest<HTMLButtonElement>("[data-issue-id]")
@@ -452,18 +438,14 @@ export function createDataPreviewView(root: HTMLElement): DataPreviewView {
       });
       rowFilter.addEventListener("change", () => {
         currentPage = 0;
-        if (currentFile) renderTable(currentFile);
+        requestPending(rowFilter.value as RowFilter, 0);
       });
       previousButton.addEventListener("click", () => {
-        if (currentFile && currentPage > 0) {
-          currentPage -= 1;
-          renderTable(currentFile);
-        }
+        if (currentPage > 0) requestPending(rowFilter.value as RowFilter, currentPage - 1);
       });
       nextButton.addEventListener("click", () => {
-        if (currentFile) {
-          currentPage += 1;
-          renderTable(currentFile);
+        if (currentPageData && currentPage < currentPageData.pageCount - 1) {
+          requestPending(rowFilter.value as RowFilter, currentPage + 1);
         }
       });
       visibleRowsCheckbox.addEventListener("change", () => (
@@ -471,7 +453,8 @@ export function createDataPreviewView(root: HTMLElement): DataPreviewView {
       ));
     },
     clear() {
-      currentFile = null;
+      setPending(false);
+      currentPageData = null;
       currentOutputIssues = [];
       currentPage = 0;
       visibleSourceRows = [];
@@ -488,20 +471,41 @@ export function createDataPreviewView(root: HTMLElement): DataPreviewView {
       expandedIssues.clear();
       root.hidden = true;
     },
-    render(file, outputIssues) {
-      const sameFile = currentFile?.id === file.id;
-      currentFile = file;
-      currentOutputIssues = outputIssues;
-      if (!sameFile) currentPage = 0;
+    fail() {
+      if (!currentPageData) {
+        setPending(false);
+        return "empty";
+      }
+      setPending(false);
+      pageStatus.textContent = "無法更新預覽，請再試一次。";
+      transition.update("error");
+      return "current";
+    },
+    freeze() {
+      if (!currentPageData) return;
+      setPending(true);
+    },
+    hasContent: () => currentPageData !== null,
+    refresh() {
+      if (currentPageData) requestPending(rowFilter.value as RowFilter, currentPage);
+    },
+    render(page) {
+      const sameFile = currentPageData?.fileId === page.fileId;
+      currentPageData = page;
+      currentOutputIssues = page.outputIssues;
+      if (!sameFile) currentPage = page.page;
       root.hidden = false;
-      syncFilterOptions(file, outputIssues);
-      renderTable(file);
+      rowFilter.value = page.filter;
+      syncFilterOptions(page);
+      renderTable(page);
+      setPending(false);
+      transition.update(`${page.fileId}:${page.filter}:${page.page}`);
     },
     setFilter(filter) {
       const option = Array.from(rowFilter.options).find((candidate) => candidate.value === filter);
       rowFilter.value = option && !option.disabled ? filter : "all";
       currentPage = 0;
-      if (currentFile) renderTable(currentFile);
+      requestPending(rowFilter.value as RowFilter, 0);
     },
   };
 }

@@ -209,34 +209,154 @@ h3 {
   justify-content: space-between;
 }
 
-.source-file-message {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  align-items: start;
+.notice.file-operation-status {
+  display: block;
+  position: relative;
+  z-index: 0;
+  height: 4.5rem;
   margin-top: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  overflow: visible;
+  color: var(--color-text);
+  background: var(--color-surface-soft);
 }
 
-.source-file-message:has(.notice-action) {
-  grid-template-columns: minmax(0, 1fr) auto;
+.file-operation-status:has(.file-operation-details[open]) {
+  z-index: 10;
+}
+
+.file-operation-status[data-tone="success"] {
+  border-color: var(--color-success-border);
+  border-left-color: var(--color-success);
+}
+
+.file-operation-status[data-tone="warning"] {
+  border-color: var(--color-warning-border);
+  border-left-color: var(--color-warning);
+}
+
+.file-operation-status[data-tone="error"] {
+  border-color: var(--color-error-border);
+  border-left-color: var(--color-error);
+}
+
+.file-operation-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24.5rem;
+  gap: 0.75rem;
   align-items: center;
+  height: 100%;
+  width: 100%;
 }
 
-.source-file-message[hidden] {
-  display: none;
+.file-operation-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.45rem;
 }
 
-.source-file-message strong {
+.file-operation-title > :first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.source-file-message ul {
+.file-operation-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.15rem;
+}
+
+.file-operation-copy > strong,
+.file-operation-copy > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-operation-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 12rem));
+  gap: 0.5rem;
+  align-items: center;
+  width: 24.5rem;
+}
+
+.file-operation-actions .notice-action {
+  width: 100%;
+  margin-left: 0;
+}
+
+.file-operation-details,
+#cancel-file-operation,
+#undo-file-operation {
+  grid-column: 2;
+}
+
+#mark-all-viewed-button {
+  grid-column: 1;
+}
+
+.file-operation-details {
+  position: relative;
+}
+
+.file-operation-details > summary {
+  display: flex;
+  min-height: var(--control-height-compact);
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem 0.8rem;
+  border-radius: var(--radius-ui);
+  font-weight: 750;
+  cursor: pointer;
+  list-style: none;
+}
+
+.file-operation-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.file-operation-details > summary:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.file-operation-details .upload-failure-groups {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  width: min(30rem, calc(100vw - 3rem));
+  max-height: 14rem;
+  padding: 0.75rem;
+  border: var(--border-ui-strong);
+  border-radius: var(--radius-ui);
+  overflow: auto;
+  overscroll-behavior: contain;
+  color: var(--color-text);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-dialog);
+}
+
+.upload-failure-groups {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.upload-failure-group ul {
   margin: 0;
   padding-left: 1.25rem;
   color: inherit;
 }
 
-.source-file-message li {
+.upload-failure-group li {
   overflow-wrap: anywhere;
+}
+
+.upload-failure-group > strong {
+  display: block;
+  margin-bottom: 0.2rem;
 }
 
 .file-status-copy {
@@ -264,14 +384,6 @@ h3 {
   margin-bottom: 0.15rem;
 }
 
-.file-processing-slot {
-  display: inline-grid;
-  width: var(--indicator-size);
-  height: var(--indicator-size);
-  flex: none;
-  place-items: center;
-}
-
 .file-status {
   display: flex;
   flex: 1;
@@ -288,38 +400,6 @@ h3 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.source-file-picker[data-tone="info"] .file-status {
-  color: var(--color-info-text);
-}
-
-.source-file-picker[data-tone="info"] {
-  border-color: var(--color-info-border);
-}
-
-.source-file-picker[data-tone="success"] .file-status {
-  color: var(--color-success-text);
-}
-
-.source-file-picker[data-tone="success"] {
-  border-color: var(--color-success-border);
-}
-
-.source-file-picker[data-tone="warning"] .file-status {
-  color: var(--color-warning-text);
-}
-
-.source-file-picker[data-tone="warning"] {
-  border-color: var(--color-warning-border);
-}
-
-.source-file-picker[data-tone="error"] .file-status {
-  color: var(--color-error-text);
-}
-
-.source-file-picker[data-tone="error"] {
-  border-color: var(--color-error-border);
 }
 
 .status-line {
@@ -341,6 +421,22 @@ input[type="number"] {
 
 select {
   min-width: min(100%, 12rem);
+}
+
+select:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  background: var(--color-surface-hover);
+}
+
+select option {
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  cursor: pointer;
+}
+
+select option:is(:checked, :hover, :focus) {
+  color: var(--color-on-accent);
+  background: var(--color-accent);
 }
 
 select:disabled,
@@ -463,6 +559,15 @@ button:disabled {
   background: var(--color-surface-hover);
 }
 
+.file-picker-actions button[data-processing-locked="true"],
+.file-picker-actions button[data-processing-locked="true"]:hover {
+  border-color: var(--color-disabled-border);
+  color: var(--color-disabled-text);
+  background: var(--color-disabled-bg);
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+
 @container panel (max-width: 36rem) {
   .file-picker,
   .subsection-heading,
@@ -472,13 +577,25 @@ button:disabled {
     flex-direction: column;
   }
 
-  .source-file-message {
+  .file-operation-status {
+    height: 7.25rem;
+  }
+
+  .file-operation-main {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .source-file-message .notice-action {
+  .file-operation-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
-    margin-left: 0;
+  }
+
+  .file-operation-actions button {
+    width: 100%;
+  }
+
+  .file-operation-details > summary {
+    width: 100%;
   }
 
   .schema-summary {
@@ -507,31 +624,6 @@ button:disabled {
     width: 100%;
     margin-left: 0;
     justify-content: center;
-  }
-
-  .file-picker .file-status-line {
-    height: 4.5rem;
-    min-height: 4.5rem;
-    align-items: flex-start;
-  }
-
-  .file-status {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 0.1rem;
-  }
-
-  .file-status-name {
-    display: -webkit-box;
-    width: 100%;
-    overflow-wrap: anywhere;
-    white-space: normal;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-  }
-
-  .file-processing-slot {
-    margin-top: 0.2rem;
   }
 
   .status-line {

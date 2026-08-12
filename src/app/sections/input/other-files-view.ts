@@ -10,31 +10,9 @@ export interface OtherFilesView {
   render(snapshot: WorkspaceSnapshot): void;
 }
 
-function unsupportedFileType(item: Pick<WorkspaceItem, "ignoredReason" | "virtualPath">): string {
-  if (item.ignoredReason === "symlink") return "不支援（捷徑）";
-  const fileName = item.virtualPath.split("/").at(-1) ?? item.virtualPath;
-  const extension = fileName.match(/\.([^.]{1,8})$/u)?.[1]?.toLocaleUpperCase("en-US");
-  return `不支援（${extension || "檔案類型"}）`;
-}
-
 export function otherFilePresentation(
-  item: Pick<WorkspaceItem, "ignoredReason" | "sourceFormat" | "state" | "virtualPath">,
+  item: Pick<WorkspaceItem, "sourceFormat">,
 ): { format: string; status: string } {
-  if (item.state === "error" && !item.sourceFormat) {
-    return {
-      format: "壓縮檔",
-      status: "未加入",
-    };
-  }
-  if (item.state === "ignored") {
-    return {
-      format: unsupportedFileType(item),
-      status: "未加入",
-    };
-  }
-  if (!item.sourceFormat) {
-    return { format: "不支援（檔案類型）", status: "未加入" };
-  }
   return {
     format: FILE_FORMAT_LABELS[item.sourceFormat],
     status: "已保留",

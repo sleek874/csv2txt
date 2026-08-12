@@ -24,6 +24,18 @@ export interface OutputIssue {
   virtualPath: string;
 }
 
+export interface OutputValidationRow {
+  included: boolean;
+  sourceRow: number;
+  values: readonly string[];
+}
+
+export interface OutputValidationFile {
+  id: string;
+  rows: Iterable<OutputValidationRow>;
+  virtualPath: string;
+}
+
 function unicodeLabel(codePoint: number): string {
   return `U+${codePoint.toString(16).toUpperCase().padStart(4, "0")}`;
 }
@@ -36,48 +48,67 @@ export function validateOutput(
   files: readonly InternalFile[],
   format: OutputFormat,
 ): OutputIssue[] {
-  if (format !== "big5-txt") return [];
+  return validateOutputRows(files.map((file) => ({
+    id: file.id,
+    virtualPath: file.virtualPath,
+    rows: file.rows.map((row) => ({
+      included: row.included,
+      sourceRow: row.sourceRow,
+      values: row.cells.map(cellValue),
+    })),
+  })), format);
+}
 
-  return files.flatMap((file) => file.rows.flatMap((row): OutputIssue[] => {
-    if (!row.included) return [];
-    return row.cells.flatMap((cell): OutputIssue[] => {
-      const field = FIXED_FIELDS[cell.fieldIndex - 1];
-      if (!field) return [];
-      const encoded = encodeBig5EWithReplacement(cellValue(cell));
-      const issues: OutputIssue[] = [];
-      if (encoded.substitutions.length > 0) {
-        const unsupportedCharacters = [...new Map(encoded.substitutions.map((item) => (
-          [item.codePoint, { character: item.character, codePoint: item.codePoint }]
-        ))).values()];
-        const characterDetails = unsupportedCharacters
-          .map(({ codePoint }) => `「${UNRECOGNIZED_CHARACTER}」（${unicodeLabel(codePoint)}）`)
-          .join("、");
-        issues.push({
-          blocking: false,
-          code: "OUTPUT_UNENCODABLE",
-          fieldIndex: cell.fieldIndex,
-          fileId: file.id,
-          message: `${characterDetails ? `字元${characterDetails}` : "這個字元"}沒有 BIG-5E 對照；TXT 將以${UNKNOWN_CHARACTER}代替。`,
-          replacementCharacterIndices: encoded.substitutions.map((item) => item.characterIndex),
-          sourceRow: row.sourceRow,
-          unsupportedCharacters,
-          virtualPath: file.virtualPath,
-        });
-      }
-      if (encoded.bytes.length > field.widthBytes) {
-        issues.push({
-          blocking: true,
-          code: "OUTPUT_WIDTH_OVERFLOW",
-          fieldIndex: cell.fieldIndex,
-          fileId: file.id,
-          message: `替代後內容長度為 ${encoded.bytes.length} bytes，超過 ${field.widthBytes} bytes。`,
-          sourceRow: row.sourceRow,
-          virtualPath: file.virtualPath,
-        });
-      }
-      return issues;
-    });
-  }));
+export function validateOutputRows(
+  files: readonly OutputValidationFile[],
+  format: OutputFormat,
+): OutputIssue[] {
+  if (format !== "big5-txt") return [];
+  const findings: OutputIssue[] = [];
+  for (const file of files) {
+    for (const row of file.rows) {
+      if (!row.included) continue;
+      row.values.forEach((value, columnIndex) => {
+        const fieldIndex = columnIndex + 1;
+        const field = FIXED_FIELDS[columnIndex];
+        if (!field) return;
+        const encoded = encodeBig5EWithReplacement(value);
+        const issues: OutputIssue[] = [];
+        if (encoded.substitutions.length > 0) {
+          const unsupportedCharacters = [...new Map(encoded.substitutions.map((item) => (
+            [item.codePoint, { character: item.character, codePoint: item.codePoint }]
+          ))).values()];
+          const characterDetails = unsupportedCharacters
+            .map(({ codePoint }) => `「${UNRECOGNIZED_CHARACTER}」（${unicodeLabel(codePoint)}）`)
+            .join("、");
+          issues.push({
+            blocking: false,
+            code: "OUTPUT_UNENCODABLE",
+            fieldIndex,
+            fileId: file.id,
+            message: `${characterDetails ? `字元${characterDetails}` : "這個字元"}沒有 BIG-5E 對照；TXT 將以${UNKNOWN_CHARACTER}代替。`,
+            replacementCharacterIndices: encoded.substitutions.map((item) => item.characterIndex),
+            sourceRow: row.sourceRow,
+            unsupportedCharacters,
+            virtualPath: file.virtualPath,
+          });
+        }
+        if (encoded.bytes.length > field.widthBytes) {
+          issues.push({
+            blocking: true,
+            code: "OUTPUT_WIDTH_OVERFLOW",
+            fieldIndex,
+            fileId: file.id,
+            message: `替代後內容長度為 ${encoded.bytes.length} bytes，超過 ${field.widthBytes} bytes。`,
+            sourceRow: row.sourceRow,
+            virtualPath: file.virtualPath,
+          });
+        }
+        findings.push(...issues);
+      });
+    }
+  }
+  return findings;
 }
 
 export function describeOutputIssue(issue: OutputIssue): string {

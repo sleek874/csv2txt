@@ -465,6 +465,8 @@
   position: sticky;
   top: 0;
   z-index: 2;
+  border-right: var(--border-ui);
+  border-bottom: var(--border-ui);
   color: var(--color-text-subtle);
   background: var(--color-surface-muted);
   font-size: 0.66rem;
@@ -613,17 +615,23 @@
 
 .data-table td[data-tone="error"] {
   color: var(--color-error-text);
-  box-shadow: inset 0 calc(-1 * var(--border-width-preview)) var(--color-error);
 }
 
 .data-table td[data-tone="warning"] {
   color: var(--color-warning-text);
-  box-shadow: inset 0 calc(-1 * var(--border-width-preview)) var(--color-warning);
 }
 
 .data-cell-value {
-  display: block;
+  display: inline-block;
   min-width: 0;
+}
+
+.data-table td[data-tone="error"] .data-cell-value {
+  box-shadow: inset 0 calc(-1 * var(--border-width-preview)) var(--color-error);
+}
+
+.data-table td[data-tone="warning"] .data-cell-value {
+  box-shadow: inset 0 calc(-1 * var(--border-width-preview)) var(--color-warning);
 }
 
 .data-cell-value {
@@ -724,6 +732,29 @@
 .download-bar strong,
 .download-bar span {
   display: block;
+}
+
+.download-status-title-line,
+.reference-status-title-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.download-status-title-line > strong,
+.reference-status-title-line > .file-status-name {
+  min-width: 0;
+}
+
+.download-status-title-line > .busy-spinner,
+.reference-status-title-line > .busy-spinner {
+  margin-top: 0;
+}
+
+.download-status-title-line > .busy-spinner[hidden],
+.reference-status-title-line > .busy-spinner[hidden] {
+  display: none;
 }
 
 .output-issue-list {

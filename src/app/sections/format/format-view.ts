@@ -7,6 +7,7 @@ import {
   type OutputFormat,
 } from "../../../core/file-formats";
 import type { WorkspaceSnapshot } from "../../state/workspace-types";
+import { createStateTransition } from "../../shell/state-transition";
 
 export interface FormatView {
   bind(options: {
@@ -25,6 +26,7 @@ export function createFormatView(): FormatView {
   const input = requireDescendant<HTMLSelectElement>(root, "#input-format");
   const output = requireDescendant<HTMLSelectElement>(root, "#selected-output-format");
   const summary = requireDescendant<HTMLElement>(root, "#format-summary");
+  const transition = createStateTransition(summary);
 
   return {
     bind(options) {
@@ -38,6 +40,7 @@ export function createFormatView(): FormatView {
       input.value = snapshot.inputFormat;
       output.value = outputFileFormat;
       summary.textContent = `將把 ${FILE_FORMAT_LABELS[snapshot.inputFormat]} 檔轉換成 ${FILE_FORMAT_LABELS[outputFileFormat]} 檔。`;
+      transition.update(`${snapshot.inputFormat}:${snapshot.outputFormat}`);
     },
   };
 }

@@ -9,7 +9,6 @@ export type InventoryFilter = "rejected" | "error" | "warning" | "output";
 export interface FileTreeView {
   bind(options: {
     onInspect: (fileId: string, filter: InventoryFilter) => void;
-    onMarkAllViewed: () => void;
     onRemoveFile: (fileId: string) => void;
     onRemoveSource: (sourceId: string) => void;
     onSelect: (fileId: string) => void;
@@ -23,7 +22,6 @@ export interface InventoryMetrics {
   correctRows: number | null;
   dataRows: number | null;
   errorRows: number | null;
-  ignoredCount: number;
   outputProblems: number | null;
   rejectedRows: number | null;
   selectedRows: number | null;
@@ -67,17 +65,13 @@ export function inventoryMetrics(
   items: readonly WorkspaceItem[],
   outputIssueRows: ReadonlyMap<string, ReadonlySet<number>>,
 ): InventoryMetrics {
-  const includedItems = items.filter((item) => item.state !== "ignored");
-  const processing = includedItems.some((item) => item.state === "processing");
-  const ignoredCount = items.filter((item) => item.state === "ignored").length;
   const unreadCount = items.filter((item) => item.unread).length;
-  if (includedItems.length === 0) {
+  if (items.length === 0) {
     return {
       blankRows: null,
       correctRows: null,
       dataRows: null,
       errorRows: null,
-      ignoredCount,
       outputProblems: null,
       rejectedRows: null,
       selectedRows: null,
@@ -85,13 +79,12 @@ export function inventoryMetrics(
       warningRows: null,
     };
   }
-  if (processing) {
+  if (items.every((item) => !item.file)) {
     return {
       blankRows: null,
       correctRows: null,
       dataRows: null,
       errorRows: null,
-      ignoredCount,
       outputProblems: null,
       rejectedRows: null,
       selectedRows: null,
@@ -99,26 +92,11 @@ export function inventoryMetrics(
       warningRows: null,
     };
   }
-  if (includedItems.every((item) => item.state === "error" || !item.file)) {
-    return {
-      blankRows: null,
-      correctRows: null,
-      dataRows: null,
-      errorRows: null,
-      ignoredCount,
-      outputProblems: null,
-      rejectedRows: null,
-      selectedRows: null,
-      unreadCount,
-      warningRows: null,
-    };
-  }
-  return includedItems.reduce<InventoryMetrics>((metrics, item) => ({
+  return items.reduce<InventoryMetrics>((metrics, item) => ({
     blankRows: (metrics.blankRows ?? 0) + (item.file?.summary.blankRows ?? 0),
     correctRows: (metrics.correctRows ?? 0) + (item.file?.summary.correctRows ?? 0),
     dataRows: (metrics.dataRows ?? 0) + (item.file?.summary.dataRows ?? 0),
     errorRows: (metrics.errorRows ?? 0) + (item.file?.summary.errorRows ?? 0),
-    ignoredCount,
     outputProblems: (metrics.outputProblems ?? 0) + (outputIssueRows.get(item.id)?.size ?? 0),
     rejectedRows: (metrics.rejectedRows ?? 0) + (item.file?.summary.rejectedRows ?? 0),
     selectedRows: (metrics.selectedRows ?? 0) + (item.file?.summary.includedRows ?? 0),
@@ -129,7 +107,6 @@ export function inventoryMetrics(
     correctRows: 0,
     dataRows: 0,
     errorRows: 0,
-    ignoredCount,
     outputProblems: 0,
     rejectedRows: 0,
     selectedRows: 0,
@@ -139,28 +116,16 @@ export function inventoryMetrics(
 }
 
 function itemPresentation(item: WorkspaceItem): { label: string; tone: string } {
-  if (item.state === "ignored") return {
-    label: item.ignoredReason === "symlink" ? "捷徑不會加入" : "不支援的檔案類型",
-    tone: "neutral",
-  };
-  if (item.state === "processing") return { label: "檢查中", tone: "info" };
-  if (item.state === "error" || !item.file) return { label: "無法開啟", tone: "error" };
+  if (!item.file) return { label: "無法顯示", tone: "error" };
   return findingPresentation(item.file.summary.errorRows, item.file.summary.warningRows)
     ?? { label: "已準備好", tone: "success" };
 }
 
 function groupPresentation(items: readonly WorkspaceItem[]): { label: string; tone: string } {
-  if (items.some((item) => item.state === "processing")) {
-    return { label: "檢查中", tone: "info" };
-  }
-  const active = items.filter((item) => item.state !== "ignored");
-  if (active.length === 0) return { label: `${items.length} 個未加入`, tone: "neutral" };
-  const errors = active.reduce((total, item) => (
-    total + (item.state === "error" ? 1 : item.file?.summary.errorRows ?? 0)
-  ), 0);
-  const warnings = active.reduce((total, item) => total + (item.file?.summary.warningRows ?? 0), 0);
+  const errors = items.reduce((total, item) => total + (item.file?.summary.errorRows ?? 0), 0);
+  const warnings = items.reduce((total, item) => total + (item.file?.summary.warningRows ?? 0), 0);
   return findingPresentation(errors, warnings)
-    ?? { label: `${active.length} 個檔案`, tone: "success" };
+    ?? { label: `${items.length} 個檔案`, tone: "success" };
 }
 
 export function buildTree(
@@ -236,7 +201,7 @@ function firstAffectedFile(
   outputRows: ReadonlyMap<string, ReadonlySet<number>>,
 ): WorkspaceItem | null {
   return node.items.find((item) => {
-    if (!item.file) return filter === "error" && item.state === "error";
+    if (!item.file) return false;
     if (filter === "rejected") return item.file.summary.rejectedRows > 0;
     if (filter === "error") return item.file.summary.errorRows > 0;
     if (filter === "warning") return item.file.summary.warningRows > 0;
@@ -256,7 +221,6 @@ export function createFileTreeView(root: HTMLElement): FileTreeView {
   const table = requireDescendant<HTMLTableElement>(root, "#file-tree-table");
   const tree = requireDescendant<HTMLTableSectionElement>(root, "#file-tree");
   const total = requireDescendant<HTMLTableRowElement>(root, "#file-tree-total");
-  const markAllViewed = requireDescendant<HTMLButtonElement>(root, "#mark-all-viewed-button");
   const selectSourceButton = requireDescendant<HTMLButtonElement>(root, "#select-source-button");
   const collapsedNodes = new Set<string>();
   let currentOutputRows = new Map<string, Set<number>>();
@@ -295,7 +259,6 @@ export function createFileTreeView(root: HTMLElement): FileTreeView {
     options?: {
       file?: WorkspaceItem | null;
       filter?: InventoryFilter;
-      pending?: boolean;
       tone?: string;
     },
   ): void {
@@ -303,7 +266,7 @@ export function createFileTreeView(root: HTMLElement): FileTreeView {
     cell.className = "inventory-number-cell";
     if (options?.tone) cell.dataset.tone = options.tone;
     if (value === null) {
-      cell.textContent = options?.pending || options?.file?.state === "processing" ? "…" : "—";
+      cell.textContent = "—";
       return;
     }
     if (value > 0 && options?.file && options.filter) {
@@ -327,10 +290,7 @@ export function createFileTreeView(root: HTMLElement): FileTreeView {
       ? document.activeElement.dataset.treeNodeId
       : undefined;
     currentOutputRows = issueRowsByFile(outputIssues);
-    const supportedCount = snapshot.files.filter((item) => item.state !== "ignored").length;
-    const unreadCount = snapshot.files.filter((item) => item.unread).length;
-    markAllViewed.hidden = unreadCount === 0;
-    markAllViewed.textContent = "全部標示為已查看";
+    const supportedCount = snapshot.files.length;
     tree.replaceChildren();
 
     function appendNode(
@@ -340,7 +300,6 @@ export function createFileTreeView(root: HTMLElement): FileTreeView {
       ancestorNodeIds: readonly string[] = [],
     ): void {
       const metrics = inventoryMetrics(node.items, currentOutputRows);
-      const pending = node.items.some((item) => item.state === "processing");
       const presentation = node.item ? itemPresentation(node.item) : groupPresentation(node.items);
       const row = tree.insertRow();
       row.dataset.treeNodeId = node.id;
@@ -388,11 +347,6 @@ export function createFileTreeView(root: HTMLElement): FileTreeView {
         node.item ? "新加入" : `新加入 ${metrics.unreadCount}`,
         "info",
       );
-      if (metrics.ignoredCount > 0) appendBadge(
-        badgeLine,
-        node.item ? "未加入" : `未加入 ${metrics.ignoredCount}`,
-        "neutral",
-      );
       copy.append(nameLine, badgeLine);
       const typeLabel = node.kind === "folder" ? "資料夾" : node.source.kind === "archive" && node.kind === "source"
         ? "壓縮檔"
@@ -414,14 +368,14 @@ export function createFileTreeView(root: HTMLElement): FileTreeView {
       const outputFile = metrics.outputProblems && metrics.outputProblems > 0
         ? firstAffectedFile(node, "output", currentOutputRows)
         : null;
-      appendMetric(row, metrics.blankRows, { file: node.item, pending });
-      appendMetric(row, metrics.rejectedRows, { file: rejectedFile, filter: "rejected", pending, tone: "error" });
-      appendMetric(row, metrics.dataRows, { file: node.item, pending });
-      appendMetric(row, metrics.correctRows, { file: node.item, pending, tone: "success" });
-      appendMetric(row, metrics.errorRows, { file: errorFile, filter: "error", pending, tone: "error" });
-      appendMetric(row, metrics.warningRows, { file: warningFile, filter: "warning", pending, tone: "warning" });
-      appendMetric(row, metrics.selectedRows, { file: node.item, pending });
-      appendMetric(row, metrics.outputProblems, { file: outputFile, filter: "output", pending, tone: "error" });
+      appendMetric(row, metrics.blankRows, { file: node.item });
+      appendMetric(row, metrics.rejectedRows, { file: rejectedFile, filter: "rejected", tone: "error" });
+      appendMetric(row, metrics.dataRows, { file: node.item });
+      appendMetric(row, metrics.correctRows, { file: node.item, tone: "success" });
+      appendMetric(row, metrics.errorRows, { file: errorFile, filter: "error", tone: "error" });
+      appendMetric(row, metrics.warningRows, { file: warningFile, filter: "warning", tone: "warning" });
+      appendMetric(row, metrics.selectedRows, { file: node.item });
+      appendMetric(row, metrics.outputProblems, { file: outputFile, filter: "output", tone: "error" });
 
       const removeCell = row.insertCell();
       removeCell.className = "inventory-remove-cell";
@@ -470,10 +424,7 @@ export function createFileTreeView(root: HTMLElement): FileTreeView {
       totalMetrics.selectedRows,
       totalMetrics.outputProblems,
     ];
-    const pending = snapshot.files.some((item) => item.state === "processing");
-    updateFileTableFooter(total, supportedCount, totalValues.map((value) => (
-      value ?? (pending ? "…" : "—")
-    )));
+    updateFileTableFooter(total, supportedCount, totalValues.map((value) => value ?? "—"));
 
     const buttons = Array.from(tree.querySelectorAll<HTMLButtonElement>("[data-tree-node-id]"));
     const selected = buttons.find((candidate) => candidate.dataset.fileId === snapshot.selectedFileId) ?? null;
@@ -492,7 +443,6 @@ export function createFileTreeView(root: HTMLElement): FileTreeView {
 
   return {
     bind(options) {
-      markAllViewed.addEventListener("click", options.onMarkAllViewed);
       tree.addEventListener("click", (event) => {
         const target = event.target instanceof Element ? event.target : null;
         const removeSource = target?.closest<HTMLButtonElement>("[data-remove-source-id]");
@@ -559,7 +509,6 @@ export function createFileTreeView(root: HTMLElement): FileTreeView {
         hasRows: false,
       });
       updateFileTableFooter(total, 0, Array(8).fill("—"));
-      markAllViewed.hidden = true;
       collapsedNodes.clear();
       currentOutputRows.clear();
       if (hadTreeFocus) selectSourceButton.focus({ preventScroll: true });

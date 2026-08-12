@@ -10,7 +10,8 @@ import { createOutputPlan } from "../src/app/sections/output/output-plan.ts";
 import { OUTPUT_PRESENTATIONS } from "../src/app/sections/output/output-presentations.ts";
 import { inspectZip } from "../src/core/archive/zip.ts";
 import { parseBig5Txt } from "../src/core/formats/big5-txt.ts";
-import { summarizeInternalFile } from "../src/core/internal-model.ts";
+import { hasBlockingFileIssues, summarizeInternalFile } from "../src/core/internal-model.ts";
+import { validateOutput } from "../src/core/output-validation.ts";
 
 function internalFile(id, virtualPath, options = {}) {
   const row = {
@@ -45,16 +46,38 @@ function internalFile(id, virtualPath, options = {}) {
   return file;
 }
 
-function readyItem(file) {
+function workspaceRecord(file, outputFormat) {
+  const outputIssues = validateOutput([file], outputFormat);
+  const blockingOutputIssues = outputIssues.filter((issue) => issue.blocking);
+  return {
+    blockingOutputIssues,
+    fileIssueMessages: file.issues
+      .filter((issue) => issue.severity === "error" && issue.sourceRow === undefined)
+      .map((issue) => issue.message),
+    hasBlockingIssues: hasBlockingFileIssues(file),
+    id: file.id,
+    outputBlockingRows: new Set(blockingOutputIssues.map((issue) => issue.sourceRow)).size,
+    outputFormat,
+    outputIssues: blockingOutputIssues,
+    outputReplacementRows: new Set(outputIssues
+      .filter((issue) => !issue.blocking)
+      .map((issue) => issue.sourceRow)).size,
+    rowCount: file.rows.length,
+    selectionRevision: 0,
+    summary: file.summary,
+    virtualPath: file.virtualPath,
+  };
+}
+
+function readyItem(file, outputFormat = "csv") {
   return {
     id: file.id,
     size: 1,
     sourceId: `input-${file.id}`,
     sourceFormat: "csv",
-    state: "ready",
     relativePath: file.virtualPath,
     virtualPath: file.virtualPath,
-    file,
+    file: workspaceRecord(file, outputFormat),
   };
 }
 
@@ -77,7 +100,6 @@ test("summarizes the full workspace and blocks an incomplete batch", () => {
     files: [
       readyItem(included),
       readyItem(omitted),
-      { id: "failed", size: 1, sourceId: "input-failed", sourceFormat: "csv", state: "error", relativePath: "", virtualPath: "failed.csv" },
     ],
     inputFormat: "csv",
     outputFormat: "csv",
@@ -93,8 +115,8 @@ test("summarizes the full workspace and blocks an incomplete batch", () => {
   });
   assert.deepEqual(plan.totalSummary, {
     downloadableRows: 1,
-    fileCount: 3,
-    problemCount: 2,
+    fileCount: 2,
+    problemCount: 1,
     selectedRows: 1,
   });
   assert.equal(plan.omittedRowCount, 1);
@@ -126,24 +148,17 @@ test("excludes unchecked-row issues and changes from the Section 2 summary", () 
   });
 });
 
-test("ignored inventory entries never enter output totals or block download", () => {
+test("accepted files from other families never enter the active output totals", () => {
   const file = internalFile("ready", "ready.csv");
+  const other = internalFile("other", "other.txt");
   const plan = createOutputPlan({
     files: [
       readyItem(file),
-      {
-        id: "ignored",
-        ignoredReason: "unsupported-type",
-        size: 10,
-        sourceId: "ignored-source",
-        state: "ignored",
-        relativePath: "notes.pdf",
-        virtualPath: "notes.pdf",
-      },
+      { ...readyItem(other), sourceFormat: "txt" },
     ],
     inputFormat: "csv",
     outputFormat: "csv",
-    selectedFileId: "ignored",
+    selectedFileId: other.id,
     sources: [],
   });
 
@@ -170,15 +185,14 @@ test("keeps nonblocking output substitutions out of fatal counts", () => {
     reason: "test-two",
   });
   const plan = createOutputPlan({
-    files: [readyItem(file)],
+    files: [readyItem(file, "big5-txt")],
     inputFormat: "csv",
     outputFormat: "big5-txt",
     selectedFileId: file.id,
     sources: [],
   });
 
-  assert.equal(plan.outputIssues.length, 2);
-  assert.equal(plan.outputIssues.every((issue) => !issue.blocking), true);
+  assert.equal(plan.outputIssues.length, 0, "nonblocking details stay in the preview worker page");
   assert.equal(plan.totalSummary.problemCount, 0);
   assert.equal(plan.totalSummary.downloadableRows, 1);
   assert.equal(plan.replacementRowCount, 1);
@@ -242,30 +256,21 @@ test("applies BIG-5E compatibility only to BIG-5E TXT output", async () => {
   const values = Array.from({ length: 15 }, () => "");
   values[6] = "甲廍乙";
   const file = internalFile("rare-character", "rare-character.xlsx", { values });
-  const baseSnapshot = {
-    files: [readyItem(file)],
+  const snapshot = (outputFormat) => ({
+    files: [readyItem(file, outputFormat)],
     inputFormat: "csv",
+    outputFormat,
     selectedFileId: file.id,
     sources: [],
-  };
+  });
 
-  const big5Plan = createOutputPlan({ ...baseSnapshot, outputFormat: "big5-txt" });
+  const big5Plan = createOutputPlan(snapshot("big5-txt"));
   assert.equal(big5Plan.canDownload, true);
   assert.equal(big5Plan.totalSummary.problemCount, 0);
   assert.equal(big5Plan.replacementRowCount, 1);
-  assert.equal(big5Plan.outputIssues[0]?.blocking, false);
-  assert.equal(big5Plan.outputIssues[0]?.code, "OUTPUT_UNENCODABLE");
-  assert.equal(big5Plan.outputIssues[0]?.fieldIndex, 7);
-  assert.deepEqual(big5Plan.outputIssues[0]?.unsupportedCharacters, [{
-    character: "廍",
-    codePoint: 0x5ecd,
-  }]);
-  assert.equal(
-    big5Plan.outputIssues[0]?.message,
-    "字元「■」（U+5ECD）沒有 BIG-5E 對照；TXT 將以？代替。",
-  );
+  assert.equal(big5Plan.outputIssues.length, 0);
 
-  const csvPlan = createOutputPlan({ ...baseSnapshot, outputFormat: "csv" });
+  const csvPlan = createOutputPlan(snapshot("csv"));
   assert.equal(csvPlan.outputIssues.length, 0);
   assert.equal(csvPlan.canDownload, true);
   assert.equal((await createOutputAdapter(createCodecManager()).create([file], "csv")).filename, "rare-character.csv");
@@ -279,7 +284,7 @@ test("blocks BIG-5E byte overflow only for BIG-5E TXT", () => {
   const file = internalFile("wide", "wide.xlsx", { values });
 
   const big5Plan = createOutputPlan({
-    files: [readyItem(file)],
+    files: [readyItem(file, "big5-txt")],
     inputFormat: "csv",
     outputFormat: "big5-txt",
     selectedFileId: file.id,
@@ -291,7 +296,7 @@ test("blocks BIG-5E byte overflow only for BIG-5E TXT", () => {
   assert.equal(big5Plan.canDownload, false);
 
   const xlsxPlan = createOutputPlan({
-    files: [readyItem(file)],
+    files: [readyItem(file, "xlsx")],
     inputFormat: "csv",
     outputFormat: "xlsx",
     selectedFileId: file.id,
@@ -306,7 +311,7 @@ test("keeps replacement notices nonblocking while replacement overflow remains f
   values[6] = "ABCDE廍FGHIJK";
   const file = internalFile("replacement-overflow", "replacement-overflow.xlsx", { values });
   const plan = createOutputPlan({
-    files: [readyItem(file)],
+    files: [readyItem(file, "big5-txt")],
     inputFormat: "csv",
     outputFormat: "big5-txt",
     selectedFileId: file.id,
@@ -314,7 +319,6 @@ test("keeps replacement notices nonblocking while replacement overflow remains f
   });
 
   assert.deepEqual(plan.outputIssues.map((issue) => [issue.code, issue.blocking]), [
-    ["OUTPUT_UNENCODABLE", false],
     ["OUTPUT_WIDTH_OVERFLOW", true],
   ]);
   assert.equal(plan.replacementRowCount, 1);
@@ -338,17 +342,18 @@ test("keeps a partially decoded source row selected and downloadable", () => {
     },
     values,
   });
-  const base = {
-    files: [readyItem(file)],
+  const base = (outputFormat) => ({
+    files: [readyItem(file, outputFormat)],
     inputFormat: "csv",
+    outputFormat,
     selectedFileId: file.id,
     sources: [],
-  };
+  });
 
-  const txt = createOutputPlan({ ...base, outputFormat: "big5-txt" });
+  const txt = createOutputPlan(base("big5-txt"));
   assert.equal(txt.canDownload, true);
   assert.equal(txt.outputIssues.length, 0);
-  assert.equal(createOutputPlan({ ...base, outputFormat: "csv" }).canDownload, true);
+  assert.equal(createOutputPlan(base("csv")).canDownload, true);
 });
 
 test("blocks an incomplete batch when a source record has the wrong column count", () => {

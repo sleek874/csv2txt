@@ -12,7 +12,7 @@
     <meta name="robots" content="index, follow" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <script vite-ignore src="./boot.js"></script>
     <link rel="canonical" href="https://sleek874.github.io/csv2txt/" />
@@ -99,23 +99,38 @@
             <div class="file-status-copy">
               <div id="file-status" class="file-status-line">
                 <span class="file-status">
-                  <span id="source-file-name" class="file-status-name">尚未加入檔案</span>
-                </span>
-                <span class="file-processing-slot" aria-hidden="true">
-                  <span id="file-processing-indicator" class="busy-spinner" hidden></span>
+                  <span id="source-file-name" class="file-status-name">新增或追加檔案</span>
                 </span>
               </div>
               <p class="help-text">先前加入的檔案會保留；所有處理都在此頁完成，檔案不會上傳。</p>
             </div>
             <div class="file-picker-actions">
-              <button id="mark-all-viewed-button" class="secondary-button" type="button" hidden>全部標示為已查看</button>
               <button id="select-source-button" class="primary-button" type="button">新增檔案</button>
               <button id="clear-workspace-button" class="secondary-button" type="button" disabled>清空清單</button>
             </div>
             <input id="source-file" type="file" accept=".csv,.xls,.xlsx,.txt,.zip" multiple hidden />
           </div>
 
-          <div id="source-file-message" class="notice source-file-message" hidden></div>
+          <div id="file-operation-status" class="notice file-operation-status" data-tone="neutral">
+            <div class="file-operation-main">
+              <div class="file-operation-copy">
+                <strong class="file-operation-title">
+                  <span id="file-operation-title">請加入檔案</span>
+                  <span id="file-operation-spinner" class="busy-spinner state-transition" aria-hidden="true" hidden></span>
+                </strong>
+                <span id="file-operation-detail">可加入 TXT、CSV、XLS、XLSX 或 ZIP。</span>
+              </div>
+              <div class="file-operation-actions">
+                <button id="mark-all-viewed-button" class="secondary-button notice-action" type="button" hidden>全部標示為已查看</button>
+                <details id="file-operation-details" class="file-operation-details" hidden>
+                  <summary id="file-operation-details-summary" class="secondary-button notice-action">查看未加入的項目</summary>
+                  <div id="file-operation-failures" class="upload-failure-groups"></div>
+                </details>
+                <button id="cancel-file-operation" class="secondary-button notice-action" type="button" hidden>取消本次新增</button>
+                <button id="undo-file-operation" class="secondary-button notice-action" type="button" hidden>復原</button>
+              </div>
+            </div>
+          </div>
 
           <div id="workspace-results">
             <div class="workspace-layout">
@@ -123,7 +138,7 @@
                 <button id="active-files-tab" type="button" role="tab" aria-selected="true" aria-controls="active-files-panel"><span id="active-files-format">TXT</span> <span id="active-files-count">0</span></button>
                 <button id="other-files-tab" type="button" role="tab" aria-selected="false" aria-controls="other-files-panel">其他檔案 <span id="other-files-count">0</span></button>
               </div>
-              <div id="active-files-panel" role="tabpanel" aria-labelledby="active-files-tab">
+              <div id="active-files-panel" class="state-transition" role="tabpanel" aria-labelledby="active-files-tab">
               <p id="file-tree-help" class="visually-hidden">上下方向鍵可移動，左右方向鍵可展開或收合。選擇檔案可在下方查看內容；移除只會影響目前清單，不會刪除電腦中的原始檔案。</p>
               <div class="table-scroll inventory-table-scroll" tabindex="0" aria-label="檔案清單與摘要，可左右捲動">
                 <table id="file-tree-table" class="inventory-table" role="treegrid" aria-describedby="file-tree-help">
@@ -141,9 +156,9 @@
                 </table>
               </div>
 
-              <div id="selection-message" class="notice selection-message" hidden></div>
+              <div id="selection-message" class="notice selection-message state-transition" hidden></div>
 
-              <div id="data-workspace" class="data-workspace" hidden>
+              <div id="data-workspace" class="data-workspace state-transition" hidden>
                 <div class="subsection-heading data-toolbar">
                   <div>
                     <h3>資料預覽：<span id="preview-file-name"></span></h3>
@@ -192,7 +207,7 @@
                 </div>
               </div>
               </div>
-              <div id="other-files-panel" role="tabpanel" aria-labelledby="other-files-tab" hidden>
+              <div id="other-files-panel" class="state-transition" role="tabpanel" aria-labelledby="other-files-tab" hidden>
                 <div class="table-scroll inventory-table-scroll" tabindex="0" aria-label="其他檔案清單，可上下及左右捲動">
                   <table class="inventory-table other-files-table">
                     <caption class="visually-hidden">目前保留但未使用所選輸入格式處理的檔案</caption>
@@ -220,12 +235,15 @@
             </div>
           </div>
           <p class="output-format-summary">目前輸出：<strong id="output-format-label">TXT</strong></p>
-          <div class="download-bar">
+          <div id="output-download-status" class="download-bar">
             <div>
-              <strong id="download-status-title">尚未準備下載</strong>
+              <div class="download-status-title-line">
+                <strong id="download-status-title">尚未準備下載</strong>
+                <span id="download-status-spinner" class="busy-spinner state-transition" aria-hidden="true" hidden></span>
+              </div>
               <span id="download-status-detail">請先在第 1 區加入檔案。</span>
-              <a id="output-problem-link" class="inline-action-link" href="#file-tree-table" hidden>回到第 1 區查看問題</a>
-              <ul id="output-issue-list" class="output-issue-list" hidden></ul>
+              <a id="output-problem-link" class="inline-action-link state-transition" href="#file-tree-table" hidden>回到第 1 區查看問題</a>
+              <ul id="output-issue-list" class="output-issue-list state-transition" hidden></ul>
             </div>
             <button id="download-button" class="primary-button" type="button" disabled>下載 TXT</button>
           </div>
@@ -243,7 +261,10 @@
           <div class="advanced-workspace">
             <div id="reference-file-picker" class="file-picker reference-file-picker" data-tone="neutral">
               <div class="file-status-copy">
-                <span id="reference-file-name" class="file-status-name">尚未選擇參照 Excel</span>
+                <div class="reference-status-title-line">
+                  <span id="reference-file-name" class="file-status-name">尚未選擇參照 Excel</span>
+                  <span id="reference-status-spinner" class="busy-spinner state-transition" aria-hidden="true" hidden></span>
+                </div>
                 <p class="help-text">第一列作為欄位標題；檔案只在目前瀏覽器記憶體中處理。</p>
               </div>
               <div class="file-picker-actions">
@@ -253,9 +274,9 @@
               <input id="reference-file" type="file" accept=".xls,.xlsx" hidden />
             </div>
 
-            <div id="reference-message" class="notice error-notice" hidden></div>
+            <div id="reference-message" class="notice error-notice state-transition" hidden></div>
 
-            <div id="advanced-controls" hidden>
+            <div id="advanced-controls" class="state-transition" hidden>
               <div class="advanced-config responsive-grid">
                 <label id="reference-sheet-control" class="advanced-field" for="reference-sheet">
                   <span>參照工作表</span>
@@ -275,9 +296,12 @@
 
               <p id="advanced-summary" class="advanced-summary">0 列已勾選。</p>
 
-              <div class="download-bar">
+              <div id="advanced-download-status" class="download-bar">
                 <div>
-                  <strong id="advanced-download-title">尚未準備進階輸出</strong>
+                  <div class="download-status-title-line">
+                    <strong id="advanced-download-title">尚未準備進階輸出</strong>
+                    <span id="advanced-download-spinner" class="busy-spinner state-transition" aria-hidden="true" hidden></span>
+                  </div>
                   <span id="advanced-download-detail">請先選擇參照 Excel。</span>
                 </div>
                 <button id="advanced-download-button" class="primary-button" type="button" disabled>下載進階 XLSX</button>

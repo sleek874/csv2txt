@@ -1,26 +1,20 @@
 import type { OfflineCache } from "../../../browser/offline-cache";
 import type { UnloadGuard } from "../../../browser/unload-guard";
-import { createInternalFileWithRecovery } from "../../../core/conversion-pipeline";
-import {
-  detectInputFileType,
-  detectSourceFileType,
-  fileFormatForSourceType,
-  type FileFormat,
-} from "../../../core/file-formats";
+import { detectInputFileType } from "../../../core/file-formats";
 import { taipeiDateStamp } from "../../../core/validation";
-import type { InputAdapter } from "../../adapters/input-adapter";
-import type { CodecManager } from "../../resources/codec-manager";
-import { prepareSourceResources } from "../../resources/resource-policy";
+import type { BatchClient } from "../../batch/batch-client";
+import type { PreviewFilter, ProcessingProgress } from "../../batch/protocol";
 import type { AppStatus } from "../../shell/app-status";
 import type { WorkspaceModel } from "../../state/workspace-model";
 import type { WorkspaceItem, WorkspaceSource } from "../../state/workspace-types";
+import type { FileOperationStatus, UploadFailureGroup } from "./file-operation-status-view";
 import type { InputSectionView } from "./input-section-view";
 
 const MAX_SOURCE_FILE_BYTES = 25 * 1024 * 1024;
+const PROCESSING_FEEDBACK_DELAY_MS = 300;
 
 interface InputControllerOptions {
-  codecs: CodecManager;
-  inputAdapter: InputAdapter;
+  batchClient: BatchClient;
   model: WorkspaceModel;
   offlineCache: OfflineCache;
   status: AppStatus;
@@ -28,359 +22,314 @@ interface InputControllerOptions {
   view: InputSectionView;
 }
 
-function detailAfterColon(message: string): string {
-  const colon = message.indexOf("：");
-  return colon >= 0 ? message.slice(colon + 1).trim() : "";
+interface FailureCategory {
+  label: string;
+  tone: "error" | "warning";
 }
 
-function friendlyArchiveError(error: unknown): string {
-  const message = error instanceof Error ? error.message : "";
-  const detail = detailAfterColon(message);
-  const withDetail = (text: string) => detail ? `${text}：${detail}` : `${text}。`;
+interface UploadBatch {
+  activeSourceId: string | null;
+  cancelled: boolean;
+  failures: Map<string, { category: FailureCategory; files: Set<string> }>;
+  items: WorkspaceItem[];
+  latestProgress: ProcessingProgress;
+  processingVisible: boolean;
+  revealTimer: ReturnType<typeof setTimeout> | null;
+  sources: WorkspaceSource[];
+}
 
-  if (/路徑不安全|路徑超過/u.test(message)) {
-    return "壓縮檔內有不安全的檔案位置，因此沒有加入。";
-  }
-  if (/加密/u.test(message)) {
-    return withDetail("壓縮檔內有受密碼保護的檔案，請先解除密碼後再試");
-  }
-  if (/重複路徑/u.test(message)) {
-    return withDetail("壓縮檔內有同名檔案，因此沒有加入");
-  }
-  if (/25 MiB/u.test(message)) {
-    return withDetail("壓縮檔內有檔案超過 25 MB，因此沒有加入");
-  }
-  if (/100 MiB/u.test(message)) {
-    return "壓縮檔解開後超過 100 MB，因此沒有加入。";
-  }
-  if (/項目.*上限|項目累計/u.test(message)) {
-    return "壓縮檔內的檔案太多，因此沒有加入。";
-  }
-  if (/巢狀/u.test(message)) {
-    return "壓縮檔內還有太多層壓縮檔，因此沒有加入。";
-  }
-  return "無法開啟這個壓縮檔，請確認檔案可正常開啟後再試一次。";
+function extensionLabel(path: string): string {
+  const fileName = path.split("/").at(-1) ?? path;
+  return fileName.match(/\.([^.]{1,8})$/u)?.[1]?.toLocaleUpperCase("en-US") ?? "未知";
+}
+
+function archiveFailureCategory(error: unknown): FailureCategory {
+  const message = error instanceof Error ? error.message : "";
+  if (/清單中已有這個檔案/u.test(message)) return { label: "重複檔案", tone: "warning" };
+  if (/路徑不安全|路徑超過/u.test(message)) return { label: "不安全的壓縮檔內容", tone: "error" };
+  if (/加密/u.test(message)) return { label: "受密碼保護", tone: "error" };
+  if (/重複路徑/u.test(message)) return { label: "壓縮檔內有同名檔案", tone: "error" };
+  if (/25 MiB|100 MiB/u.test(message)) return { label: "檔案大小超過限制", tone: "error" };
+  if (/項目.*上限|項目累計/u.test(message)) return { label: "壓縮檔內檔案過多", tone: "error" };
+  if (/巢狀/u.test(message)) return { label: "壓縮層數超過限制", tone: "error" };
+  return { label: "無法開啟或內容損壞", tone: "error" };
+}
+
+function addFailure(batch: UploadBatch, category: FailureCategory, file: string): void {
+  const key = `${category.tone}:${category.label}`;
+  const group = batch.failures.get(key) ?? { category, files: new Set<string>() };
+  group.files.add(file);
+  batch.failures.set(key, group);
+}
+
+function groupedFailures(batch: UploadBatch): UploadFailureGroup[] {
+  return [...batch.failures.values()].map(({ category, files }) => ({ ...category, files: [...files] }));
 }
 
 export function createInputController(options: InputControllerOptions) {
-  let generation = 0;
-  let nextFileId = 1;
   let nextSourceId = 1;
-  let pendingArchiveCount = 0;
+  let activeBatch: UploadBatch | null = null;
+  let selectionPending = false;
   let selectionQueue = Promise.resolve();
   let validationDate: string | null = null;
+  let previewRequest = 0;
 
   function render(): void {
     const snapshot = options.model.snapshot();
-    options.view.render(snapshot, pendingArchiveCount);
-    options.unloadGuard.setPendingFile(
-      snapshot.sources.length > 0 || pendingArchiveCount > 0,
-      "primary-workspace",
-    );
+    options.view.render(snapshot);
+    options.unloadGuard.setPendingFile(snapshot.sources.length > 0 || activeBatch !== null || selectionPending, "primary-workspace");
   }
 
-  function rejectedEntry(
-    sourceId: string,
-    relativePath: string,
-    virtualPath: string,
-    size: number,
-    message: string,
-    sourceFormat?: FileFormat,
-  ): void {
-    options.model.add({
-      error: message,
-      id: `source-${nextFileId++}`,
-      size,
-      sourceId,
-      ...(sourceFormat ? { sourceFormat } : {}),
-      state: "error",
-      relativePath,
-      virtualPath,
-    });
+  function setOperationStatus(status: FileOperationStatus): void {
+    options.view.renderOperationStatus(status);
   }
 
-  function ignoredEntry(
-    sourceId: string,
-    relativePath: string,
-    virtualPath: string,
-    size: number,
-    ignoredReason: "symlink" | "unsupported-type",
-    sourceFormat?: FileFormat,
-  ): void {
-    options.model.add({
-      id: `source-${nextFileId++}`,
-      ignoredReason,
-      size,
-      sourceId,
-      ...(sourceFormat ? { sourceFormat } : {}),
-      state: "ignored",
-      relativePath,
-      virtualPath,
-    });
-  }
-
-  function addSource(source: WorkspaceSource): void {
-    if (!options.model.snapshot().sources.some((current) => current.id === source.id)) {
-      options.model.addSource(source);
+  async function requestPreview(fileId: string, filter: PreviewFilter, page: number): Promise<void> {
+    const currentRequest = ++previewRequest;
+    const outputFormat = options.model.snapshot().outputFormat;
+    try {
+      const preview = await options.batchClient.getPreviewPage(fileId, filter, page, outputFormat);
+      if (currentRequest === previewRequest && options.model.snapshot().selectedFileId === fileId) {
+        options.view.renderPreviewPage(preview);
+      }
+    } catch {
+      if (currentRequest === previewRequest) options.view.renderPreviewError(fileId);
     }
   }
 
-  async function processRegularFile(
-    sourceId: string,
-    relativePath: string,
-    virtualPath: string,
-    size: number,
-    bytes: Uint8Array,
-    currentGeneration: number,
-  ): Promise<string | null> {
-    if (currentGeneration !== generation) return null;
-    if (options.model.hasPath(virtualPath)) return `清單中已有這個檔案，因此沒有重複加入：${virtualPath}`;
-    const type = detectSourceFileType(virtualPath);
-    if (!type) return `這種檔案格式目前不能加入：${virtualPath}`;
-    if (size === 0 || size > MAX_SOURCE_FILE_BYTES) {
-      rejectedEntry(
-        sourceId,
-        relativePath,
-        virtualPath,
-        size,
-        size === 0
-          ? "這個檔案是空的，請選擇有內容的檔案。"
-          : "檔案超過 25 MB，請選擇較小的檔案。",
-        fileFormatForSourceType(type),
-      );
-      return null;
+  function revealProcessing(batch: UploadBatch): void {
+    batch.revealTimer = setTimeout(() => {
+      batch.revealTimer = null;
+      if (activeBatch !== batch || batch.cancelled) return;
+      batch.processingVisible = true;
+      options.view.setFilePickerLocked(true, true);
+      setOperationStatus({ kind: "processing", progress: batch.latestProgress });
+    }, PROCESSING_FEEDBACK_DELAY_MS);
+  }
+
+  async function processFile(sourceFile: File, batch: UploadBatch): Promise<void> {
+    const inputType = detectInputFileType(sourceFile.name);
+    if (!inputType) {
+      addFailure(batch, { label: `不支援的檔案類型（${extensionLabel(sourceFile.name)}）`, tone: "warning" }, sourceFile.name);
+      return;
+    }
+    if (sourceFile.size === 0 || sourceFile.size > MAX_SOURCE_FILE_BYTES) {
+      addFailure(batch, {
+        label: sourceFile.size === 0 ? "空白檔案" : "檔案大小超過限制",
+        tone: "error",
+      }, sourceFile.name);
+      return;
     }
 
-    const entry: WorkspaceItem = {
-      id: `source-${nextFileId++}`,
-      size,
-      sourceId,
-      state: "processing",
-      relativePath,
-      unread: true,
-      virtualPath,
-      sourceFormat: fileFormatForSourceType(type),
+    let bytes: Uint8Array;
+    try {
+      bytes = new Uint8Array(await sourceFile.arrayBuffer());
+    } catch {
+      addFailure(batch, { label: "無法讀取檔案", tone: "error" }, sourceFile.name);
+      return;
+    }
+    if (batch.cancelled) return;
+
+    const existingPaths = [
+      ...options.model.snapshot().files.map((item) => item.virtualPath),
+      ...batch.items.map((item) => item.virtualPath),
+    ];
+    if (inputType !== "zip" && existingPaths.includes(sourceFile.name)) {
+      addFailure(batch, { label: "重複檔案", tone: "warning" }, sourceFile.name);
+      return;
+    }
+
+    const source = {
+      id: `input-${nextSourceId++}`,
+      kind: inputType === "zip" ? "archive" : "file",
+      name: sourceFile.name,
+    } satisfies WorkspaceSource;
+    batch.activeSourceId = source.id;
+    batch.latestProgress = {
+      current: 0,
+      phase: inputType === "zip" ? "extracting" : "processing",
+      sourceId: source.id,
+      total: inputType === "zip" ? 0 : 1,
+      virtualPath: sourceFile.name,
     };
-    options.model.add(entry);
+    if (batch.processingVisible) setOperationStatus({ kind: "processing", progress: batch.latestProgress });
 
     try {
-      const preparation = prepareSourceResources(type, {
-        codecs: options.codecs,
-        prepareFont: options.offlineCache.prioritizePreviewFont,
+      void options.offlineCache.prioritizePreviewFont().catch(() => undefined);
+      const result = await options.batchClient.processSource({
+        sourceId: source.id,
+        sourceName: sourceFile.name,
+        inputType,
+        bytes,
+        today: validationDate ?? taipeiDateStamp(),
+        existingPaths,
+        outputFormat: options.model.snapshot().outputFormat,
       });
-      void preparation.fullyPrepared.catch(() => {
-        // Parser errors remain visible; the table keeps its fallback font.
-      });
-      await preparation.readyForParsing;
-      if (currentGeneration !== generation) return null;
-      const adapter = await options.inputAdapter.parse(type, bytes);
-      if (currentGeneration !== generation) return null;
-      const internalFile = await createInternalFileWithRecovery(
-        entry.id,
-        virtualPath,
-        adapter,
-        validationDate ?? taipeiDateStamp(),
-      );
-      if (currentGeneration !== generation) return null;
-      options.model.update(entry.id, (current) => {
-        current.file = internalFile;
-        current.state = "ready";
-      });
-    } catch {
-      if (currentGeneration === generation) {
-        options.model.update(entry.id, (current) => {
-          current.error = "無法讀取檔案內容，請確認檔案可正常開啟且未受密碼保護。";
-          current.state = "error";
-          current.unread = false;
-        });
+      if (batch.cancelled) {
+        await options.batchClient.discardFiles(result.entries.map((entry) => entry.id));
+        return;
       }
+      if (result.entries.length > 0) {
+        batch.sources.push(source);
+        batch.items.push(...result.entries.map((entry) => ({
+          file: entry.file,
+          id: entry.id,
+          relativePath: entry.relativePath,
+          size: entry.size,
+          sourceFormat: entry.sourceFormat,
+          sourceId: source.id,
+          unread: true,
+          virtualPath: entry.virtualPath,
+        })));
+      }
+      result.skippedEntries.forEach((skipped) => addFailure(
+        batch,
+        skipped.reason === "symlink"
+          ? { label: "捷徑", tone: "warning" }
+          : { label: `不支援的檔案類型（${extensionLabel(skipped.relativePath)}）`, tone: "warning" },
+        `${sourceFile.name}／${skipped.relativePath}`,
+      ));
+      if (result.entries.length === 0 && result.skippedEntries.length === 0) {
+        addFailure(batch, { label: "沒有支援的 TXT、CSV、XLS 或 XLSX 檔案", tone: "warning" }, sourceFile.name);
+      }
+    } catch (error) {
+      if (!batch.cancelled) addFailure(
+        batch,
+        inputType === "zip"
+          ? archiveFailureCategory(error)
+          : { label: "無法開啟或內容格式不符", tone: "error" },
+        sourceFile.name,
+      );
+    } finally {
+      if (batch.activeSourceId === source.id) batch.activeSourceId = null;
     }
-    return null;
+  }
+
+  async function discardBatch(batch: UploadBatch): Promise<void> {
+    const fileIds = batch.items.map((item) => item.id);
+    if (fileIds.length > 0) await options.batchClient.discardFiles(fileIds);
+    setOperationStatus({ kind: "cancelled" });
+    options.status.announce("已取消本次新增；這次選取的檔案都沒有加入，先前的檔案仍保留。");
+  }
+
+  async function commitBatch(batch: UploadBatch): Promise<void> {
+    let outputFormat = options.model.snapshot().outputFormat;
+    while (batch.items.some((item) => item.file?.outputFormat !== outputFormat)) {
+      const refreshed = await options.batchClient.refreshOutput(batch.items.map((item) => item.id), outputFormat);
+      const byId = new Map(refreshed.map((file) => [file.id, file]));
+      batch.items.forEach((item) => { item.file = byId.get(item.id) ?? item.file; });
+      if (batch.cancelled) return;
+      outputFormat = options.model.snapshot().outputFormat;
+    }
+    options.model.addBatch(batch.sources, batch.items);
+    const inputFormat = options.model.snapshot().inputFormat;
+    const activeCount = batch.items.filter((item) => item.sourceFormat === inputFormat).length;
+    const failures = groupedFailures(batch);
+    const failureCount = failures.reduce((total, group) => total + group.files.length, 0);
+    setOperationStatus({
+      kind: "result",
+      activeCount,
+      activeFormat: inputFormat,
+      failures,
+      otherCount: batch.items.length - activeCount,
+    });
+    options.status.announce(failureCount > 0
+      ? `已加入 ${batch.items.length} 個檔案，另有 ${failureCount} 個項目未加入。`
+      : `已加入 ${batch.items.length} 個檔案。`);
   }
 
   async function addFiles(files: readonly File[]): Promise<void> {
-    const currentGeneration = generation;
-    const notices: string[] = [];
-    const initialFileIds = new Set(options.model.snapshot().files.map((file) => file.id));
+    if (activeBatch) return;
     validationDate ??= taipeiDateStamp();
-    options.view.clearMessage();
+    const batch: UploadBatch = {
+      activeSourceId: null,
+      cancelled: false,
+      failures: new Map(),
+      items: [],
+      latestProgress: { current: 0, phase: "processing", sourceId: "", total: files.length, virtualPath: files[0]?.name ?? "" },
+      processingVisible: false,
+      revealTimer: null,
+      sources: [],
+    };
+    activeBatch = batch;
+    options.view.setFilePickerLocked(true, false);
     options.status.announce(`正在加入 ${files.length} 個檔案。`);
-
-    for (const sourceFile of files) {
-      if (currentGeneration !== generation) return;
-      const inputType = detectInputFileType(sourceFile.name);
-      if (!inputType) {
-        const source: WorkspaceSource = {
-          id: `input-${nextSourceId++}`,
-          kind: "file",
-          name: sourceFile.name,
-        };
-        addSource(source);
-        ignoredEntry(source.id, sourceFile.name, sourceFile.name, sourceFile.size, "unsupported-type");
-        continue;
+    revealProcessing(batch);
+    render();
+    try {
+      for (const file of files) {
+        if (batch.cancelled) break;
+        await processFile(file, batch);
       }
-      const source: WorkspaceSource = {
-        id: `input-${nextSourceId++}`,
-        kind: inputType === "zip" ? "archive" : "file",
-        name: sourceFile.name,
-      };
-      if (sourceFile.size === 0 || sourceFile.size > MAX_SOURCE_FILE_BYTES) {
-        const message = sourceFile.size === 0
-          ? "這個檔案是空的，請選擇有內容的檔案。"
-          : "檔案超過 25 MB，請選擇較小的檔案。";
-        addSource(source);
-        rejectedEntry(
-          source.id,
-          "",
-          sourceFile.name,
-          sourceFile.size,
-          message,
-          inputType === "zip" ? undefined : fileFormatForSourceType(inputType),
-        );
-        if (inputType === "zip") notices.push(`${sourceFile.name}：${message}`);
-        continue;
-      }
-
-      let bytes: Uint8Array;
-      try {
-        bytes = new Uint8Array(await sourceFile.arrayBuffer());
+      if (batch.cancelled) await discardBatch(batch);
+      else try {
+        await commitBatch(batch);
+        if (batch.cancelled) await discardBatch(batch);
       } catch {
-        const message = "無法讀取這個檔案，請確認檔案仍在原本的位置後再試一次。";
-        addSource(source);
-        rejectedEntry(
-          source.id,
-          "",
-          sourceFile.name,
-          sourceFile.size,
-          message,
-          inputType === "zip" ? undefined : fileFormatForSourceType(inputType),
-        );
-        if (inputType === "zip") notices.push(`${sourceFile.name}：${message}`);
-        continue;
+        await options.batchClient.discardFiles(batch.items.map((item) => item.id));
+        batch.items = [];
+        batch.sources = [];
+        addFailure(batch, { label: "無法完成本次新增", tone: "error" }, "本次選取的檔案");
+        await commitBatch(batch);
       }
-      if (currentGeneration !== generation) return;
-
-      if (inputType !== "zip") {
-        addSource(source);
-        const notice = await processRegularFile(
-          source.id,
-          sourceFile.name,
-          sourceFile.name,
-          sourceFile.size,
-          bytes,
-          currentGeneration,
-        );
-        if (notice) {
-          notices.push(notice);
-          options.model.removeSource(source.id);
-        }
-        continue;
-      }
-
-      pendingArchiveCount += 1;
+    } finally {
+      if (batch.revealTimer !== null) clearTimeout(batch.revealTimer);
+      if (activeBatch === batch) activeBatch = null;
+      options.view.setFilePickerLocked(false, false);
       render();
-      try {
-        if (typeof requestAnimationFrame === "function") {
-          await new Promise<void>((resolve) => {
-            requestAnimationFrame(() => setTimeout(resolve, 0));
-          });
-        }
-        if (currentGeneration !== generation) return;
-        const extraction = await (await options.codecs.zip()).extractZip(sourceFile.name, bytes);
-        if (currentGeneration !== generation) return;
-        addSource(source);
-        if (extraction.files.length === 0 && extraction.skippedEntries.length === 0) {
-          const message = "壓縮檔內沒有可加入的 TXT、CSV 或 Excel 檔案。";
-          rejectedEntry(
-            source.id,
-            "",
-            sourceFile.name,
-            sourceFile.size,
-            message,
-          );
-          notices.push(`${sourceFile.name}：${message}`);
-        }
-        for (const skipped of extraction.skippedEntries) {
-          const skippedType = detectSourceFileType(skipped.virtualPath);
-          ignoredEntry(
-            source.id,
-            skipped.relativePath ?? skipped.virtualPath.split("/").slice(1).join("/"),
-            skipped.virtualPath,
-            0,
-            skipped.reason,
-            skippedType ? fileFormatForSourceType(skippedType) : undefined,
-          );
-        }
-        for (const extracted of extraction.files) {
-          const notice = await processRegularFile(
-            source.id,
-            extracted.relativePath,
-            extracted.virtualPath,
-            extracted.size,
-            extracted.bytes,
-            currentGeneration,
-          );
-          if (notice) notices.push(notice);
-        }
-        if (extraction.files.length > 0 && !options.model.snapshot().files.some((file) => file.sourceId === source.id)) {
-          options.model.removeSource(source.id);
-        }
-      } catch (error) {
-        if (currentGeneration === generation) {
-          const message = friendlyArchiveError(error);
-          addSource(source);
-          rejectedEntry(
-            source.id,
-            "",
-            sourceFile.name,
-            sourceFile.size,
-            message,
-          );
-          notices.push(`${sourceFile.name}：${message}`);
-        }
-      } finally {
-        if (currentGeneration === generation) {
-          pendingArchiveCount = Math.max(0, pendingArchiveCount - 1);
-          render();
-        }
-      }
+      if (batch.cancelled) options.view.focusFilePicker();
     }
+  }
 
-    if (currentGeneration !== generation) return;
-    const addedItems = options.model.snapshot().files.filter((file) => !initialFileIds.has(file.id));
-    const addedCount = addedItems.filter((file) => file.state === "ready").length;
-    if (notices.length > 0) {
-      options.view.renderMessage("有些檔案未加入", notices, "error");
-    }
-    const ignoredCount = addedItems.filter((file) => file.state === "ignored").length;
-    options.status.announce(notices.length > 0
-      ? `已加入 ${addedCount} 個檔案，另有 ${notices.length} 個檔案未加入。`
-      : ignoredCount > 0
-        ? `已加入 ${addedCount} 個檔案，另有 ${ignoredCount} 個項目未加入。`
-        : `已加入 ${addedCount} 個檔案。`);
+  function cancelFileOperation(): void {
+    const batch = activeBatch;
+    if (!batch || batch.cancelled) return;
+    batch.cancelled = true;
+    if (batch.revealTimer !== null) clearTimeout(batch.revealTimer);
+    batch.revealTimer = null;
+    options.view.setFilePickerLocked(true, true);
+    setOperationStatus({ kind: "cancelling" });
+    if (batch.activeSourceId) void options.batchClient.cancelSource(batch.activeSourceId);
   }
 
   function clear(): void {
-    generation += 1;
-    pendingArchiveCount = 0;
+    previewRequest += 1;
     validationDate = null;
+    void options.batchClient.clear().catch(() => {
+      options.status.announce("背景清理尚未完成；重新加入檔案時會重新建立工作區。");
+    });
     options.model.clear();
-    options.view.clear();
-    options.unloadGuard.setPendingFile(false, "primary-workspace");
+    setOperationStatus({ kind: "cleared" });
     options.status.announce("檔案清單已清空；電腦中的原始檔案沒有變更。");
   }
 
   return {
     bind() {
+      options.batchClient.setProgressListener((progress) => {
+        const batch = activeBatch;
+        if (!batch || progress.sourceId !== batch.activeSourceId) return;
+        batch.latestProgress = progress;
+        if (batch.processingVisible && !batch.cancelled) {
+          setOperationStatus({ kind: "processing", progress });
+        }
+      });
       options.view.bind({
-        onChooseFile: () => options.view.fileInput().click(),
-        onClearWorkspace: () => {
-          if (options.view.confirmClear()) clear();
-        },
+        onCancelFileOperation: cancelFileOperation,
+        onChooseFile: () => { if (!activeBatch && !selectionPending) options.view.fileInput().click(); },
+        onClearWorkspace: () => { if (!activeBatch && !selectionPending && options.view.confirmClear()) clear(); },
         onFilesChosen: (files) => {
-          selectionQueue = selectionQueue.catch(() => undefined).then(() => addFiles(files));
+          if (activeBatch || selectionPending) return;
+          selectionPending = true;
+          options.view.setFilePickerLocked(true, false);
+          render();
+          selectionQueue = selectionQueue.catch(() => undefined).then(() => addFiles(files)).finally(() => {
+            selectionPending = false;
+            if (!activeBatch) options.view.setFilePickerLocked(false, false);
+            render();
+          });
           void selectionQueue.catch(() => options.status.announce("無法加入檔案。"));
         },
+        onPreviewRequest: (fileId, filter, page) => void requestPreview(fileId, filter, page),
         onRemoveFile: (fileId) => {
           const snapshot = options.model.snapshot();
           const fileIndex = snapshot.files.findIndex((item) => item.id === fileId);
@@ -391,72 +340,67 @@ export function createInputController(options: InputControllerOptions) {
           if (!source) return;
           const wasSelected = snapshot.selectedFileId === fileId;
           const removed = options.model.remove(fileId);
-          if (removed) {
-            options.status.announce(`${removed.virtualPath} 已從清單移除；電腦中的原始檔案沒有變更。`);
-            options.view.renderUndo(
-              `已從清單移除 ${removed.virtualPath}，電腦中的原始檔案沒有變更。`,
-              () => {
-                if (options.model.restore(removed, source, fileIndex, sourceIndex, wasSelected)) {
-                  options.status.announce(`${removed.virtualPath} 已復原。`);
-                }
-              },
-            );
-          }
+          if (!removed) return;
+          void options.batchClient.removeFiles([fileId]);
+          options.status.announce(`${removed.virtualPath} 已從清單移除；電腦中的原始檔案沒有變更。`);
+          setOperationStatus({
+            kind: "removed",
+            detail: `已移除 ${removed.virtualPath}；電腦中的原始檔案沒有變更。`,
+            onUndo: () => {
+              if (!options.model.restore(removed, source, fileIndex, sourceIndex, wasSelected)) return;
+              void options.batchClient.restoreFiles([fileId]);
+              setOperationStatus({ kind: "restored", detail: `${removed.virtualPath} 已復原。` });
+              options.status.announce(`${removed.virtualPath} 已復原。`);
+            },
+          });
         },
         onRemoveSource: (sourceId) => {
           const snapshot = options.model.snapshot();
           const sourceIndex = snapshot.sources.findIndex((candidate) => candidate.id === sourceId);
-          const source = snapshot.sources.find((candidate) => candidate.id === sourceId);
+          const source = snapshot.sources[sourceIndex];
           if (!source) return;
-          const restoreItems = snapshot.files.flatMap((item, index) => (
-            item.sourceId === sourceId ? [{ index, item }] : []
-          ));
+          const restoreItems = snapshot.files.flatMap((item, index) => item.sourceId === sourceId ? [{ index, item }] : []);
           const previousSelectedFileId = snapshot.selectedFileId;
           const removed = options.model.removeSource(sourceId);
-          options.status.announce(
-            `${source.name} 已從清單移除，共 ${removed.length} 個項目；電腦中的原始檔案沒有變更。`,
-          );
-          options.view.renderUndo(
-            `已從清單移除 ${source.name} 及其中 ${removed.length} 個項目，電腦中的原始檔案沒有變更。`,
-            () => {
-              if (options.model.restoreSource(
-                source,
-                restoreItems,
-                sourceIndex,
-                previousSelectedFileId,
-              )) {
-                options.status.announce(`${source.name} 及其中 ${removed.length} 個項目已復原。`);
-              }
+          void options.batchClient.removeFiles(removed.map((item) => item.id));
+          options.status.announce(`${source.name} 已從清單移除，共 ${removed.length} 個項目；電腦中的原始檔案沒有變更。`);
+          setOperationStatus({
+            kind: "removed",
+            detail: `已移除 ${source.name} 及其中 ${removed.length} 個項目；電腦中的原始檔案沒有變更。`,
+            onUndo: () => {
+              if (!options.model.restoreSource(source, restoreItems, sourceIndex, previousSelectedFileId)) return;
+              void options.batchClient.restoreFiles(removed.map((item) => item.id));
+              setOperationStatus({ kind: "restored", detail: `${source.name} 及其中 ${removed.length} 個項目已復原。` });
+              options.status.announce(`${source.name} 及其中 ${removed.length} 個項目已復原。`);
             },
-          );
+          });
         },
         onMarkAllViewed: () => {
           const count = options.model.markAllViewed();
           options.status.announce(count > 0 ? `已將 ${count} 個檔案標示為已查看。` : "沒有尚未查看的檔案。");
         },
         onVisibleRowsIncludedChange: (sourceRows, included) => {
-          const changedCount = options.model.setRowsIncluded(sourceRows, included);
-          options.status.announce(changedCount > 0
-            ? included
-              ? `已選取本頁，共變更 ${changedCount} 列。`
-              : `已取消選取本頁，共變更 ${changedCount} 列。`
-            : included
-              ? "本頁資料列已全部選取。"
-              : "本頁資料列已全部取消選取。");
+          const selected = options.model.selectedItem();
+          if (!selected?.file) return;
+          void options.batchClient.setRowsIncluded(selected.id, sourceRows, included, options.model.snapshot().outputFormat)
+            .then((file) => options.model.update(selected.id, (item) => { item.file = file; }));
+          options.status.announce(included
+            ? `已選取本頁，共變更 ${sourceRows.length} 列。`
+            : `已取消選取本頁，共變更 ${sourceRows.length} 列。`);
         },
         onRowIncludedChange: (sourceRow, included) => {
-          if (options.model.setRowIncluded(sourceRow, included)) {
-            options.status.announce(`第 ${sourceRow} 列已${included ? "納入" : "排除"}輸出。`);
-          }
+          const selected = options.model.selectedItem();
+          if (!selected?.file) return;
+          void options.batchClient.setRowIncluded(selected.id, sourceRow, included, options.model.snapshot().outputFormat)
+            .then((file) => options.model.update(selected.id, (item) => { item.file = file; }));
+          options.status.announce(`第 ${sourceRow} 列已${included ? "納入" : "排除"}輸出。`);
         },
         onSelectFile: (fileId) => { options.model.select(fileId); },
       });
       options.model.subscribe(render);
-      options.view.clear();
+      setOperationStatus({ kind: "idle" });
       render();
     },
-    whenIdle() {
-      return selectionQueue;
-    },
+    whenIdle() { return selectionQueue; },
   };
 }

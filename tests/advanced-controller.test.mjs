@@ -54,48 +54,54 @@ function selectedFileWithIssues() {
 test("advanced download ignores data issues and expands duplicate reference matches", async () => {
   const model = createWorkspaceModel();
   model.setInputFormat("csv");
-  model.addSource({ id: "input", kind: "file", name: "primary.csv" });
-  model.add({
+  model.addBatch([{ id: "input", kind: "file", name: "primary.csv" }], [{
     file: selectedFileWithIssues(),
     id: "primary",
     relativePath: "primary.csv",
     size: 100,
     sourceId: "input",
     sourceFormat: "csv",
-    state: "ready",
     virtualPath: "primary.csv",
-  });
+  }]);
 
   let callbacks;
   let state;
-  let createdResult;
+  let createdRequest;
+  let deferResult = false;
+  let releaseResult;
   let savedOutput;
   const controller = createAdvancedController({
-    model,
-    outputAdapter: {
-      async create(result) {
-        createdResult = result;
+    batchClient: {
+      async clearReference() {},
+      async createAdvancedOutput(fileIds, keyColumnIndex, selectedColumnIndices) {
+        createdRequest = { fileIds, keyColumnIndex, selectedColumnIndices };
         return {
           bytes: new Uint8Array([1]),
           filename: "advanced.xlsx",
           mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         };
       },
-      async inspect() {
-        return { sheetNames: ["Reference"] };
+      async getAdvancedResult() {
+        const value = {
+          matchedRowCount: 1,
+          resultRowCount: 2,
+          selectedRowCount: 1,
+          unmatchedRowCount: 0,
+        };
+        if (!deferResult) return value;
+        return new Promise((resolve) => { releaseResult = () => resolve(value); });
       },
-      async parse() {
+      async inspectReference() {
         return {
           headers: ["ID", "Value"],
-          issues: [{ message: "read warning", severity: "error", sourceRow: 2 }],
-          rows: [
-            ["A123456789", "first"],
-            ["A123456789", "second"],
-          ],
+          issueCount: 1,
           sheetName: "Reference",
+          sheetNames: ["Reference"],
         };
       },
+      async selectReferenceSheet() { throw new Error("not used"); },
     },
+    model,
     status: { announce() {} },
     unloadGuard: { setPendingFile() {} },
     view: {
@@ -119,9 +125,19 @@ test("advanced download ignores data issues and expands duplicate reference matc
   assert.equal(state.selectedRowCount, 1);
   assert.equal(state.matchedRowCount, 1);
   assert.equal(state.resultRowCount, 2);
+  assert.equal(state.resultBusy, false);
+
+  deferResult = true;
+  callbacks.onSelectedColumnChange(1, false);
+  assert.equal(state.resultBusy, true);
+  assert.equal(state.canDownload, false);
+  releaseResult();
+  await controller.whenIdle();
+  assert.equal(state.resultBusy, false);
+  assert.equal(state.canDownload, true);
 
   callbacks.onDownload();
   await controller.whenIdle();
-  assert.equal(createdResult.resultRowCount, 2);
+  assert.deepEqual(createdRequest.fileIds, ["primary"]);
   assert.equal(savedOutput.filename, "advanced.xlsx");
 });

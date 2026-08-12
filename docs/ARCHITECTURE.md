@@ -161,6 +161,17 @@ src/
     bytes.ts
     file-formats.ts
   app/
+    batch/
+      protocol.ts
+      batch-client.ts
+      batch-worker.ts
+      batch-engine.ts
+      compact-workspace.ts
+      workspace-summary.ts
+      preview-query.ts
+      standard-output.ts
+      advanced-data.ts
+      scheduler.ts
     state/
       workspace-model.ts
       workspace-selectors.ts
@@ -172,6 +183,7 @@ src/
       input/input-controller.ts
       input/input-section-view.ts
       input/file-picker-view.ts
+      input/file-operation-status-view.ts
       input/file-table-view.ts
       input/file-tree-view.ts
       input/data-preview-view.ts
@@ -192,6 +204,7 @@ src/
       app-status.ts
       readiness-view.ts
       status-indicator.ts
+      state-transition.ts
   browser/
     dom.ts
     download.ts
@@ -202,7 +215,7 @@ src/
 
 CSV、BIG-5E TXT 與 Spreadsheet 是三個 tabular codec，各自擁有 parse 與 serialize。ZIP 是 container codec，交換 archive entries 而非 logical rows，因此放在 `core/archive/`，也不成為格式選項。格式分類與 active／other 投影集中在 `file-formats.ts` 及 `workspace-selectors.ts`，controller 與 view 不各自重寫副檔名規則。
 
-`src/main.ts` 只建立共享 model、resource manager、controllers 與 views，並連接頂層生命週期。每個 view 只查詢自己 section root 內的元素；跨 section 的輸入 family、列納入決策與整批輸出格式由 `workspace-model.ts` 保存。Section 1 的互斥 row outcome 與 Section 2 的 download problem 都由 active snapshot 即時計算，不建立第二套 summary state；頁碼、篩選、tabs 與 disclosure 等純呈現狀態留在各 view。`file-table-view.ts` 只提供 selected-format 與 other 清單共用的 spacer／empty row 及 footer 更新，不擁有分類、tree 或狀態文案。
+`src/main.ts` 只建立共享 model、resource manager、controllers 與 views，並連接頂層生命週期。每個 view 只查詢自己 section root 內的元素；跨 section 的輸入 family、列納入決策、整批輸出格式及 output preparation loading／ready／error 由 `workspace-model.ts` 保存。Section 1 的互斥 row outcome 與 Section 2 的 download problem 都由 active snapshot 即時計算，不建立第二套 summary state；頁碼、篩選、tabs 與 disclosure 等純呈現狀態留在各 view。`file-picker-view.ts` 只擁有 picker 互動鎖，`file-operation-status-view.ts` 擁有固定資訊區的狀態與情境操作，`file-table-view.ts` 只提供 selected-format 與 other 清單共用的 spacer／empty row 及 footer 更新。`state-transition.ts` 只依 view 提供的 semantic state key 重播共用 opacity 淡入淡出，不擁有流程狀態。
 
 Section 3 是沒有 error、warning 或 validation gate 的 minimal working model。`core/advanced/lookup.ts` 只負責勾選列投影（包括欄位8的 `1 → 男`、`2 → 女` mapping）與純資料 join；controller 保存 reference workbook、worksheet、key 與欄位選擇，view 只處理獨立 picker、mapping controls、摘要與下載。Reference duplicate 以 one-to-many 結果展開，未命中以空白參照值保留原列，兩者都不是 blocking issue。
 
@@ -212,9 +225,9 @@ Batch node 至少包含：
 
 - 穩定 ID。
 - Safe virtual path。
-- Node kind：folder、archive、regular file、symlink、unsupported。
+- Node kind：folder、archive、regular file；只有已接受的支援檔案進入 batch state。
 - Include/exclude state。
-- Waiting、processing、valid、warning、error 狀態。
+- 已公開 file node 一律完成處理；waiting／processing 只屬於 controller-owned 暫存 transaction 與進度事件，file-level upload failure 由該次 request result 回報，不保存為 node。
 - Decoder metadata。
 - Blank/rejected/data/correct/error/warning/selected/output-problem counts。
 - Output path 或 collision issue。
@@ -223,11 +236,11 @@ Batch node 至少包含：
 
 一般 UI 只固定顯示 `TXT`、`CSV`、`XLSX` family，不顯示 decoder 或技術堆疊；只有問題需要診斷時才在「查看技術資訊」揭露必要證據。
 
-Batch cancellation 使用 generation/token 或 worker termination，舊工作不得覆蓋新批次。
+每次 picker selection 是 controller-owned transaction。Worker 可暫存該次已解析檔案，但 controller 只在整批完成時以一次 model commit 公開 sources 與 items；失敗分類同樣只屬於該次結果。取消以 batch token 停止後續來源，並以 source-scoped worker cancellation 在 ZIP entry 與 parse 邊界合作停止目前來源，再移除該次所有 worker 暫存；不得終止 worker 或清除先前工作區。
 
 ## 7. Worker 邊界
 
-ZIP、Excel、大型 CSV、驗證與 ZIP 輸出應逐步移到 dedicated worker。Main thread 只保留：
+ZIP、Excel、CSV、BIG-5E TXT、驗證、標準／進階輸出與 ZIP 輸出由一個 dedicated worker 擁有。Main thread 只保留：
 
 - Tree summary。
 - Selected file ID。
@@ -236,9 +249,13 @@ ZIP、Excel、大型 CSV、驗證與 ZIP 輸出應逐步移到 dedicated worker�
 - Batch output format。
 - Concise application status。
 
-Worker 保存 active batch 的內部表示，並以 request/response API 提供最多 100 rows。開始實作 worker 前先定義 protocol 及 cancellation；不在多個 UI module 各自建立 worker。
+`protocol.ts` 定義 request ID、輸入／預覽／選取／輸出／進階流程命令與進度事件；`batch-client.ts` 是唯一 worker 生命週期 owner，負責 transferable bytes、stale response 隔離、目前頁與相鄰頁 cache。`batch-worker.ts` 只接收訊息並轉交 `batch-engine.ts`；engine 編排 active files 與參照 workbook。`compact-workspace.ts` 保存 column-oriented values、selection bitset 與 sparse diagnostics，`workspace-summary.ts` 建立清單／輸出問題摘要，`preview-query.ts` 只建立最多 100 rows 的 page DTO，`standard-output.ts` 與 `advanced-data.ts` 分別投影標準輸出與進階查詢資料，`scheduler.ts` 負責節流進度及逐檔讓出 worker event loop。
 
-第一個 worker 版本採有界、近似序列的重型工作，先控制記憶體與結果順序；只有 profiling 證明有益時才提高 concurrency。
+主執行緒的 `WorkspaceFileRecord` 只保存 file summary、file-level blocking 狀態、blocking output findings 與 replacement row count，不保存完整 rows。一般 row/cell diagnostics 留在 worker 的 sparse maps，只有目前頁相關項目跨越 protocol。每個檔案完成既有 parsing、normalization、validation 與 transformation 後，立即轉成 column-oriented compact state；`normalizedValue` 是 column base，只有不同的 `finalValue` 才另存 sparse override，避免整批長期保留 row/cell object graph。
+
+清空主要工作區以 worker command 清除 active／removed files 與 preview cache，但保留獨立的 Section 3 reference workbook；移除／復原使用 worker 內的暫存區維持既有 undo。大型 ZIP 採單一 worker、逐檔 parse 後釋放 entry bytes，並在檔案邊界 cooperative yield，使預覽／選取命令可排入 worker event loop。Main thread 不提供同步 fallback。
+
+Worker 採有界、近似序列的重型工作以控制記憶體與結果順序；只有 profiling 證明有益時才提高 concurrency。
 
 ## 8. Resource reuse
 
@@ -295,6 +312,8 @@ Vite manifest 繼續是 resource graph 的唯一來源。Service worker group �
 
 Build verifier 必須確認 manifest 與 group 一致、沒有遺漏 dynamic asset，且 base budget 不包含 Excel、ZIP 或 font。
 
+Worker 使用獨立 ES module build graph。Service worker 不與 processing worker 交換資料；它只把 emitted worker core、Excel、archive 與 font 靜態資源分組快取。使用者 bytes、IR、issues 與輸出永遠不進入 Cache Storage。CSP 明確使用 `worker-src 'self'`，正式環境仍維持 `connect-src 'none'`。
+
 ## 9. Dependency policy
 
 新增 runtime dependency 前必須符合：
@@ -338,7 +357,7 @@ Build verifier 必須確認 manifest 與 group 一致、沒有遺漏 dynamic ass
 - Standard output：Section 0 的 output choice、codec-specific problem、download、file-level status。
 - Advanced output：獨立 reference picker、lookup plan/result、organized XLSX download。
 
-Header readiness 使用共用 status indicator component。Component 擁有固定幾何、狀態色、文字 shimmer、`prefers-reduced-motion` 與 forced-colors fallback；readiness view 只提供 state 與文字。動畫不得被複製成另一套 section-specific CSS。
+Header readiness 使用共用 status indicator component。Component 擁有固定幾何、狀態色、文字 shimmer、`prefers-reduced-motion` 與 forced-colors fallback；readiness view 只提供 state 與文字。其他 section 的 semantic state change 使用 `state-transition.ts` 與單一 CSS primitive；只以 compositor-friendly opacity 平滑更新，不改變幾何、不在每個 view 複製 keyframes，reduced-motion 時完全停用。
 
 Live region 只宣告批次開始、完成、取消與目前選取檔案的重大結果；不得逐檔或逐列洗版。
 

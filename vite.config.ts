@@ -4,7 +4,7 @@ import {
   developmentContentSecurityPolicy,
   productionContentSecurityPolicy,
 } from "./build/vite/content-security-policy.ts";
-import { offlineServiceWorker } from "./build/vite/offline-service-worker.ts";
+import { offlineServiceWorker, offlineWorkerResources } from "./build/vite/offline-service-worker.ts";
 
 export default defineConfig({
   base: "./",
@@ -19,6 +19,20 @@ export default defineConfig({
     offlineServiceWorker(),
     productionContentSecurityPolicy(),
   ],
+  worker: {
+    format: "es",
+    plugins: () => [offlineWorkerResources()],
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const normalizedId = id.replaceAll("\\", "/");
+          if (normalizedId.includes("/node_modules/xlsx/")) return "worker-excel";
+          if (normalizedId.includes("/node_modules/fflate/")) return "worker-archive";
+          return undefined;
+        },
+      },
+    },
+  },
   build: {
     outDir: "dist",
     emptyOutDir: true,

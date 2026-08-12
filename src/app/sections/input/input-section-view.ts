@@ -1,9 +1,11 @@
 import { requireDescendant, requireElement } from "../../../browser/dom";
-import { FILE_FORMAT_LABELS, type FileFormat } from "../../../core/file-formats";
-import { validateOutput } from "../../../core/output-validation";
+import { FILE_FORMAT_LABELS } from "../../../core/file-formats";
+import type { PreviewFilter, PreviewPage } from "../../batch/protocol";
 import { activeWorkspaceItems, activeWorkspaceSnapshot, otherWorkspaceItems } from "../../state/workspace-selectors";
 import type { WorkspaceSnapshot } from "../../state/workspace-types";
+import { createStateTransition } from "../../shell/state-transition";
 import { createDataPreviewView } from "./data-preview-view";
+import { createFileOperationStatusView, type FileOperationStatus } from "./file-operation-status-view";
 import { createFilePickerView } from "./file-picker-view";
 import { createFileTreeView, type InventoryFilter } from "./file-tree-view";
 import { createOtherFilesView } from "./other-files-view";
@@ -11,22 +13,26 @@ import { createOtherFilesView } from "./other-files-view";
 export interface InputSectionView {
   bind(options: {
     onChooseFile: () => void;
+    onCancelFileOperation: () => void;
     onClearWorkspace: () => void;
     onFilesChosen: (files: readonly File[]) => void;
     onMarkAllViewed: () => void;
+    onPreviewRequest: (fileId: string, filter: PreviewFilter, page: number) => void;
     onRemoveFile: (fileId: string) => void;
     onRemoveSource: (sourceId: string) => void;
     onVisibleRowsIncludedChange: (sourceRows: readonly number[], included: boolean) => void;
     onRowIncludedChange: (sourceRow: number, included: boolean) => void;
     onSelectFile: (fileId: string) => void;
   }): void;
-  clear(): void;
-  clearMessage(): void;
   confirmClear(): boolean;
   fileInput(): HTMLInputElement;
-  render(snapshot: WorkspaceSnapshot, pendingArchives: number): void;
-  renderMessage(title: string, details: readonly string[], tone: "error" | "info"): void;
-  renderUndo(message: string, onUndo: () => void): void;
+  focusFilePicker(): void;
+  clearPreview(): void;
+  render(snapshot: WorkspaceSnapshot): void;
+  renderPreviewPage(page: PreviewPage): void;
+  renderPreviewError(fileId: string): void;
+  renderOperationStatus(status: FileOperationStatus): void;
+  setFilePickerLocked(locked: boolean, visible: boolean): void;
 }
 
 function basename(path: string): string {
@@ -47,12 +53,22 @@ export function createInputSectionView(): InputSectionView {
   const previewName = requireDescendant<HTMLElement>(root, "#preview-file-name");
   const previewPath = requireDescendant<HTMLElement>(root, "#preview-file-path");
   const picker = createFilePickerView(root);
+  const operationStatus = createFileOperationStatusView(root);
   const tree = createFileTreeView(root);
   const otherFiles = createOtherFilesView(root);
   const preview = createDataPreviewView(dataRoot);
-  let currentInputFormat: FileFormat = "txt";
+  const selectionTransition = createStateTransition(selectionMessage);
+  const activePanelTransition = createStateTransition(activePanel);
+  const otherPanelTransition = createStateTransition(otherPanel);
+  let currentPreviewFileId: string | null = null;
+  let previewErrorFileId: string | null = null;
+  let currentPreviewPath = "";
+  let currentSelectionRevision = -1;
+  let currentOutputFormat = "big5-txt";
+  let requestPreview: (fileId: string, filter: PreviewFilter, page: number) => void = () => undefined;
 
   function hideSelectionMessage(): void {
+    selectionTransition.update("hidden");
     selectionMessage.hidden = true;
     selectionMessage.replaceChildren();
     selectionMessage.classList.remove("error-notice", "info-notice");
@@ -67,6 +83,7 @@ export function createInputSectionView(): InputSectionView {
     selectionMessage.classList.toggle("info-notice", tone === "info");
     selectionMessage.replaceChildren(heading, text);
     selectionMessage.hidden = false;
+    selectionTransition.update(`${tone}:${title}:${detail}`);
   }
 
   function showTab(tab: "active" | "other"): void {
@@ -77,6 +94,8 @@ export function createInputSectionView(): InputSectionView {
     otherTab.tabIndex = active ? -1 : 0;
     activePanel.hidden = !active;
     otherPanel.hidden = active;
+    activePanelTransition.update(active ? "visible" : "hidden");
+    otherPanelTransition.update(active ? "hidden" : "visible");
   }
 
   function moveTab(event: KeyboardEvent): void {
@@ -95,22 +114,29 @@ export function createInputSectionView(): InputSectionView {
 
   return {
     bind(options) {
+      requestPreview = options.onPreviewRequest;
       picker.bind({
         onChoose: options.onChooseFile,
         onClear: options.onClearWorkspace,
         onFiles: options.onFilesChosen,
+      });
+      operationStatus.bind({
+        onCancel: options.onCancelFileOperation,
+        onMarkAllViewed: options.onMarkAllViewed,
       });
       tree.bind({
         onInspect(fileId, filter: InventoryFilter) {
           options.onSelectFile(fileId);
           preview.setFilter(filter);
         },
-        onMarkAllViewed: options.onMarkAllViewed,
         onRemoveFile: options.onRemoveFile,
         onRemoveSource: options.onRemoveSource,
         onSelect: options.onSelectFile,
       });
       preview.bind({
+        onPageRequest(filter, page) {
+          if (currentPreviewFileId) requestPreview(currentPreviewFileId, filter, page);
+        },
         onVisibleRowsIncludedChange: options.onVisibleRowsIncludedChange,
         onRowIncludedChange: options.onRowIncludedChange,
       });
@@ -120,46 +146,40 @@ export function createInputSectionView(): InputSectionView {
       activeTab.addEventListener("keydown", moveTab);
       otherTab.addEventListener("keydown", moveTab);
     },
-    clear() {
-      picker.clear();
-      picker.setProcessing(false);
-      tree.clear(currentInputFormat);
+    clearPreview() {
       preview.clear();
-      otherFiles.clear();
-      activeFormat.textContent = FILE_FORMAT_LABELS[currentInputFormat];
-      activeCount.textContent = "0";
-      otherCount.textContent = "0";
-      showTab("active");
-      hideSelectionMessage();
+      currentPreviewFileId = null;
+      currentSelectionRevision = -1;
+      previewErrorFileId = null;
+      currentPreviewPath = "";
     },
-    clearMessage: picker.clearMessage,
     confirmClear: picker.confirmClear,
     fileInput: picker.fileInput,
-    render(snapshot, pendingArchives) {
+    focusFilePicker: picker.focusChoose,
+    render(snapshot) {
       const files = snapshot.files;
-      currentInputFormat = snapshot.inputFormat;
+      const outputFormatChanged = currentOutputFormat !== snapshot.outputFormat;
+      currentOutputFormat = snapshot.outputFormat;
       activeFormat.textContent = FILE_FORMAT_LABELS[snapshot.inputFormat];
-      if (snapshot.sources.length === 0) {
-        picker.clear();
-        picker.setProcessing(pendingArchives > 0);
-      } else {
-        picker.renderSummary(files);
-        picker.setProcessing(pendingArchives > 0 || files.some((file) => file.state === "processing"));
-      }
+      picker.setHasFiles(snapshot.sources.length > 0);
+      operationStatus.setUnreadCount(files.filter((file) => file.unread && file.sourceFormat === snapshot.inputFormat).length);
       const activeSnapshot = activeWorkspaceSnapshot(snapshot);
       const activeFiles = activeWorkspaceItems(snapshot);
       const otherFilesItems = otherWorkspaceItems(snapshot);
       activeCount.textContent = String(activeFiles.length);
       otherCount.textContent = String(otherFilesItems.length);
       otherFiles.render(snapshot);
-      const outputIssues = validateOutput(
-        activeFiles.flatMap((item) => item.file ? [item.file] : []),
-        snapshot.outputFormat,
-      );
+      const outputIssues = activeFiles.flatMap((item) => (
+        item.file?.outputFormat === snapshot.outputFormat ? item.file.blockingOutputIssues : []
+      ));
       tree.render(activeSnapshot, outputIssues);
 
       if (activeFiles.length === 0) {
         preview.clear();
+        currentPreviewFileId = null;
+        currentSelectionRevision = -1;
+        previewErrorFileId = null;
+        currentPreviewPath = "";
         hideSelectionMessage();
         return;
       }
@@ -168,38 +188,72 @@ export function createInputSectionView(): InputSectionView {
       if (!active) {
         hideSelectionMessage();
         preview.clear();
+        currentPreviewFileId = null;
+        currentSelectionRevision = -1;
+        previewErrorFileId = null;
+        currentPreviewPath = "";
         return;
       }
-      if (active.state === "processing") {
+      if (!active.file) {
         preview.clear();
-        showSelectionMessage("正在檢查檔案", "完成後就能在這裡查看內容。", "info");
-        return;
-      }
-      if (active.state === "ignored") {
-        preview.clear();
+        currentPreviewFileId = null;
+        currentSelectionRevision = -1;
         showSelectionMessage(
-          active.ignoredReason === "symlink" ? "捷徑不會加入" : "不支援的檔案類型",
-          "這個項目不會加入轉換或下載。",
-          "info",
-        );
-        return;
-      }
-      if (active.state === "error" || !active.file) {
-        preview.clear();
-        showSelectionMessage(
-          `無法開啟 ${basename(active.virtualPath)}`,
-          active.error ?? "無法讀取這個檔案，請確認檔案可正常開啟後再試一次。",
+          `暫時無法顯示 ${basename(active.virtualPath)}`,
+          "請移除此檔案後重新加入。",
           "error",
         );
         return;
       }
-      hideSelectionMessage();
-      previewName.textContent = basename(active.virtualPath);
-      previewPath.textContent = active.virtualPath;
-      previewPath.title = active.virtualPath;
-      preview.render(active.file, outputIssues.filter((issue) => issue.fileId === active.id));
+      if (currentPreviewFileId !== active.id) {
+        previewErrorFileId = null;
+        currentPreviewPath = active.virtualPath;
+        if (preview.hasContent()) hideSelectionMessage();
+        else showSelectionMessage("正在準備資料預覽", "完成後會在這裡顯示內容。", "info");
+        preview.freeze();
+        currentPreviewFileId = active.id;
+        currentSelectionRevision = active.file.selectionRevision;
+        requestPreview(active.id, "all", 0);
+      } else if (outputFormatChanged || currentSelectionRevision !== active.file.selectionRevision) {
+        if (previewErrorFileId !== active.id) hideSelectionMessage();
+        currentSelectionRevision = active.file.selectionRevision;
+        if (preview.hasContent()) preview.refresh();
+        else requestPreview(active.id, "all", 0);
+      } else if (previewErrorFileId === active.id) {
+        previewErrorFileId = null;
+        if (preview.hasContent()) hideSelectionMessage();
+        else showSelectionMessage("正在重新準備資料預覽", "完成後會在這裡顯示內容。", "info");
+        preview.freeze();
+        requestPreview(active.id, "all", 0);
+      } else {
+        hideSelectionMessage();
+      }
     },
-    renderMessage: picker.renderMessage,
-    renderUndo: picker.renderUndo,
+    renderPreviewPage(page) {
+      if (page.fileId !== currentPreviewFileId) return;
+      previewErrorFileId = null;
+      currentPreviewPath = page.virtualPath;
+      hideSelectionMessage();
+      previewName.textContent = basename(page.virtualPath);
+      previewPath.textContent = page.virtualPath;
+      previewPath.title = page.virtualPath;
+      preview.render(page);
+    },
+    renderPreviewError(fileId) {
+      if (fileId !== currentPreviewFileId) return;
+      previewErrorFileId = fileId;
+      const failureState = preview.fail();
+      if (failureState === "current") {
+        hideSelectionMessage();
+        return;
+      }
+      showSelectionMessage(
+        `暫時無法顯示 ${basename(currentPreviewPath)}`,
+        "請重新選擇這個檔案，或稍後再試一次。",
+        "error",
+      );
+    },
+    renderOperationStatus: operationStatus.render,
+    setFilePickerLocked: picker.setLocked,
   };
 }

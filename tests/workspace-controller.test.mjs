@@ -3,6 +3,10 @@ import test from "node:test";
 
 import { createInputController } from "../src/app/sections/input/input-controller.ts";
 import { createWorkspaceModel } from "../src/app/state/workspace-model.ts";
+import { createInternalFile } from "../src/core/conversion-pipeline.ts";
+import { detectSourceFileType, fileFormatForSourceType } from "../src/core/file-formats.ts";
+import { summarizeInternalFile } from "../src/core/internal-model.ts";
+import { validateOutput } from "../src/core/output-validation.ts";
 
 function sourceFile(name, contents) {
   const bytes = new TextEncoder().encode(contents);
@@ -17,48 +21,137 @@ function parsedRow(label) {
   return [label, ...Array(14).fill("x")];
 }
 
-function controllerHarness({ archiveError, archiveExtraction, confirmClear = true, onArchiveExtract, parsedRows } = {}) {
+function controllerHarness({ archiveError, archiveExtraction, confirmClear = true, onArchiveExtract, onProcessStart, onProcessingInfo, parsedRows, processError, processGate } = {}) {
   let callbacks;
   let snapshot = { files: [], inputFormat: "csv", selectedFileId: null, outputFormat: "big5-txt", sources: [] };
   const announcements = [];
   const messages = [];
+  const operationStatuses = [];
+  const pickerLocks = [];
   const undos = [];
   const model = createWorkspaceModel();
   model.setInputFormat("csv");
   const view = {
     bind(value) { callbacks = value; },
-    clear() {},
-    clearMessage() {},
+    clearPreview() {},
     confirmClear() { return confirmClear; },
     fileInput() { return { click() {} }; },
+    focusFilePicker() {},
     render(value) { snapshot = value; },
-    renderMessage(title, details, tone) { messages.push({ details, title, tone }); },
-    renderUndo(message, onUndo) { undos.push({ message, onUndo }); },
+    renderOperationStatus(status) {
+      operationStatuses.push(status);
+      if (status.kind === "processing") onProcessingInfo?.(status.progress);
+      if (status.kind === "result" && status.failures.length > 0) {
+        messages.push({ groups: status.failures, title: status.activeCount + status.otherCount > 0 ? "新增完成，有些項目未加入" : "這次沒有加入檔案" });
+      }
+      if (status.kind === "removed") undos.push({ message: status.detail, onUndo: status.onUndo });
+    },
+    renderPreviewPage() {},
+    setFilePickerLocked(locked, visible) { pickerLocks.push({ locked, visible }); },
+  };
+  const workerFiles = new Map();
+  const cancelledSources = new Set();
+  let progressListener = null;
+
+  function record(file, outputFormat = "big5-txt") {
+    const outputIssues = validateOutput([file], outputFormat);
+    return Object.assign(file, {
+      blockingOutputIssues: outputIssues.filter((issue) => issue.blocking),
+      fileIssueMessages: file.issues.filter((issue) => issue.severity === "error" && issue.sourceRow === undefined).map((issue) => issue.message),
+      hasBlockingIssues: file.rejectedRecords.length > 0,
+      outputBlockingRows: new Set(outputIssues.filter((issue) => issue.blocking).map((issue) => issue.sourceRow)).size,
+      outputFormat,
+      outputIssues,
+      outputReplacementRows: new Set(outputIssues.filter((issue) => !issue.blocking).map((issue) => issue.sourceRow)).size,
+      rowCount: file.rows.length,
+      selectionRevision: file.selectionRevision ?? 0,
+    });
+  }
+
+  function parsedFile(id, virtualPath, today, outputFormat) {
+    const file = createInternalFile(id, virtualPath, { rows: parsedRows ?? [parsedRow("A")] }, today);
+    workerFiles.set(id, file);
+    return record(file, outputFormat);
+  }
+
+  const batchClient = {
+    async cancelSource(sourceId) { cancelledSources.add(sourceId); },
+    async clear() { workerFiles.clear(); },
+    async discardFiles(fileIds) { fileIds.forEach((id) => workerFiles.delete(id)); },
+    async getPreviewPage() { throw new Error("not used"); },
+    async processSource(request) {
+      progressListener?.({ current: 0, phase: request.inputType === "zip" ? "extracting" : "processing", sourceId: request.sourceId, total: 1, virtualPath: request.sourceName });
+      onProcessStart?.(request);
+      if (processGate) await (typeof processGate === "function" ? processGate(request) : processGate);
+      if (cancelledSources.has(request.sourceId)) throw new Error("本次新增已取消。");
+      if (processError) throw processError;
+      if (request.inputType !== "zip") {
+        if (request.existingPaths.includes(request.sourceName)) {
+          throw new Error(`清單中已有這個檔案，因此沒有重複加入：${request.sourceName}`);
+        }
+        const id = `${request.sourceId}:file`;
+        return {
+          entries: [{
+            file: parsedFile(id, request.sourceName, request.today, request.outputFormat),
+            id,
+            relativePath: request.sourceName,
+            size: request.bytes.byteLength,
+            sourceFormat: fileFormatForSourceType(request.inputType),
+            virtualPath: request.sourceName,
+          }],
+          skippedEntries: [],
+        };
+      }
+      onArchiveExtract?.();
+      if (archiveError) throw archiveError;
+      const extraction = archiveExtraction ?? {
+        files: [{
+          bytes: new TextEncoder().encode("A,01"),
+          relativePath: "folder/from-zip.csv",
+          size: 4,
+          virtualPath: "bundle/folder/from-zip.csv",
+        }],
+        skippedEntries: [],
+      };
+      const duplicate = extraction.files.find((entry) => request.existingPaths.includes(entry.virtualPath));
+      if (duplicate) {
+        throw new Error(`清單中已有這個檔案，因此沒有重複加入：${duplicate.virtualPath}`);
+      }
+      return {
+        entries: extraction.files.map((entry, index) => {
+          const type = detectSourceFileType(entry.virtualPath);
+          const id = `${request.sourceId}:entry:${index + 1}`;
+          return {
+            file: parsedFile(id, entry.virtualPath, request.today, request.outputFormat),
+            id,
+            relativePath: entry.relativePath,
+            size: entry.size,
+            sourceFormat: fileFormatForSourceType(type),
+            virtualPath: entry.virtualPath,
+          };
+        }),
+        skippedEntries: extraction.skippedEntries,
+      };
+    },
+    async refreshOutput(fileIds, outputFormat) { return fileIds.map((id) => record(workerFiles.get(id), outputFormat)); },
+    async removeFiles(fileIds) { fileIds.forEach((id) => workerFiles.delete(id)); },
+    async restoreFiles() {},
+    setProgressListener(listener) { progressListener = listener; },
+    async setRowIncluded(fileId, sourceRow, included, outputFormat) {
+      const file = workerFiles.get(fileId);
+      file.rows.find((row) => row.sourceRow === sourceRow).included = included;
+      file.summary = summarizeInternalFile(file, file.summary.sourceRecords);
+      return record(file, outputFormat);
+    },
+    async setRowsIncluded(fileId, sourceRows, included, outputFormat) {
+      const file = workerFiles.get(fileId);
+      file.rows.filter((row) => sourceRows.includes(row.sourceRow)).forEach((row) => { row.included = included; });
+      file.summary = summarizeInternalFile(file, file.summary.sourceRecords);
+      return record(file, outputFormat);
+    },
   };
   const controller = createInputController({
-    codecs: {
-      async prepareSource() {},
-      async zip() {
-        return {
-          async extractZip() {
-            onArchiveExtract?.();
-            if (archiveError) throw archiveError;
-            return archiveExtraction ?? {
-              files: [{
-                bytes: new TextEncoder().encode("A,01"),
-                relativePath: "folder/from-zip.csv",
-                size: 4,
-                virtualPath: "bundle/folder/from-zip.csv",
-              }],
-              skippedEntries: [],
-            };
-          },
-        };
-      },
-    },
-    inputAdapter: {
-      async parse() { return { rows: parsedRows ?? [parsedRow("A")] }; },
-    },
+    batchClient,
     model,
     offlineCache: {
       async prepareOfflineUse() {},
@@ -75,6 +168,8 @@ function controllerHarness({ archiveError, archiveExtraction, confirmClear = tru
     controller,
     messages,
     model,
+    operationStatuses,
+    pickerLocks,
     snapshot: () => snapshot,
     undos,
   };
@@ -88,7 +183,7 @@ test("new file selections append to the existing workspace", async () => {
   await harness.controller.whenIdle();
   assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["first.csv", "second.csv"]);
   assert.deepEqual(harness.snapshot().sources.map((source) => source.name), ["first.csv", "second.csv"]);
-  assert.ok(harness.snapshot().files.every((file) => file.state === "ready"));
+  assert.ok(harness.snapshot().files.every((file) => file.file));
   assert.ok(harness.snapshot().files.every((file) => file.unread));
   assert.equal(harness.model.selectedItem()?.virtualPath, "first.csv");
   assert.equal(harness.messages.length, 0);
@@ -103,28 +198,87 @@ test("ZIP extraction appends files using their virtual paths", async () => {
   assert.deepEqual(harness.snapshot().sources.map((source) => source.name), ["bundle.zip"]);
 });
 
-test("lets the browser paint the spinner before ZIP extraction", async () => {
-  const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
-  const events = [];
-  globalThis.requestAnimationFrame = (callback) => {
-    events.push("paint");
-    callback(0);
-    return 1;
-  };
-  try {
-    const harness = controllerHarness({
-      onArchiveExtract() { events.push("extract"); },
-    });
-    harness.callbacks().onFilesChosen([sourceFile("bundle.zip", "zip")]);
-    await harness.controller.whenIdle();
-    assert.deepEqual(events, ["paint", "extract"]);
-  } finally {
-    if (originalRequestAnimationFrame) {
-      globalThis.requestAnimationFrame = originalRequestAnimationFrame;
-    } else {
-      delete globalThis.requestAnimationFrame;
-    }
-  }
+test("does not flash processing information for fast work", async () => {
+  const progressEvents = [];
+  const harness = controllerHarness({
+    onProcessingInfo(progress) { if (progress) progressEvents.push(progress); },
+  });
+  harness.callbacks().onFilesChosen([sourceFile("bundle.zip", "zip")]);
+  await harness.controller.whenIdle();
+  assert.deepEqual(progressEvents, []);
+  assert.equal(harness.pickerLocks.some(({ locked, visible }) => locked && visible), false);
+});
+
+test("reveals processing information when work takes longer", async () => {
+  let releaseProcessing;
+  let signalStarted;
+  const gatePromise = new Promise((resolve) => { releaseProcessing = resolve; });
+  const started = new Promise((resolve) => { signalStarted = resolve; });
+  const progressEvents = [];
+  const harness = controllerHarness({
+    onProcessStart() { signalStarted(); },
+    onProcessingInfo(progress) { progressEvents.push(progress); },
+    processGate: gatePromise,
+  });
+
+  harness.callbacks().onFilesChosen([sourceFile("bundle.zip", "zip")]);
+  await started;
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.ok(progressEvents.some((progress) => progress?.virtualPath === "bundle.zip"));
+
+  releaseProcessing();
+  await harness.controller.whenIdle();
+  assert.equal(harness.operationStatuses.at(-1)?.kind, "result");
+});
+
+test("ignores another file selection while the current selection is processing", async () => {
+  let releaseProcessing;
+  let signalStarted;
+  const gatePromise = new Promise((resolve) => { releaseProcessing = resolve; });
+  const started = new Promise((resolve) => { signalStarted = resolve; });
+  const harness = controllerHarness({
+    onProcessStart() { signalStarted(); },
+    processGate: gatePromise,
+  });
+  harness.callbacks().onFilesChosen([sourceFile("first.csv", "A,01")]);
+  await started;
+  harness.callbacks().onFilesChosen([sourceFile("ignored.csv", "B,02")]);
+  releaseProcessing();
+  await harness.controller.whenIdle();
+  assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["first.csv"]);
+});
+
+test("cancelling a slow selection discards the whole staged batch and preserves prior files", async () => {
+  let releaseProcessing;
+  let signalStarted;
+  const gatePromise = new Promise((resolve) => { releaseProcessing = resolve; });
+  const started = new Promise((resolve) => { signalStarted = resolve; });
+  const harness = controllerHarness({
+    onProcessStart(request) { if (request.sourceName === "large.csv") signalStarted(); },
+    processGate(request) { return request.sourceName === "large.csv" ? gatePromise : undefined; },
+  });
+  harness.callbacks().onFilesChosen([sourceFile("prior.csv", "A,01")]);
+  await harness.controller.whenIdle();
+
+  harness.callbacks().onFilesChosen([
+    sourceFile("staged.csv", "B,02"),
+    sourceFile("large.csv", "C,03"),
+  ]);
+  await started;
+  assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["prior.csv"]);
+  assert.ok(harness.pickerLocks.some(({ locked, visible }) => locked && !visible));
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.ok(harness.pickerLocks.some(({ locked, visible }) => locked && visible));
+  assert.equal(harness.operationStatuses.at(-1)?.kind, "processing");
+
+  harness.callbacks().onCancelFileOperation();
+  assert.equal(harness.operationStatuses.at(-1)?.kind, "cancelling");
+  releaseProcessing();
+  await harness.controller.whenIdle();
+
+  assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["prior.csv"]);
+  assert.equal(harness.operationStatuses.at(-1)?.kind, "cancelled");
+  assert.match(harness.announcements.at(-1), /先前的檔案仍保留/u);
 });
 
 test("individual removal and clear all only change the browser workspace", async () => {
@@ -228,11 +382,18 @@ test("stores mixed uploads by family and treats XLS as XLSX", async () => {
     ["txt", "csv", "xlsx", "xlsx"],
   );
   assert.equal(harness.model.selectedItem()?.virtualPath, "current.csv");
+  assert.deepEqual(harness.operationStatuses.at(-1), {
+    kind: "result",
+    activeCount: 1,
+    activeFormat: "csv",
+    failures: [],
+    otherCount: 3,
+  });
   harness.model.setInputFormat("xlsx");
   assert.equal(harness.model.selectedItem()?.virtualPath, "legacy.xls");
 });
 
-test("excluded ZIP entries are shown as separate path messages", async () => {
+test("excluded ZIP entries stay out of the workspace and are grouped by category", async () => {
   const harness = controllerHarness({
     archiveExtraction: {
       files: [{
@@ -249,26 +410,44 @@ test("excluded ZIP entries are shown as separate path messages", async () => {
   });
   harness.callbacks().onFilesChosen([sourceFile("excluded-entries.zip", "zip")]);
   await harness.controller.whenIdle();
-  assert.deepEqual(
-    harness.snapshot().files.filter((file) => file.state === "ignored").map((file) => ({
-      reason: file.ignoredReason,
-      relativePath: file.relativePath,
-    })),
-    [
-      { reason: "symlink", relativePath: "excluded/link.csv" },
-      { reason: "unsupported-type", relativePath: "excluded/notes.md" },
-    ],
-  );
-  assert.equal(harness.messages.length, 0);
+  assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), [
+    "excluded-entries/accepted/data.csv",
+  ]);
+  assert.deepEqual(harness.messages[0]?.groups, [
+    { files: ["excluded-entries.zip／excluded/link.csv"], label: "捷徑", tone: "warning" },
+    { files: ["excluded-entries.zip／excluded/notes.md"], label: "不支援的檔案類型（MD）", tone: "warning" },
+  ]);
 });
 
-test("unsupported direct selections remain visible without entering output", async () => {
+test("unsupported direct selections stay out of the workspace and are grouped by extension", async () => {
   const harness = controllerHarness();
-  harness.callbacks().onFilesChosen([sourceFile("notes.pdf", "not supported")]);
+  harness.callbacks().onFilesChosen([
+    sourceFile("photo.png", "not supported"),
+    sourceFile("diagram.png", "not supported"),
+    sourceFile("notes.pdf", "not supported"),
+  ]);
   await harness.controller.whenIdle();
-  assert.equal(harness.snapshot().files[0]?.state, "ignored");
-  assert.equal(harness.snapshot().files[0]?.ignoredReason, "unsupported-type");
-  assert.equal(harness.snapshot().files[0]?.unread, undefined);
+  assert.deepEqual(harness.snapshot().files, []);
+  assert.deepEqual(harness.snapshot().sources, []);
+  assert.deepEqual(harness.messages[0]?.groups, [
+    { files: ["photo.png", "diagram.png"], label: "不支援的檔案類型（PNG）", tone: "warning" },
+    { files: ["notes.pdf"], label: "不支援的檔案類型（PDF）", tone: "warning" },
+  ]);
+});
+
+test("duplicate files stay out of the workspace and share one failure category", async () => {
+  const harness = controllerHarness();
+  harness.callbacks().onFilesChosen([sourceFile("foo.csv", "A,01"), sourceFile("bundle.zip", "zip")]);
+  await harness.controller.whenIdle();
+  harness.callbacks().onFilesChosen([sourceFile("foo.csv", "A,01"), sourceFile("bundle.zip", "zip")]);
+  await harness.controller.whenIdle();
+
+  assert.deepEqual(harness.snapshot().sources.map((source) => source.name), ["foo.csv", "bundle.zip"]);
+  assert.deepEqual(harness.messages.at(-1)?.groups, [{
+    files: ["foo.csv", "bundle.zip"],
+    label: "重複檔案",
+    tone: "warning",
+  }]);
 });
 
 test("new badges remain until deliberate selection or bulk acknowledgement", async () => {
@@ -285,20 +464,30 @@ test("new badges remain until deliberate selection or bulk acknowledgement", asy
   assert.match(harness.announcements.at(-1), /1 個檔案/u);
 });
 
-test("technical archive failures are presented with a helpful next step", async () => {
+test("encrypted archives are categorized without leaving failed workspace items", async () => {
   const harness = controllerHarness({
     archiveError: new Error("不支援加密的 ZIP 項目：private/data.csv"),
   });
   harness.callbacks().onFilesChosen([sourceFile("protected.zip", "zip")]);
   await harness.controller.whenIdle();
-  assert.equal(
-    harness.snapshot().files[0]?.error,
-    "壓縮檔內有受密碼保護的檔案，請先解除密碼後再試：private/data.csv",
-  );
-  assert.doesNotMatch(harness.snapshot().files[0]?.error, /ZIP|項目|加密/u);
+  assert.deepEqual(harness.snapshot().files, []);
+  assert.deepEqual(harness.snapshot().sources, []);
   assert.deepEqual(harness.messages, [{
-    details: ["protected.zip：壓縮檔內有受密碼保護的檔案，請先解除密碼後再試：private/data.csv"],
-    title: "有些檔案未加入",
+    groups: [{ files: ["protected.zip"], label: "受密碼保護", tone: "error" }],
+    title: "這次沒有加入檔案",
+  }]);
+});
+
+test("corrupted supported files are categorized without leaving failed workspace items", async () => {
+  const harness = controllerHarness({ processError: new Error("workbook container is invalid") });
+  harness.callbacks().onFilesChosen([sourceFile("broken.xlsx", "not a workbook")]);
+  await harness.controller.whenIdle();
+
+  assert.deepEqual(harness.snapshot().files, []);
+  assert.deepEqual(harness.snapshot().sources, []);
+  assert.deepEqual(harness.messages[0]?.groups, [{
+    files: ["broken.xlsx"],
+    label: "無法開啟或內容格式不符",
     tone: "error",
   }]);
 });
@@ -310,8 +499,11 @@ test("an empty archive keeps an actionable not-added message", async () => {
   harness.callbacks().onFilesChosen([sourceFile("empty.zip", "zip")]);
   await harness.controller.whenIdle();
 
-  assert.equal(harness.snapshot().files[0]?.state, "error");
-  assert.deepEqual(harness.messages[0]?.details, [
-    "empty.zip：壓縮檔內沒有可加入的 TXT、CSV 或 Excel 檔案。",
-  ]);
+  assert.deepEqual(harness.snapshot().files, []);
+  assert.deepEqual(harness.snapshot().sources, []);
+  assert.deepEqual(harness.messages[0]?.groups, [{
+    files: ["empty.zip"],
+    label: "沒有支援的 TXT、CSV、XLS 或 XLSX 檔案",
+    tone: "warning",
+  }]);
 });

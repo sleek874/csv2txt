@@ -11,12 +11,18 @@ interface GeneratedAsset {
 const MANIFEST_FILE_NAME = ".vite/manifest.json";
 const BOOT_FILE_NAME = "boot.js";
 const BASE_MANIFEST_ROOTS = ["index.html", "src/main.ts"];
+const WORKER_MANIFEST_ROOTS = ["src/app/batch/batch-worker.ts"];
 const EXCEL_MANIFEST_ROOTS = ["src/core/formats/spreadsheet.ts"];
 const ARCHIVE_MANIFEST_ROOTS = ["src/core/archive/zip.ts"];
 const FONT_MANIFEST_ROOTS = [
   "src/styles/preview-font.css",
   "src/assets/fonts/SarasaMonoTC-Regular.woff2",
 ];
+const emittedWorkerFiles = {
+  archive: new Set<string>(),
+  core: new Set<string>(),
+  excel: new Set<string>(),
+};
 
 function collectManifestGroup(
   manifest: Manifest,
@@ -45,6 +51,10 @@ function collectManifestGroup(
   return files;
 }
 
+function collectOptionalManifestGroup(manifest: Manifest, roots: readonly string[]): Set<string> {
+  return roots.every((root) => manifest[root]) ? collectManifestGroup(manifest, roots) : new Set<string>();
+}
+
 function readAssetSource(asset: GeneratedAsset): string {
   return typeof asset.source === "string"
     ? asset.source
@@ -64,6 +74,25 @@ function readManifestAsset(asset: GeneratedAsset): {
 
 function relativePaths(files: Iterable<string>): string[] {
   return Array.from(files, (fileName) => `./${fileName}`).sort();
+}
+
+export function offlineWorkerResources(): Plugin {
+  return {
+    name: "offline-worker-resources",
+    apply: "build",
+    buildStart() {
+      emittedWorkerFiles.archive.clear();
+      emittedWorkerFiles.core.clear();
+      emittedWorkerFiles.excel.clear();
+    },
+    generateBundle(_options, bundle) {
+      Object.keys(bundle).filter((file) => file.endsWith(".js")).forEach((file) => {
+        if (/(?:spreadsheet|worker-excel)-/iu.test(file)) emittedWorkerFiles.excel.add(file);
+        else if (/(?:zip|worker-archive)-/iu.test(file)) emittedWorkerFiles.archive.add(file);
+        else emittedWorkerFiles.core.add(file);
+      });
+    },
+  };
 }
 
 export function offlineServiceWorker(): Plugin {
@@ -93,26 +122,40 @@ export function offlineServiceWorker(): Plugin {
         const { manifest, source: manifestSource } = readManifestAsset(manifestAsset);
         const indexHtmlSource = readAssetSource(indexHtmlAsset);
         const baseFiles = collectManifestGroup(manifest, BASE_MANIFEST_ROOTS);
-        const excelFiles = collectManifestGroup(manifest, EXCEL_MANIFEST_ROOTS);
-        const archiveFiles = collectManifestGroup(manifest, ARCHIVE_MANIFEST_ROOTS);
+        const workerFiles = collectOptionalManifestGroup(manifest, WORKER_MANIFEST_ROOTS);
+        emittedWorkerFiles.core.forEach((file) => workerFiles.add(file));
+        const excelFiles = collectOptionalManifestGroup(manifest, EXCEL_MANIFEST_ROOTS);
+        const archiveFiles = collectOptionalManifestGroup(manifest, ARCHIVE_MANIFEST_ROOTS);
+        emittedWorkerFiles.excel.forEach((file) => excelFiles.add(file));
+        emittedWorkerFiles.archive.forEach((file) => archiveFiles.add(file));
         const fontFiles = collectManifestGroup(manifest, FONT_MANIFEST_ROOTS);
         fontFiles.forEach((file) => {
           baseFiles.delete(file);
           excelFiles.delete(file);
           archiveFiles.delete(file);
+          workerFiles.delete(file);
+        });
+        baseFiles.forEach((file) => {
+          if (workerFiles.has(file)) baseFiles.delete(file);
         });
         baseFiles.forEach((file) => {
           excelFiles.delete(file);
           archiveFiles.delete(file);
+        });
+        workerFiles.forEach((file) => {
+          if (excelFiles.has(file) || archiveFiles.has(file)) workerFiles.delete(file);
         });
         excelFiles.forEach((file) => archiveFiles.delete(file));
 
         const precachePaths = ["./", `./${BOOT_FILE_NAME}`, ...relativePaths(baseFiles)];
         const excelPaths = relativePaths(excelFiles);
         const archivePaths = relativePaths(archiveFiles);
+        const workerPaths = relativePaths(workerFiles);
         const fontPaths = relativePaths(fontFiles);
         const buildId = createHash("sha256")
           .update(manifestSource)
+          .update("\n")
+          .update(JSON.stringify({ archivePaths, excelPaths, workerPaths }))
           .update("\n")
           .update(indexHtmlSource)
           .update("\n")
@@ -126,6 +169,7 @@ const FONT_CACHE_NAME = "csv2txt-fonts";
 const PRECACHE_PATHS = ${JSON.stringify(precachePaths)};
 const EXCEL_PATHS = ${JSON.stringify(excelPaths)};
 const ARCHIVE_PATHS = ${JSON.stringify(archivePaths)};
+const WORKER_PATHS = ${JSON.stringify(workerPaths)};
 const FONT_PATHS = ${JSON.stringify(fontPaths)};
 
 function scopedRequest(path, cache) {
@@ -184,6 +228,10 @@ function prepareArchive() {
   return cacheResources(APP_CACHE_NAME, ARCHIVE_PATHS);
 }
 
+function prepareWorker() {
+  return cacheResources(APP_CACHE_NAME, WORKER_PATHS);
+}
+
 function prepareFonts() {
   return cacheResources(FONT_CACHE_NAME, FONT_PATHS, true);
 }
@@ -214,7 +262,8 @@ self.addEventListener("message", (event) => {
   }
 
   const replyPort = event.ports[0];
-  const preparation = (event.data.includeExcel ? prepareExcel() : Promise.resolve())
+  const preparation = prepareWorker()
+    .then(() => event.data.includeExcel ? prepareExcel() : undefined)
     .then(() => event.data.includeArchive ? prepareArchive() : undefined)
     .then(prepareFonts);
   event.waitUntil(

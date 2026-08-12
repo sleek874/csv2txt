@@ -1,3 +1,5 @@
+import { createStateTransition } from "./state-transition";
+
 export type StatusIndicatorTone = "neutral" | "info" | "success" | "warning" | "error";
 
 export interface StatusIndicator {
@@ -9,11 +11,13 @@ export function createStatusIndicator(root: HTMLElement): StatusIndicator {
   if (!text) {
     throw new Error("找不到 status indicator 文字元素。");
   }
+  const transition = createStateTransition(root);
   return {
     set(options) {
       root.dataset.tone = options.tone;
       root.dataset.loading = String(options.loading ?? false);
       text.textContent = options.text;
+      transition.update(`${options.tone}:${String(options.loading ?? false)}:${options.text}`);
     },
   };
 }

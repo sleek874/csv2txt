@@ -1,7 +1,4 @@
-import { createInputAdapter } from "./app/adapters/input-adapter";
-import { createAdvancedOutputAdapter } from "./app/adapters/advanced-output-adapter";
-import { createOutputAdapter } from "./app/adapters/output-adapter";
-import { createCodecManager } from "./app/resources/codec-manager";
+import { createBatchClient } from "./app/batch/batch-client";
 import { createAdvancedController } from "./app/sections/advanced/advanced-controller";
 import { createAdvancedView } from "./app/sections/advanced/advanced-view";
 import { createInputController } from "./app/sections/input/input-controller";
@@ -23,7 +20,7 @@ const offlineCache = createOfflineCache({
   production: import.meta.env.PROD,
   onStateChange: readinessView.render,
 });
-const codecs = createCodecManager();
+const batchClient = createBatchClient();
 const model = createWorkspaceModel();
 const status = createAppStatus();
 const unloadGuard = createUnloadGuard();
@@ -31,24 +28,23 @@ const unloadGuard = createUnloadGuard();
 bindRulesView();
 
 const inputController = createInputController({
-  codecs,
-  inputAdapter: createInputAdapter(codecs),
+  batchClient,
   model,
   offlineCache,
   status,
   unloadGuard,
   view: createInputSectionView(),
 });
-const formatController = createFormatController({ codecs, model, view: createFormatView() });
+const formatController = createFormatController({ batchClient, model, view: createFormatView() });
 const outputController = createOutputController({
+  batchClient,
   model,
-  outputAdapter: createOutputAdapter(codecs),
   status,
   view: createOutputView(),
 });
 const advancedController = createAdvancedController({
+  batchClient,
   model,
-  outputAdapter: createAdvancedOutputAdapter(codecs),
   status,
   unloadGuard,
   view: createAdvancedView(),

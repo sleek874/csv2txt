@@ -32,8 +32,10 @@ File／ZIP 先依 `TXT`／`CSV`／`XLSX` family 分類；只有目前輸入 fami
 - 可解析的 error／warning 列預設勾選且不形成一般 gate；無法解析列保存原始證據、不可勾選並形成結構性 gate。
 - 100-row preview 不另設問題欄，由狀態儲存格展開該筆全寬說明，初始保持收合。未還原 PUA 的可見值固定使用 `■`，code point 保持可見，技術資訊另行展開。
 - Section 2 不再選格式，只顯示 Section 0 選擇與下載狀態；Section 3 維持既有 minimal lookup contract，欄位規則移到流程後方。
-- 移除與清空 copy 明確表示只影響頁面記憶體；ZIP 內 symlink 對使用者顯示為「捷徑」。
+- 移除與清空 copy 明確表示只影響頁面記憶體；ZIP 內 symlink 在該次新增結果歸為「捷徑」，不保存於工作區。
 - 預覽已移除 hover tooltip；狀態儲存格是唯一可用鍵盤操作的 disclosure 控制。大量 table body 不作為 live region，只有事件型狀態使用安靜的 polite announcement。固定 table viewport、spinner slot、摘要高度與 stable scrollbar 降低內容切換位移，按鈕不再用位移式 active 效果。
+- 格式摘要、資訊／錯誤提示、預覽與 Sections 2／3 的狀態使用同一個短暫淡入淡出 primitive；只在語意狀態改變時觸發並遵守 reduced-motion。首次預覽與失敗狀態保留固定區域，輸出準備失敗會停止 spinner 而不再卡在 loading。
+- 檔案處理狀態移到固定資訊區後，窄螢幕的靜態 picker 不再保留舊版 4.5rem loading 文字槽；處理中的幾何穩定改由資訊區單一負責。
 
 自動與 headless 證據不能取代螢幕閱讀器、完整鍵盤操作、原生 file picker、下載 dialog 或真實裝置測試；這些仍列為發布前人工檢查。
 

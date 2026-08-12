@@ -1,6 +1,7 @@
 import { downloadBytes } from "../../../browser/download";
 import { requireDescendant, requireElement } from "../../../browser/dom";
 import type { CreatedOutput } from "../../adapters/output-adapter";
+import { createStateTransition } from "../../shell/state-transition";
 
 export interface AdvancedViewState {
   busy: "download" | "reference" | null;
@@ -10,8 +11,8 @@ export interface AdvancedViewState {
   issueCount: number;
   keyColumnIndex: number;
   matchedRowCount: number;
-  processingFileCount: number;
   referenceFileName: string | null;
+  resultBusy: boolean;
   resultRowCount: number;
   selectedColumnIndices: readonly number[];
   selectedRowCount: number;
@@ -47,6 +48,7 @@ export function createAdvancedView(): AdvancedView {
   const picker = requireDescendant<HTMLElement>(root, "#reference-file-picker");
   const fileInput = requireDescendant<HTMLInputElement>(root, "#reference-file");
   const fileName = requireDescendant<HTMLElement>(root, "#reference-file-name");
+  const referenceSpinner = requireDescendant<HTMLElement>(root, "#reference-status-spinner");
   const chooseButton = requireDescendant<HTMLButtonElement>(root, "#select-reference-button");
   const clearButton = requireDescendant<HTMLButtonElement>(root, "#clear-reference-button");
   const controls = requireDescendant<HTMLElement>(root, "#advanced-controls");
@@ -58,7 +60,11 @@ export function createAdvancedView(): AdvancedView {
   const summary = requireDescendant<HTMLElement>(root, "#advanced-summary");
   const downloadTitle = requireDescendant<HTMLElement>(root, "#advanced-download-title");
   const downloadDetail = requireDescendant<HTMLElement>(root, "#advanced-download-detail");
+  const downloadStatus = requireDescendant<HTMLElement>(root, "#advanced-download-status");
+  const downloadSpinner = requireDescendant<HTMLElement>(root, "#advanced-download-spinner");
   const downloadButton = requireDescendant<HTMLButtonElement>(root, "#advanced-download-button");
+  const referenceTransition = createStateTransition(picker);
+  const downloadTransition = createStateTransition(downloadStatus);
   let renderedHeaderKey = "";
 
   function renderSelectOptions(
@@ -120,6 +126,10 @@ export function createAdvancedView(): AdvancedView {
     fileInput: () => fileInput,
     render(state) {
       const hasReference = state.referenceFileName !== null;
+      const downloadBusy = state.busy !== null || state.resultBusy;
+      referenceSpinner.hidden = state.busy !== "reference";
+      downloadStatus.toggleAttribute("aria-busy", downloadBusy);
+      downloadSpinner.hidden = !downloadBusy;
       fileName.textContent = state.busy === "reference"
         ? "正在讀取參照 Excel"
         : state.referenceFileName ?? "尚未選擇參照 Excel";
@@ -135,6 +145,9 @@ export function createAdvancedView(): AdvancedView {
       chooseButton.disabled = state.busy !== null;
       chooseButton.textContent = hasReference ? "更換 Excel" : "選擇 Excel";
       clearButton.disabled = !hasReference || state.busy !== null;
+      referenceTransition.update(state.error
+        ? "error"
+        : state.busy === "reference" ? "loading" : hasReference ? "ready" : "empty");
 
       referenceMessage.hidden = !state.error;
       referenceMessage.textContent = state.error ?? "";
@@ -148,6 +161,7 @@ export function createAdvancedView(): AdvancedView {
           ? "正在讀取參照 Excel。"
           : "請先選擇一個有標題列的參照 Excel。";
         summary.textContent = `${state.selectedRowCount} 列已勾選。`;
+        downloadTransition.update(state.busy === "reference" ? "reference-loading" : "empty");
         return;
       }
 
@@ -174,12 +188,21 @@ export function createAdvancedView(): AdvancedView {
         downloadButton.disabled = true;
         downloadTitle.textContent = "正在建立進階 XLSX";
         downloadDetail.textContent = "完成後會自動開始下載。";
+        downloadTransition.update("creating");
         return;
       }
-      if (state.processingFileCount > 0) {
+      if (state.busy === "reference") {
         downloadButton.disabled = true;
-        downloadTitle.textContent = "正在檢查來源檔案";
-        downloadDetail.textContent = `尚有 ${state.processingFileCount} 個檔案，完成後會納入所有勾選列。`;
+        downloadTitle.textContent = "正在讀取參照 Excel";
+        downloadDetail.textContent = "完成後即可繼續。";
+        downloadTransition.update("reference-loading");
+        return;
+      }
+      if (state.resultBusy) {
+        downloadButton.disabled = true;
+        downloadTitle.textContent = "正在整理結果";
+        downloadDetail.textContent = "完成後即可下載。";
+        downloadTransition.update("result-loading");
         return;
       }
       downloadButton.disabled = !state.canDownload;
@@ -187,6 +210,7 @@ export function createAdvancedView(): AdvancedView {
       downloadDetail.textContent = state.selectedRowCount > 0
         ? `會逐列查詢並輸出 ${state.resultRowCount} 列；重複與未命中都不會阻止下載。`
         : "請先在第 1 區勾選至少一列資料。";
+      downloadTransition.update(state.selectedRowCount > 0 ? "ready" : "no-selection");
     },
     save(output) {
       downloadBytes(output.bytes, output.mimeType, output.filename);

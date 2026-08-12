@@ -1,8 +1,8 @@
 import type { FileFormat, OutputFormat } from "../../core/file-formats";
-import type { InternalFile } from "../../core/internal-model";
+import type { FileSummary } from "../../core/internal-model";
+import type { OutputIssue } from "../../core/output-validation";
 
-export type WorkspaceFileState = "processing" | "ready" | "error" | "ignored";
-export type WorkspaceIgnoredReason = "symlink" | "unsupported-type";
+export type OutputPreparationState = "error" | "loading" | "ready";
 export type WorkspaceSourceKind = "file" | "archive";
 
 export interface WorkspaceSource {
@@ -11,15 +11,27 @@ export interface WorkspaceSource {
   name: string;
 }
 
-export interface WorkspaceItem {
-  error?: string;
-  file?: InternalFile;
+export interface WorkspaceFileRecord {
+  blockingOutputIssues: readonly OutputIssue[];
+  fileIssueMessages: readonly string[];
+  hasBlockingIssues: boolean;
   id: string;
-  ignoredReason?: WorkspaceIgnoredReason;
+  outputBlockingRows: number;
+  outputFormat: OutputFormat;
+  outputIssues: readonly OutputIssue[];
+  outputReplacementRows: number;
+  rowCount: number;
+  selectionRevision: number;
+  summary: FileSummary;
+  virtualPath: string;
+}
+
+export interface WorkspaceItem {
+  file?: WorkspaceFileRecord;
+  id: string;
   size: number;
   sourceId: string;
-  sourceFormat?: FileFormat;
-  state: WorkspaceFileState;
+  sourceFormat: FileFormat;
   relativePath: string;
   unread?: boolean;
   virtualPath: string;
@@ -29,6 +41,8 @@ export interface WorkspaceSnapshot {
   files: readonly WorkspaceItem[];
   inputFormat: FileFormat;
   outputFormat: OutputFormat;
+  outputPreparationError: string | null;
+  outputPreparationState: OutputPreparationState;
   selectedFileId: string | null;
   sources: readonly WorkspaceSource[];
 }

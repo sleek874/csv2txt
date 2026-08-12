@@ -1,9 +1,7 @@
 import type { WorkspaceItem, WorkspaceSnapshot } from "./workspace-types";
 
 export function activeWorkspaceItems(snapshot: WorkspaceSnapshot): WorkspaceItem[] {
-  return snapshot.files.filter((item) => (
-    item.state !== "ignored" && item.sourceFormat === snapshot.inputFormat
-  ));
+  return snapshot.files.filter((item) => item.sourceFormat === snapshot.inputFormat);
 }
 
 export function otherWorkspaceItems(snapshot: WorkspaceSnapshot): WorkspaceItem[] {

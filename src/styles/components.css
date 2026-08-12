@@ -91,3 +91,43 @@
   margin-left: auto;
   padding: 0.35rem 0.8rem;
 }
+
+.state-transition {
+  transition:
+    opacity var(--transition-fast),
+    visibility var(--transition-fast) allow-discrete,
+    display var(--transition-fast) allow-discrete;
+}
+
+.state-transition[data-state-transition="a"] {
+  animation: state-transition-a 180ms ease-out;
+}
+
+.state-transition[data-state-transition="b"] {
+  animation: state-transition-b 180ms ease-out;
+}
+
+.state-transition[hidden] {
+  opacity: 0;
+}
+
+@starting-style {
+  .state-transition:not([hidden]) {
+    opacity: 0;
+  }
+}
+
+@keyframes state-transition-a {
+  45% { opacity: 0.72; }
+}
+
+@keyframes state-transition-b {
+  45% { opacity: 0.72; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .state-transition {
+    transition: none;
+    animation: none;
+  }
+}

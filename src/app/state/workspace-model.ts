@@ -1,12 +1,15 @@
 import type { FileFormat, OutputFormat } from "../../core/file-formats";
-import { summarizeInternalFile } from "../../core/internal-model";
-import type { WorkspaceItem, WorkspaceSnapshot, WorkspaceSource } from "./workspace-types";
+import type {
+  OutputPreparationState,
+  WorkspaceFileRecord,
+  WorkspaceItem,
+  WorkspaceSnapshot,
+  WorkspaceSource,
+} from "./workspace-types";
 
 export interface WorkspaceModel {
-  add(item: WorkspaceItem): void;
-  addSource(source: WorkspaceSource): void;
+  addBatch(sources: readonly WorkspaceSource[], items: readonly WorkspaceItem[]): void;
   clear(): void;
-  hasPath(path: string): boolean;
   remove(fileId: string): WorkspaceItem | null;
   removeSource(sourceId: string): WorkspaceItem[];
   restore(
@@ -26,13 +29,12 @@ export interface WorkspaceModel {
   selectedItem(): WorkspaceItem | null;
   markAllViewed(): number;
   setInputFormat(format: FileFormat): void;
-  setOutputFormat(format: OutputFormat): void;
-  setRowsIncluded(sourceRows: readonly number[], included: boolean): number;
-  setRowIncluded(sourceRow: number, included: boolean): boolean;
+  setOutputFormat(format: OutputFormat, preparationState?: OutputPreparationState): void;
+  setOutputPreparation(state: OutputPreparationState, error?: string | null): void;
   snapshot(): WorkspaceSnapshot;
   subscribe(listener: (snapshot: WorkspaceSnapshot) => void): () => void;
   update(fileId: string, update: (item: WorkspaceItem) => void): boolean;
-  updateSource(sourceId: string, update: (source: WorkspaceSource) => void): boolean;
+  updateFileRecords(records: readonly WorkspaceFileRecord[]): number;
 }
 
 export function createWorkspaceModel(): WorkspaceModel {
@@ -42,9 +44,19 @@ export function createWorkspaceModel(): WorkspaceModel {
   let selectedFileId: string | null = null;
   let inputFormat: FileFormat = "txt";
   let outputFormat: OutputFormat = "big5-txt";
+  let outputPreparationError: string | null = null;
+  let outputPreparationState: OutputPreparationState = "ready";
 
   function currentSnapshot(): WorkspaceSnapshot {
-    return { files: [...entries], inputFormat, outputFormat, selectedFileId, sources: [...sources] };
+    return {
+      files: [...entries],
+      inputFormat,
+      outputFormat,
+      outputPreparationError,
+      outputPreparationState,
+      selectedFileId,
+      sources: [...sources],
+    };
   }
 
   function emit(): void {
@@ -53,45 +65,35 @@ export function createWorkspaceModel(): WorkspaceModel {
   }
 
   function normalizeSelection(): void {
-    const active = entries.filter((entry) => (
-      entry.state !== "ignored" && entry.sourceFormat === inputFormat
-    ));
+    const active = entries.filter((entry) => entry.sourceFormat === inputFormat);
     if (selectedFileId && !active.some((entry) => entry.id === selectedFileId)) {
       selectedFileId = active[0]?.id ?? null;
     }
     selectedFileId ??= active[0]?.id ?? null;
   }
 
-  function refreshSummary(file: NonNullable<WorkspaceItem["file"]>): void {
-    file.summary = summarizeInternalFile(file, file.summary.sourceRecords);
-  }
-
   return {
-    add(item) {
-      if (!sources.some((source) => source.id === item.sourceId)) {
-        throw new Error(`工作區來源不存在：${item.sourceId}`);
-      }
-      entries.push(item);
-      if (item.state !== "ignored" && item.sourceFormat === inputFormat) {
-        selectedFileId ??= item.id;
-      }
-      emit();
-    },
-    addSource(source) {
-      if (sources.some((current) => current.id === source.id)) {
-        throw new Error(`工作區來源重複：${source.id}`);
-      }
-      sources.push(source);
-      emit();
+    addBatch(newSources, items) {
+      const sourceIds = new Set(sources.map((source) => source.id));
+      newSources.forEach((source) => {
+        if (sourceIds.has(source.id)) throw new Error(`工作區來源重複：${source.id}`);
+        sourceIds.add(source.id);
+      });
+      items.forEach((item) => {
+        if (!sourceIds.has(item.sourceId)) throw new Error(`工作區來源不存在：${item.sourceId}`);
+      });
+      sources.push(...newSources);
+      entries.push(...items);
+      normalizeSelection();
+      if (newSources.length > 0 || items.length > 0) emit();
     },
     clear() {
       entries.splice(0);
       sources.splice(0);
       selectedFileId = null;
+      outputPreparationError = null;
+      outputPreparationState = "ready";
       emit();
-    },
-    hasPath(path) {
-      return entries.some((entry) => entry.virtualPath === path);
     },
     remove(fileId) {
       const index = entries.findIndex((entry) => entry.id === fileId);
@@ -151,7 +153,7 @@ export function createWorkspaceModel(): WorkspaceModel {
     },
     select(fileId) {
       const entry = entries.find((candidate) => candidate.id === fileId);
-      if (!entry || entry.state === "ignored" || entry.sourceFormat !== inputFormat) {
+      if (!entry || entry.sourceFormat !== inputFormat) {
         return false;
       }
       selectedFileId = fileId;
@@ -162,7 +164,6 @@ export function createWorkspaceModel(): WorkspaceModel {
     selectedItem() {
       return entries.find((entry) => (
         entry.id === selectedFileId
-        && entry.state !== "ignored"
         && entry.sourceFormat === inputFormat
       )) ?? null;
     },
@@ -172,11 +173,17 @@ export function createWorkspaceModel(): WorkspaceModel {
       normalizeSelection();
       emit();
     },
-    setOutputFormat(format) {
-      if (outputFormat === format) {
-        return;
-      }
+    setOutputFormat(format, preparationState = "ready") {
+      if (outputFormat === format && outputPreparationState === preparationState) return;
       outputFormat = format;
+      outputPreparationState = preparationState;
+      outputPreparationError = null;
+      emit();
+    },
+    setOutputPreparation(state, error = null) {
+      if (outputPreparationState === state && outputPreparationError === error) return;
+      outputPreparationState = state;
+      outputPreparationError = error;
       emit();
     },
     markAllViewed() {
@@ -184,30 +191,6 @@ export function createWorkspaceModel(): WorkspaceModel {
       unread.forEach((entry) => { entry.unread = false; });
       if (unread.length > 0) emit();
       return unread.length;
-    },
-    setRowsIncluded(sourceRows, included) {
-      const file = entries.find((entry) => entry.id === selectedFileId)?.file;
-      if (!file) return 0;
-      const selectedSourceRows = new Set(sourceRows);
-      const rows = file.rows.filter(
-        (row) => selectedSourceRows.has(row.sourceRow) && row.included !== included,
-      );
-      if (rows.length === 0) return 0;
-      rows.forEach((row) => { row.included = included; });
-      refreshSummary(file);
-      emit();
-      return rows.length;
-    },
-    setRowIncluded(sourceRow, included) {
-      const file = entries.find((entry) => entry.id === selectedFileId)?.file;
-      const row = file?.rows.find((candidate) => candidate.sourceRow === sourceRow);
-      if (!file || !row) {
-        return false;
-      }
-      row.included = included;
-      refreshSummary(file);
-      emit();
-      return true;
     },
     snapshot: currentSnapshot,
     subscribe(listener) {
@@ -223,12 +206,17 @@ export function createWorkspaceModel(): WorkspaceModel {
       emit();
       return true;
     },
-    updateSource(sourceId, update) {
-      const source = sources.find((current) => current.id === sourceId);
-      if (!source) return false;
-      update(source);
-      emit();
-      return true;
+    updateFileRecords(records) {
+      const byId = new Map(records.map((record) => [record.id, record]));
+      let changed = 0;
+      entries.forEach((item) => {
+        const record = byId.get(item.id);
+        if (!record) return;
+        item.file = record;
+        changed += 1;
+      });
+      if (changed > 0) emit();
+      return changed;
     },
   };
 }

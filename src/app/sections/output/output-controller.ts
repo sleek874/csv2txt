@@ -1,5 +1,5 @@
 import type { AppStatus } from "../../shell/app-status";
-import type { OutputAdapter } from "../../adapters/output-adapter";
+import type { BatchClient } from "../../batch/batch-client";
 import type { WorkspaceModel } from "../../state/workspace-model";
 import { activeWorkspaceItems } from "../../state/workspace-selectors";
 import { OUTPUT_PRESENTATIONS } from "./output-presentations";
@@ -7,8 +7,8 @@ import { createOutputPlan } from "./output-plan";
 import type { OutputView } from "./output-view";
 
 interface OutputControllerOptions {
+  batchClient: BatchClient;
   model: WorkspaceModel;
-  outputAdapter: OutputAdapter;
   status: AppStatus;
   view: OutputView;
 }
@@ -23,8 +23,7 @@ export function createOutputController(options: OutputControllerOptions) {
       snapshot.outputFormat,
       activeWorkspaceItems(snapshot).map((item) => [
         item.id,
-        item.state,
-        item.file?.rows.filter((row) => row.included).map((row) => row.sourceRow),
+        item.file?.selectionRevision,
       ]),
     ]);
   }
@@ -45,7 +44,10 @@ export function createOutputController(options: OutputControllerOptions) {
     render();
     options.status.announce("正在建立下載。");
     try {
-      const output = await options.outputAdapter.create(plan.files, snapshot.outputFormat);
+      const output = await options.batchClient.createOutput(
+        plan.files.map((file) => file.id),
+        snapshot.outputFormat,
+      );
       if (requestKey() !== requestedState) {
         outputError = "工作區已在建立下載期間變更，請重新下載。";
         options.status.announce("工作區已變更，下載已取消。");
