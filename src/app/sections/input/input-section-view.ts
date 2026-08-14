@@ -28,11 +28,10 @@ export interface InputSectionView {
   fileInput(): HTMLInputElement;
   focusFilePicker(): void;
   clearPreview(): void;
-  render(snapshot: WorkspaceSnapshot): void;
+  render(snapshot: WorkspaceSnapshot, options?: { clearEnabled?: boolean; operationLocked?: boolean; processingVisible?: boolean }): void;
   renderPreviewPage(page: PreviewPage): void;
   renderPreviewError(fileId: string): void;
   renderOperationStatus(status: FileOperationStatus): void;
-  setFilePickerLocked(locked: boolean, visible: boolean): void;
 }
 
 function basename(path: string): string {
@@ -47,6 +46,7 @@ export function createInputSectionView(): InputSectionView {
   const otherTab = requireDescendant<HTMLButtonElement>(root, "#other-files-tab");
   const activePanel = requireDescendant<HTMLElement>(root, "#active-files-panel");
   const otherPanel = requireDescendant<HTMLElement>(root, "#other-files-panel");
+  const previewRegion = requireDescendant<HTMLElement>(root, "#preview-region");
   const activeFormat = requireDescendant<HTMLElement>(root, "#active-files-format");
   const activeCount = requireDescendant<HTMLElement>(root, "#active-files-count");
   const otherCount = requireDescendant<HTMLElement>(root, "#other-files-count");
@@ -58,13 +58,13 @@ export function createInputSectionView(): InputSectionView {
   const otherFiles = createOtherFilesView(root);
   const preview = createDataPreviewView(dataRoot);
   const selectionTransition = createStateTransition(selectionMessage);
-  const activePanelTransition = createStateTransition(activePanel);
-  const otherPanelTransition = createStateTransition(otherPanel);
+  const previewRegionTransition = createStateTransition(previewRegion);
   let currentPreviewFileId: string | null = null;
   let previewErrorFileId: string | null = null;
   let currentPreviewPath = "";
   let currentSelectionRevision = -1;
   let currentOutputFormat = "big5-txt";
+  let workspaceOperationLocked = false;
   let requestPreview: (fileId: string, filter: PreviewFilter, page: number) => void = () => undefined;
 
   function hideSelectionMessage(): void {
@@ -94,8 +94,10 @@ export function createInputSectionView(): InputSectionView {
     otherTab.tabIndex = active ? -1 : 0;
     activePanel.hidden = !active;
     otherPanel.hidden = active;
-    activePanelTransition.update(active ? "visible" : "hidden");
-    otherPanelTransition.update(active ? "hidden" : "visible");
+    previewRegion.dataset.visible = String(active);
+    previewRegion.setAttribute("aria-hidden", String(!active));
+    previewRegion.inert = !active;
+    previewRegionTransition.update(active ? "visible" : "hidden");
   }
 
   function moveTab(event: KeyboardEvent): void {
@@ -156,23 +158,30 @@ export function createInputSectionView(): InputSectionView {
     confirmClear: picker.confirmClear,
     fileInput: picker.fileInput,
     focusFilePicker: picker.focusChoose,
-    render(snapshot) {
+    render(snapshot, options = {}) {
       const files = snapshot.files;
+      const operationLocked = options.operationLocked ?? false;
+      const operationLockChanged = workspaceOperationLocked !== operationLocked;
+      workspaceOperationLocked = operationLocked;
       const outputFormatChanged = currentOutputFormat !== snapshot.outputFormat;
       currentOutputFormat = snapshot.outputFormat;
       activeFormat.textContent = FILE_FORMAT_LABELS[snapshot.inputFormat];
-      picker.setHasFiles(snapshot.sources.length > 0);
+      picker.setState({
+        addLocked: operationLocked,
+        clearEnabled: options.clearEnabled ?? snapshot.sources.length > 0,
+        processingVisible: options.processingVisible ?? false,
+      });
       operationStatus.setUnreadCount(files.filter((file) => file.unread && file.sourceFormat === snapshot.inputFormat).length);
       const activeSnapshot = activeWorkspaceSnapshot(snapshot);
       const activeFiles = activeWorkspaceItems(snapshot);
       const otherFilesItems = otherWorkspaceItems(snapshot);
       activeCount.textContent = String(activeFiles.length);
       otherCount.textContent = String(otherFilesItems.length);
-      otherFiles.render(snapshot);
+      otherFiles.render(snapshot, operationLocked);
       const outputIssues = activeFiles.flatMap((item) => (
         item.file?.outputFormat === snapshot.outputFormat ? item.file.blockingOutputIssues : []
       ));
-      tree.render(activeSnapshot, outputIssues);
+      tree.render(activeSnapshot, outputIssues, operationLocked);
 
       if (activeFiles.length === 0) {
         preview.clear();
@@ -205,6 +214,8 @@ export function createInputSectionView(): InputSectionView {
         );
         return;
       }
+      if (operationLockChanged && operationLocked && preview.hasContent()) preview.freeze();
+      if (operationLockChanged && !operationLocked && preview.hasContent()) preview.refresh();
       if (currentPreviewFileId !== active.id) {
         previewErrorFileId = null;
         currentPreviewPath = active.virtualPath;
@@ -254,6 +265,5 @@ export function createInputSectionView(): InputSectionView {
       );
     },
     renderOperationStatus: operationStatus.render,
-    setFilePickerLocked: picker.setLocked,
   };
 }

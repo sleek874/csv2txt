@@ -34,6 +34,13 @@ export function safeArchivePath(path: string): string {
   return meaningfulSegments.join("/");
 }
 
+export function compareCanonicalVirtualPaths(left: string, right: string): number {
+  const normalizedLeft = left.normalize("NFC");
+  const normalizedRight = right.normalize("NFC");
+  if (normalizedLeft !== normalizedRight) return normalizedLeft < normalizedRight ? -1 : 1;
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 export function archiveRootName(fileName: string): string {
   return safeArchivePath(fileName).replace(/\.zip$/iu, "") || "ZIP";
 }

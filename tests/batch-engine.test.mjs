@@ -21,6 +21,7 @@ test("worker engine retains rows and returns only summaries plus 100-row pages",
   const engine = createBatchEngine((value) => progress.push(value));
   const processed = await engine.handle({
     type: "process-source",
+    workspaceEpoch: 0,
     sourceId: "input-1",
     sourceName: "synthetic.csv",
     inputType: "csv",
@@ -39,6 +40,7 @@ test("worker engine retains rows and returns only summaries plus 100-row pages",
 
   const first = await engine.handle({
     type: "preview-page",
+    workspaceEpoch: 0,
     fileId: descriptor.id,
     filter: "all",
     page: 0,
@@ -46,6 +48,7 @@ test("worker engine retains rows and returns only summaries plus 100-row pages",
   });
   const last = await engine.handle({
     type: "preview-page",
+    workspaceEpoch: 0,
     fileId: descriptor.id,
     filter: "all",
     page: 2,
@@ -57,6 +60,7 @@ test("worker engine retains rows and returns only summaries plus 100-row pages",
 
   const changed = await engine.handle({
     type: "set-rows-included",
+    workspaceEpoch: 0,
     fileId: descriptor.id,
     sourceRows: first.records.slice(0, 3).map((record) => record.row.sourceRow),
     included: false,
@@ -66,6 +70,7 @@ test("worker engine retains rows and returns only summaries plus 100-row pages",
 
   const output = await engine.handle({
     type: "create-output",
+    workspaceEpoch: 0,
     fileIds: [descriptor.id],
     outputFormat: "csv",
     createdAt: "2026-08-12T00:00:00.000Z",
@@ -78,6 +83,7 @@ test("worker engine cancels a source without clearing previously stored files", 
   const engine = createBatchEngine(() => undefined);
   const kept = await engine.handle({
     type: "process-source",
+    workspaceEpoch: 0,
     sourceId: "kept",
     sourceName: "kept.csv",
     inputType: "csv",
@@ -88,6 +94,7 @@ test("worker engine cancels a source without clearing previously stored files", 
   });
   const discarded = await engine.handle({
     type: "process-source",
+    workspaceEpoch: 0,
     sourceId: "discarded",
     sourceName: "discarded.csv",
     inputType: "csv",
@@ -96,18 +103,20 @@ test("worker engine cancels a source without clearing previously stored files", 
     existingPaths: ["kept.csv"],
     outputFormat: "csv",
   });
-  await engine.handle({ type: "discard-files", fileIds: [discarded.entries[0].id] });
-  await engine.handle({ type: "restore-files", fileIds: [discarded.entries[0].id] });
+  await engine.handle({ type: "discard-files", fileIds: [discarded.entries[0].id], workspaceEpoch: 0 });
+  await engine.handle({ type: "restore-files", fileIds: [discarded.entries[0].id], workspaceEpoch: 0 });
   await assert.rejects(engine.handle({
     type: "preview-page",
+    workspaceEpoch: 0,
     fileId: discarded.entries[0].id,
     filter: "all",
     page: 0,
     outputFormat: "csv",
   }), /找不到要處理的檔案/u);
-  await engine.handle({ type: "cancel-source", sourceId: "cancelled" });
+  await engine.handle({ type: "cancel-source", sourceId: "cancelled", workspaceEpoch: 0 });
   await assert.rejects(engine.handle({
     type: "process-source",
+    workspaceEpoch: 0,
     sourceId: "cancelled",
     sourceName: "cancelled.csv",
     inputType: "csv",
@@ -118,6 +127,7 @@ test("worker engine cancels a source without clearing previously stored files", 
   }), /本次新增已取消/u);
   const preview = await engine.handle({
     type: "preview-page",
+    workspaceEpoch: 0,
     fileId: kept.entries[0].id,
     filter: "all",
     page: 0,
@@ -130,6 +140,7 @@ test("clearing primary files preserves the independent advanced reference", asyn
   const engine = createBatchEngine(() => undefined);
   const processed = await engine.handle({
     type: "process-source",
+    workspaceEpoch: 0,
     sourceId: "primary",
     sourceName: "primary.csv",
     inputType: "csv",
@@ -143,9 +154,10 @@ test("clearing primary files preserves the independent advanced reference", asyn
     bytes: serializeHeaderedSpreadsheet(["ID", "Value"], [["A123456789", "synthetic"]]),
   });
 
-  await engine.handle({ type: "clear-files" });
+  await engine.handle({ type: "reset-workspace", workspaceEpoch: 1 });
   await assert.rejects(engine.handle({
     type: "preview-page",
+    workspaceEpoch: 1,
     fileId: processed.entries[0].id,
     filter: "all",
     page: 0,
@@ -153,11 +165,28 @@ test("clearing primary files preserves the independent advanced reference", asyn
   }), /找不到要處理的檔案/u);
   const result = await engine.handle({
     type: "advanced-result",
+    workspaceEpoch: 1,
     fileIds: [],
     keyColumnIndex: 0,
     selectedColumnIndices: [1],
   });
   assert.equal(result.selectedRowCount, 0);
+});
+
+test("reference inspection returns bounded plain-language issue summaries", async () => {
+  const engine = createBatchEngine(() => undefined);
+  const summary = await engine.handle({
+    type: "inspect-reference",
+    bytes: serializeHeaderedSpreadsheet(
+      ["ID", "ID", ""],
+      [["A123456789", "duplicate", "blank"]],
+    ),
+  });
+
+  assert.deepEqual(summary.issues, [
+    "有 1 個欄位沒有標題，已用欄位序號補上。",
+    "有 1 個重複標題，已加上序號區分。",
+  ]);
 });
 
 test("compact worker output preserves the existing serializer bytes", async () => {
@@ -175,6 +204,7 @@ test("compact worker output preserves the existing serializer bytes", async () =
   const engine = createBatchEngine(() => undefined);
   const processed = await engine.handle({
     type: "process-source",
+    workspaceEpoch: 0,
     sourceId: "source",
     sourceName: "synthetic.csv",
     inputType: "csv",
@@ -189,6 +219,7 @@ test("compact worker output preserves the existing serializer bytes", async () =
     const expected = await legacyOutput.create([legacyFile], outputFormat, createdAt);
     const actual = await engine.handle({
       type: "create-output",
+      workspaceEpoch: 0,
       fileIds: [fileId],
       outputFormat,
       createdAt: createdAt.toISOString(),
@@ -197,4 +228,47 @@ test("compact worker output preserves the existing serializer bytes", async () =
     assert.equal(actual.mimeType, expected.mimeType);
     assert.deepEqual(actual.bytes, expected.bytes);
   }
+});
+
+test("multi-file output is canonical regardless of request order", async () => {
+  const engine = createBatchEngine(() => undefined);
+  const zeta = await engine.handle({
+    type: "process-source",
+    workspaceEpoch: 0,
+    sourceId: "zeta",
+    sourceName: "zeta.csv",
+    inputType: "csv",
+    bytes: syntheticCsv(1),
+    today: "20260812",
+    existingPaths: [],
+    outputFormat: "csv",
+  });
+  const alpha = await engine.handle({
+    type: "process-source",
+    workspaceEpoch: 0,
+    sourceId: "alpha",
+    sourceName: "alpha.csv",
+    inputType: "csv",
+    bytes: syntheticCsv(1),
+    today: "20260812",
+    existingPaths: ["zeta.csv"],
+    outputFormat: "csv",
+  });
+  const common = {
+    type: "create-output",
+    workspaceEpoch: 0,
+    outputFormat: "csv",
+    createdAt: "2026-08-12T00:00:00.000Z",
+  };
+  const uploadOrder = await engine.handle({
+    ...common,
+    fileIds: [zeta.entries[0].id, alpha.entries[0].id],
+  });
+  const reverseOrder = await engine.handle({
+    ...common,
+    fileIds: [alpha.entries[0].id, zeta.entries[0].id],
+  });
+
+  assert.equal(uploadOrder.filename, reverseOrder.filename);
+  assert.deepEqual(uploadOrder.bytes, reverseOrder.bytes);
 });

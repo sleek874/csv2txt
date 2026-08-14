@@ -9,24 +9,23 @@ export interface FilePickerView {
   confirmClear(): boolean;
   fileInput(): HTMLInputElement;
   focusChoose(): void;
-  setHasFiles(hasFiles: boolean): void;
-  setLocked(locked: boolean, visible: boolean): void;
+  setState(options: { addLocked: boolean; clearEnabled: boolean; processingVisible: boolean }): void;
 }
 
 export function createFilePickerView(root: HTMLElement): FilePickerView {
   const sourceInput = requireDescendant<HTMLInputElement>(root, "#source-file");
   const selectButton = requireDescendant<HTMLButtonElement>(root, "#select-source-button");
   const clearButton = requireDescendant<HTMLButtonElement>(root, "#clear-workspace-button");
-  let locked = false;
+  let addLocked = false;
 
   return {
     bind(options) {
-      selectButton.addEventListener("click", () => { if (!locked) options.onChoose(); });
-      clearButton.addEventListener("click", () => { if (!locked) options.onClear(); });
+      selectButton.addEventListener("click", () => { if (!addLocked) options.onChoose(); });
+      clearButton.addEventListener("click", () => { if (!clearButton.disabled) options.onClear(); });
       sourceInput.addEventListener("change", () => {
         const files = Array.from(sourceInput.files ?? []);
         sourceInput.value = "";
-        if (!locked && files.length > 0) options.onFiles(files);
+        if (!addLocked && files.length > 0) options.onFiles(files);
       });
     },
     confirmClear: () => window.confirm(
@@ -34,14 +33,14 @@ export function createFilePickerView(root: HTMLElement): FilePickerView {
     ),
     fileInput: () => sourceInput,
     focusChoose: () => selectButton.focus({ preventScroll: true }),
-    setHasFiles(hasFiles) { clearButton.disabled = !hasFiles; },
-    setLocked(nextLocked, visible) {
-      locked = nextLocked;
-      sourceInput.disabled = nextLocked;
-      [selectButton, clearButton].forEach((button) => {
-        button.setAttribute("aria-disabled", String(nextLocked));
-        button.dataset.processingLocked = String(nextLocked && visible);
-      });
+    setState(options) {
+      addLocked = options.addLocked;
+      sourceInput.disabled = options.addLocked;
+      selectButton.setAttribute("aria-disabled", String(options.addLocked));
+      selectButton.dataset.processingLocked = String(options.addLocked && options.processingVisible);
+      clearButton.disabled = !options.clearEnabled;
+      clearButton.setAttribute("aria-disabled", String(!options.clearEnabled));
+      clearButton.dataset.processingLocked = "false";
     },
   };
 }

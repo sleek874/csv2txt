@@ -17,7 +17,8 @@ export type RowFilter = PreviewFilter;
 
 const PREVIEW_ROW_SLOTS = 14;
 const PREVIEW_COLUMN_COUNT = 18;
-const FILTERABLE_ROW_STATES: readonly RowFilter[] = [
+const ROW_FILTERS: readonly RowFilter[] = [
+  "all",
   "rejected",
   "error",
   "warning",
@@ -139,6 +140,9 @@ function privateUseDetails(row: InternalRow): string[] {
 
 export function createDataPreviewView(root: HTMLElement): DataPreviewView {
   const rowFilter = requireDescendant<HTMLSelectElement>(root, "#row-filter");
+  const filterLabels = new Map(
+    Array.from(rowFilter.options, (option) => [option.value, option.textContent ?? ""]),
+  );
   const visibleRowsCheckbox = requireDescendant<HTMLInputElement>(root, "#visible-rows-checkbox");
   const tableBody = requireDescendant<HTMLTableSectionElement>(root, "#data-table-body");
   const pageStatus = requireDescendant<HTMLElement>(root, "#data-page-status");
@@ -163,13 +167,19 @@ export function createDataPreviewView(root: HTMLElement): DataPreviewView {
   }
 
   function resetFilterOptions(): void {
-    Array.from(rowFilter.options).forEach((option) => { option.disabled = false; });
+    Array.from(rowFilter.options).forEach((option) => {
+      option.disabled = false;
+      option.textContent = filterLabels.get(option.value) ?? option.textContent;
+    });
   }
 
   function syncFilterOptions(page: PreviewPage): void {
-    FILTERABLE_ROW_STATES.forEach((filter) => {
+    ROW_FILTERS.forEach((filter) => {
       const option = Array.from(rowFilter.options).find((candidate) => candidate.value === filter);
-      if (option) option.disabled = page.filterCounts[filter] === 0;
+      if (!option) return;
+      const count = page.filterCounts[filter];
+      option.disabled = filter !== "all" && count === 0;
+      option.textContent = `${filterLabels.get(filter) ?? option.textContent}（${count}）`;
     });
     if (rowFilter.selectedOptions[0]?.disabled) rowFilter.value = "all";
   }
@@ -217,7 +227,7 @@ export function createDataPreviewView(root: HTMLElement): DataPreviewView {
       ariaLabel: string,
     ): void {
       const button = document.createElement("button");
-      button.className = "preview-issue-toggle row-status-text";
+      button.className = "issue-disclosure-toggle preview-issue-toggle row-status-text";
       button.type = "button";
       button.textContent = label;
       button.dataset.issueId = issueId;
@@ -240,7 +250,7 @@ export function createDataPreviewView(root: HTMLElement): DataPreviewView {
       const issueCell = issueRow.insertCell();
       issueCell.colSpan = PREVIEW_COLUMN_COUNT;
       const block = document.createElement("div");
-      block.className = "preview-issue-block";
+      block.className = "issue-detail-block preview-issue-block";
       const heading = document.createElement("strong");
       heading.textContent = "這列需要注意";
       const list = document.createElement("ul");
@@ -253,6 +263,7 @@ export function createDataPreviewView(root: HTMLElement): DataPreviewView {
       if (technical.length > 0) {
         const disclosure = document.createElement("details");
         const summary = document.createElement("summary");
+        summary.className = "issue-disclosure-toggle technical-issue-toggle";
         summary.textContent = "查看技術資訊";
         const code = document.createElement("code");
         code.textContent = technical.join("\n");
@@ -454,6 +465,7 @@ export function createDataPreviewView(root: HTMLElement): DataPreviewView {
     },
     clear() {
       setPending(false);
+      transition.update("hidden");
       currentPageData = null;
       currentOutputIssues = [];
       currentPage = 0;

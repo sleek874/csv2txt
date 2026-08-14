@@ -1,6 +1,6 @@
 .subsection-heading {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
   margin: 1.35rem 0 0.65rem;
@@ -14,26 +14,12 @@
 }
 
 .filter-control {
-  display: inline-flex;
   flex: none;
-  align-items: center;
-  gap: 0.5rem;
-  color: var(--color-text-muted);
-  font-size: 0.88rem;
-  font-weight: 700;
-  white-space: nowrap;
+  width: 12rem;
 }
 
 .filter-control select {
-  min-width: 7rem;
-  min-height: var(--control-height-compact);
-  padding-block: 0.3rem;
-}
-
-.page-actions button {
-  min-height: var(--control-height-compact);
-  padding: 0.35rem 0.75rem;
-  white-space: nowrap;
+  min-width: 12rem;
 }
 
 .workspace-layout {
@@ -48,22 +34,9 @@
   min-width: 0;
 }
 
-.workspace-tabs {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.5rem;
-}
-
-.workspace-tabs button {
-  border-color: var(--color-border);
-  color: var(--color-text-muted);
-  background: var(--color-surface-muted);
-}
-
-.workspace-tabs button[aria-selected="true"] {
-  border-color: var(--color-accent);
-  color: var(--color-accent-text);
-  background: var(--color-accent-bg);
+.preview-region[data-visible="false"] {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .other-file-item {
@@ -109,7 +82,9 @@
 
 .inventory-table {
   --inventory-file-content-inset: 1.9rem;
+  --inventory-file-column-width: 24rem;
   --inventory-number-column-width: 5.75rem;
+  --inventory-other-detail-column-width: 23rem;
 
   width: max-content;
   height: 100%;
@@ -132,9 +107,9 @@
 }
 
 .inventory-table :is(th, td):first-child {
-  width: 24rem;
-  min-width: 18rem;
-  max-width: 28rem;
+  width: var(--inventory-file-column-width);
+  min-width: var(--inventory-file-column-width);
+  max-width: var(--inventory-file-column-width);
   padding: 0;
   text-align: left;
 }
@@ -153,17 +128,11 @@
   text-align: center;
 }
 
-.inventory-table.other-files-table :is(th, td):nth-child(2) {
-  width: 10rem;
-  min-width: 10rem;
-  max-width: 10rem;
-  text-align: center;
-}
-
+.inventory-table.other-files-table :is(th, td):nth-child(2),
 .inventory-table.other-files-table :is(th, td):nth-child(3) {
-  width: 7rem;
-  min-width: 7rem;
-  max-width: 7rem;
+  width: var(--inventory-other-detail-column-width);
+  min-width: var(--inventory-other-detail-column-width);
+  max-width: var(--inventory-other-detail-column-width);
   text-align: center;
 }
 
@@ -507,15 +476,6 @@
   text-align: left;
 }
 
-.preview-issue-toggle::after {
-  flex: none;
-  content: "+";
-}
-
-.preview-issue-toggle[aria-expanded="true"]::after {
-  content: "−";
-}
-
 .preview-issue-toggle:hover,
 .preview-issue-toggle[aria-expanded="true"] {
   background: var(--color-surface-hover);
@@ -539,7 +499,7 @@
   white-space: normal;
 }
 
-.preview-issue-block {
+.issue-detail-block {
   display: grid;
   gap: 0.35rem;
   padding: 0.7rem 0.8rem;
@@ -550,7 +510,13 @@
   overflow-wrap: anywhere;
 }
 
-.preview-issue-block ul {
+.issue-detail-block[data-tone="error"] {
+  border-left-color: var(--color-error);
+  color: var(--color-error-text);
+  background: var(--color-error-bg);
+}
+
+.issue-detail-block ul {
   margin: 0;
   padding-left: 1.25rem;
 }
@@ -720,57 +686,47 @@
 }
 
 .download-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
   margin-top: 1rem;
-  padding: 1rem;
-  background: var(--color-surface-soft);
 }
 
-.download-bar strong,
-.download-bar span {
-  display: block;
+.action-issue-disclosure {
+  margin-top: 0.4rem;
 }
 
-.download-status-title-line,
-.reference-status-title-line {
-  display: flex;
-  min-width: 0;
+.action-issue-toggle {
+  display: inline-flex;
+  min-height: 2rem;
   align-items: center;
-  gap: 0.45rem;
+  padding-block: 0.2rem;
+  padding-left: 0;
+  border: 0;
+  color: var(--color-accent-text);
+  background: transparent;
+  font-size: 0.88rem;
+  font-weight: 800;
 }
 
-.download-status-title-line > strong,
-.reference-status-title-line > .file-status-name {
-  min-width: 0;
+.action-issue-toggle:hover,
+.action-issue-disclosure[open] > .action-issue-toggle {
+  text-decoration: underline;
 }
 
-.download-status-title-line > .busy-spinner,
-.reference-status-title-line > .busy-spinner {
-  margin-top: 0;
+.action-issue-disclosure .issue-detail-block {
+  margin-top: 0.35rem;
 }
 
-.download-status-title-line > .busy-spinner[hidden],
-.reference-status-title-line > .busy-spinner[hidden] {
-  display: none;
-}
-
-.output-issue-list {
+.action-issue-list {
   max-height: 12rem;
-  margin: 0.65rem 0 0;
+  margin: 0;
   padding-left: 1.25rem;
   overflow-y: auto;
-  color: var(--color-error-text);
   font-size: 0.82rem;
   line-height: 1.55;
 }
 
 @container panel (max-width: 36rem) {
-  .inventory-table :is(th, td):first-child {
-    width: 17rem;
-    min-width: 15rem;
+  .inventory-table {
+    --inventory-file-column-width: 17rem;
   }
 }
 
@@ -781,13 +737,6 @@
   }
 
   .filter-control {
-    display: grid;
-    width: 100%;
-    grid-column: 1 / -1;
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  .filter-control select {
     width: 100%;
   }
 
@@ -798,12 +747,6 @@
 
 [hidden] {
   display: none;
-}
-
-.download-bar span {
-  margin-top: 0.2rem;
-  color: var(--color-text-muted);
-  font-size: 0.82rem;
 }
 
 .advanced-workspace {
@@ -820,38 +763,16 @@
   --responsive-column-min: 15rem;
 }
 
-.advanced-field {
-  display: grid;
-  align-content: start;
-  gap: 0.4rem;
-  color: var(--color-text-muted);
-  font-size: 0.88rem;
-  font-weight: 800;
-}
-
-.advanced-field select {
-  min-height: var(--control-height);
-}
-
-.advanced-field[hidden] {
-  display: none;
-}
-
 .advanced-columns {
   min-width: 0;
   margin: 1rem 0 0;
-  padding: 1rem;
-  border: var(--border-ui);
-  border-radius: var(--radius-ui);
+  padding: 0;
+  border: 0;
 }
 
 .advanced-columns legend {
-  padding: 0 0.35rem;
-  font-weight: 800;
-}
-
-.advanced-columns .help-text {
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.5rem;
+  padding: 0;
 }
 
 .advanced-column-options {
@@ -885,22 +806,4 @@
 .advanced-column-option span {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-
-.advanced-summary {
-  margin: 0.85rem 0 0;
-  color: var(--color-text-muted);
-  font-size: 0.88rem;
-  line-height: 1.55;
-}
-
-@container panel (max-width: 36rem) {
-  .advanced-workspace .download-bar {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .advanced-workspace .download-bar button {
-    width: 100%;
-  }
 }

@@ -63,6 +63,9 @@
   --control-height-compact: 2.25rem;
   --control-height-comfortable: 3rem;
   --control-padding: 0.55rem 1rem;
+  --action-slot-width: 12rem;
+  --action-rail-width: 24.5rem;
+  --action-gap: 0.5rem;
   --indicator-size: 1rem;
   --layout-gap: 1rem;
   --layout-column-min: 12rem;
@@ -102,21 +105,19 @@
   .header-meta,
   .step-heading,
   .format-controls,
-  .file-picker,
-  .file-picker-actions,
-  .source-file-picker,
+  .action-layout,
+  .action-actions,
   .file-status-line,
   .subsection-heading,
-  .page-navigation,
-  .download-bar
+  .page-navigation
 ) > * {
   min-width: 0;
 }
 
 :where(
   .help-text,
-  .notice,
-  .download-bar
+  .action-card,
+  .notice
 ) {
   overflow-wrap: anywhere;
 }
@@ -124,11 +125,10 @@
 :where(
   dialog,
   .panel,
-  .file-picker,
+  .action-card,
   .schema-summary,
   .table-scroll,
   .notice,
-  .download-bar,
   .embed-blocked,
   .noscript-warning
 ) {
@@ -138,6 +138,7 @@
 
 :where(
   button,
+  .button-control,
   select,
   input[type="text"],
   input[type="number"]
@@ -238,13 +239,14 @@ select {
   font: inherit;
 }
 
-button {
+:is(button, .button-control) {
   overflow-wrap: anywhere;
   text-align: center;
   white-space: normal;
 }
 
 button,
+.button-control,
 input[type="checkbox"],
 input[type="radio"],
 select {
@@ -256,6 +258,7 @@ input[type="checkbox"] {
 }
 
 button:focus-visible,
+.button-control:focus-visible,
 input:focus-visible,
 select:focus-visible,
 .table-scroll:focus-visible,

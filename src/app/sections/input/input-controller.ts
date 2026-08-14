@@ -30,13 +30,21 @@ interface FailureCategory {
 interface UploadBatch {
   activeSourceId: string | null;
   cancelled: boolean;
+  reset: boolean;
   failures: Map<string, { category: FailureCategory; files: Set<string> }>;
   items: WorkspaceItem[];
   latestProgress: ProcessingProgress;
-  processingVisible: boolean;
   revealTimer: ReturnType<typeof setTimeout> | null;
   sources: WorkspaceSource[];
 }
+
+type WorkspaceOperation =
+  | { kind: "idle"; status: FileOperationStatus }
+  | { kind: "adding"; batch: UploadBatch; phase: "quiet" | "visible" }
+  | { kind: "cancelling"; batch: UploadBatch }
+  | { kind: "removing" }
+  | { kind: "restoring" }
+  | { kind: "resetting" };
 
 function extensionLabel(path: string): string {
   const fileName = path.split("/").at(-1) ?? path;
@@ -68,20 +76,48 @@ function groupedFailures(batch: UploadBatch): UploadFailureGroup[] {
 
 export function createInputController(options: InputControllerOptions) {
   let nextSourceId = 1;
-  let activeBatch: UploadBatch | null = null;
-  let selectionPending = false;
-  let selectionQueue = Promise.resolve();
+  let operation: WorkspaceOperation = { kind: "idle", status: { kind: "idle" } };
+  let pendingTask = Promise.resolve();
   let validationDate: string | null = null;
   let previewRequest = 0;
 
-  function render(): void {
-    const snapshot = options.model.snapshot();
-    options.view.render(snapshot);
-    options.unloadGuard.setPendingFile(snapshot.sources.length > 0 || activeBatch !== null || selectionPending, "primary-workspace");
+  function currentBatch(): UploadBatch | null {
+    return operation.kind === "adding" || operation.kind === "cancelling" ? operation.batch : null;
   }
 
-  function setOperationStatus(status: FileOperationStatus): void {
-    options.view.renderOperationStatus(status);
+  function visibleOperationStatus(): FileOperationStatus | null {
+    switch (operation.kind) {
+      case "idle": return operation.status;
+      case "adding": return operation.phase === "visible"
+        ? { kind: "processing", progress: operation.batch.latestProgress }
+        : null;
+      case "cancelling": return { kind: "cancelling" };
+      case "removing": return { kind: "removing" };
+      case "restoring": return { kind: "restoring" };
+      case "resetting": return { kind: "resetting" };
+    }
+  }
+
+  function render(): void {
+    const snapshot = options.model.snapshot();
+    options.view.render(snapshot, {
+      clearEnabled: operation.kind !== "resetting",
+      operationLocked: operation.kind !== "idle",
+      processingVisible: operation.kind === "adding" && operation.phase === "visible",
+    });
+    const status = visibleOperationStatus();
+    if (status) options.view.renderOperationStatus(status);
+    options.unloadGuard.setPendingFile(snapshot.sources.length > 0 || operation.kind !== "idle", "primary-workspace");
+  }
+
+  function renderOperationStatus(): void {
+    const status = visibleOperationStatus();
+    if (status) options.view.renderOperationStatus(status);
+  }
+
+  function settle(status: FileOperationStatus): void {
+    operation = { kind: "idle", status };
+    render();
   }
 
   async function requestPreview(fileId: string, filter: PreviewFilter, page: number): Promise<void> {
@@ -100,10 +136,9 @@ export function createInputController(options: InputControllerOptions) {
   function revealProcessing(batch: UploadBatch): void {
     batch.revealTimer = setTimeout(() => {
       batch.revealTimer = null;
-      if (activeBatch !== batch || batch.cancelled) return;
-      batch.processingVisible = true;
-      options.view.setFilePickerLocked(true, true);
-      setOperationStatus({ kind: "processing", progress: batch.latestProgress });
+      if (operation.kind !== "adding" || operation.batch !== batch || batch.cancelled) return;
+      operation = { kind: "adding", batch, phase: "visible" };
+      render();
     }, PROCESSING_FEEDBACK_DELAY_MS);
   }
 
@@ -152,7 +187,9 @@ export function createInputController(options: InputControllerOptions) {
       total: inputType === "zip" ? 0 : 1,
       virtualPath: sourceFile.name,
     };
-    if (batch.processingVisible) setOperationStatus({ kind: "processing", progress: batch.latestProgress });
+    if (operation.kind === "adding" && operation.batch === batch && operation.phase === "visible") {
+      renderOperationStatus();
+    }
 
     try {
       void options.offlineCache.prioritizePreviewFont().catch(() => undefined);
@@ -166,7 +203,7 @@ export function createInputController(options: InputControllerOptions) {
         outputFormat: options.model.snapshot().outputFormat,
       });
       if (batch.cancelled) {
-        await options.batchClient.discardFiles(result.entries.map((entry) => entry.id));
+        if (!batch.reset) await options.batchClient.discardFiles(result.entries.map((entry) => entry.id));
         return;
       }
       if (result.entries.length > 0) {
@@ -207,18 +244,19 @@ export function createInputController(options: InputControllerOptions) {
 
   async function discardBatch(batch: UploadBatch): Promise<void> {
     const fileIds = batch.items.map((item) => item.id);
-    if (fileIds.length > 0) await options.batchClient.discardFiles(fileIds);
-    setOperationStatus({ kind: "cancelled" });
+    if (!batch.reset && fileIds.length > 0) await options.batchClient.discardFiles(fileIds);
+    if (batch.reset) return;
+    settle({ kind: "cancelled" });
     options.status.announce("已取消本次新增；這次選取的檔案都沒有加入，先前的檔案仍保留。");
   }
 
-  async function commitBatch(batch: UploadBatch): Promise<void> {
+  async function commitBatch(batch: UploadBatch): Promise<FileOperationStatus> {
     let outputFormat = options.model.snapshot().outputFormat;
     while (batch.items.some((item) => item.file?.outputFormat !== outputFormat)) {
       const refreshed = await options.batchClient.refreshOutput(batch.items.map((item) => item.id), outputFormat);
       const byId = new Map(refreshed.map((file) => [file.id, file]));
       batch.items.forEach((item) => { item.file = byId.get(item.id) ?? item.file; });
-      if (batch.cancelled) return;
+      if (batch.cancelled) return { kind: "cancelled" };
       outputFormat = options.model.snapshot().outputFormat;
     }
     options.model.addBatch(batch.sources, batch.items);
@@ -226,33 +264,20 @@ export function createInputController(options: InputControllerOptions) {
     const activeCount = batch.items.filter((item) => item.sourceFormat === inputFormat).length;
     const failures = groupedFailures(batch);
     const failureCount = failures.reduce((total, group) => total + group.files.length, 0);
-    setOperationStatus({
+    const status: FileOperationStatus = {
       kind: "result",
       activeCount,
       activeFormat: inputFormat,
       failures,
       otherCount: batch.items.length - activeCount,
-    });
+    };
     options.status.announce(failureCount > 0
       ? `已加入 ${batch.items.length} 個檔案，另有 ${failureCount} 個項目未加入。`
       : `已加入 ${batch.items.length} 個檔案。`);
+    return status;
   }
 
-  async function addFiles(files: readonly File[]): Promise<void> {
-    if (activeBatch) return;
-    validationDate ??= taipeiDateStamp();
-    const batch: UploadBatch = {
-      activeSourceId: null,
-      cancelled: false,
-      failures: new Map(),
-      items: [],
-      latestProgress: { current: 0, phase: "processing", sourceId: "", total: files.length, virtualPath: files[0]?.name ?? "" },
-      processingVisible: false,
-      revealTimer: null,
-      sources: [],
-    };
-    activeBatch = batch;
-    options.view.setFilePickerLocked(true, false);
+  async function addFiles(batch: UploadBatch, files: readonly File[]): Promise<void> {
     options.status.announce(`正在加入 ${files.length} 個檔案。`);
     revealProcessing(batch);
     render();
@@ -263,144 +288,259 @@ export function createInputController(options: InputControllerOptions) {
       }
       if (batch.cancelled) await discardBatch(batch);
       else try {
-        await commitBatch(batch);
+        const status = await commitBatch(batch);
         if (batch.cancelled) await discardBatch(batch);
+        else if (operation.kind === "adding" && operation.batch === batch) settle(status);
       } catch {
-        await options.batchClient.discardFiles(batch.items.map((item) => item.id));
+        if (!batch.reset) await options.batchClient.discardFiles(batch.items.map((item) => item.id));
         batch.items = [];
         batch.sources = [];
         addFailure(batch, { label: "無法完成本次新增", tone: "error" }, "本次選取的檔案");
-        await commitBatch(batch);
+        if (!batch.reset) {
+          const status = await commitBatch(batch);
+          if (operation.kind === "adding" && operation.batch === batch) settle(status);
+        }
       }
     } finally {
       if (batch.revealTimer !== null) clearTimeout(batch.revealTimer);
-      if (activeBatch === batch) activeBatch = null;
-      options.view.setFilePickerLocked(false, false);
-      render();
-      if (batch.cancelled) options.view.focusFilePicker();
+      if (operation.kind === "adding" && operation.batch === batch) settle({ kind: "idle" });
+      if (batch.cancelled && !batch.reset) options.view.focusFilePicker();
     }
   }
 
+  function startAdd(files: readonly File[]): void {
+    if (operation.kind !== "idle") return;
+    validationDate ??= taipeiDateStamp();
+    const batch: UploadBatch = {
+      activeSourceId: null,
+      cancelled: false,
+      reset: false,
+      failures: new Map(),
+      items: [],
+      latestProgress: { current: 0, phase: "processing", sourceId: "", total: files.length, virtualPath: files[0]?.name ?? "" },
+      revealTimer: null,
+      sources: [],
+    };
+    operation = { kind: "adding", batch, phase: "quiet" };
+    pendingTask = addFiles(batch, files).catch(() => {
+      if (!batch.reset && currentBatch() === batch) {
+        settle({ kind: "error", detail: "無法加入檔案，請再試一次。" });
+        options.status.announce("無法加入檔案。");
+      }
+    });
+  }
+
   function cancelFileOperation(): void {
-    const batch = activeBatch;
-    if (!batch || batch.cancelled) return;
+    const batch = currentBatch();
+    if (!batch || batch.cancelled || operation.kind !== "adding") return;
     batch.cancelled = true;
     if (batch.revealTimer !== null) clearTimeout(batch.revealTimer);
     batch.revealTimer = null;
-    options.view.setFilePickerLocked(true, true);
-    setOperationStatus({ kind: "cancelling" });
-    if (batch.activeSourceId) void options.batchClient.cancelSource(batch.activeSourceId);
+    operation = { kind: "cancelling", batch };
+    render();
+    if (batch.activeSourceId) void options.batchClient.cancelSource(batch.activeSourceId).catch(() => undefined);
   }
 
   function clear(): void {
+    const batch = currentBatch();
+    if (batch) {
+      batch.cancelled = true;
+      batch.reset = true;
+      if (batch.revealTimer !== null) clearTimeout(batch.revealTimer);
+      batch.revealTimer = null;
+    }
+    const previousTask = pendingTask;
+    const resetOperation = { kind: "resetting" } as const;
+    operation = resetOperation;
     previewRequest += 1;
     validationDate = null;
-    void options.batchClient.clear().catch(() => {
-      options.status.announce("背景清理尚未完成；重新加入檔案時會重新建立工作區。");
-    });
+    const resetTask = options.batchClient.resetWorkspace();
     options.model.clear();
-    setOperationStatus({ kind: "cleared" });
-    options.status.announce("檔案清單已清空；電腦中的原始檔案沒有變更。");
+    render();
+    pendingTask = Promise.allSettled([previousTask, resetTask]).then((results) => {
+      if (operation !== resetOperation) return;
+      if (results[1]?.status === "rejected") {
+        settle({ kind: "error", detail: "背景工作區無法重設，請重新整理頁面。" });
+        options.status.announce("背景工作區無法重設，請重新整理頁面。");
+        return;
+      }
+      settle({ kind: "cleared" });
+      options.status.announce("檔案清單已清空；進階下載的參照檔仍保留。電腦中的原始檔案沒有變更。");
+    });
+  }
+
+  function startRestoreFile(
+    removed: WorkspaceItem,
+    source: WorkspaceSource,
+    fileIndex: number,
+    sourceIndex: number,
+    wasSelected: boolean,
+  ): void {
+    if (operation.kind !== "idle") return;
+    const restoring = { kind: "restoring" } as const;
+    operation = restoring;
+    render();
+    pendingTask = options.batchClient.restoreFiles([removed.id]).then(async () => {
+      if (operation !== restoring) return;
+      if (!options.model.restore(removed, source, fileIndex, sourceIndex, wasSelected)) {
+        await options.batchClient.removeFiles([removed.id]);
+        if (operation === restoring) settle({ kind: "error", detail: "無法復原檔案，請再試一次。" });
+        return;
+      }
+      settle({ kind: "restored", detail: `${removed.virtualPath} 已復原。` });
+      options.status.announce(`${removed.virtualPath} 已復原。`);
+    }).catch(() => {
+      if (operation === restoring) {
+        settle({ kind: "error", detail: "無法復原檔案，請再試一次。" });
+        options.status.announce("無法復原檔案，請再試一次。");
+      }
+    });
+  }
+
+  function startRemoveFile(fileId: string): void {
+    if (operation.kind !== "idle") return;
+    const snapshot = options.model.snapshot();
+    const fileIndex = snapshot.files.findIndex((item) => item.id === fileId);
+    const item = snapshot.files[fileIndex];
+    if (!item) return;
+    const sourceIndex = snapshot.sources.findIndex((source) => source.id === item.sourceId);
+    const source = snapshot.sources[sourceIndex];
+    if (!source) return;
+    const wasSelected = snapshot.selectedFileId === fileId;
+    const removing = { kind: "removing" } as const;
+    operation = removing;
+    render();
+    pendingTask = options.batchClient.removeFiles([fileId]).then(async () => {
+      if (operation !== removing) return;
+      const removed = options.model.remove(fileId);
+      if (!removed) {
+        await options.batchClient.restoreFiles([fileId]);
+        if (operation === removing) settle({ kind: "error", detail: "無法移除檔案，請再試一次。" });
+        return;
+      }
+      settle({
+        kind: "removed",
+        detail: `已移除 ${removed.virtualPath}；電腦中的原始檔案沒有變更。`,
+        onUndo: () => startRestoreFile(removed, source, fileIndex, sourceIndex, wasSelected),
+      });
+      options.status.announce(`${removed.virtualPath} 已從清單移除；電腦中的原始檔案沒有變更。`);
+    }).catch(() => {
+      if (operation === removing) {
+        settle({ kind: "error", detail: "無法移除檔案，請再試一次。" });
+        options.status.announce("無法移除檔案，請再試一次。");
+      }
+    });
+  }
+
+  function startRestoreSource(
+    source: WorkspaceSource,
+    restoreItems: readonly { index: number; item: WorkspaceItem }[],
+    sourceIndex: number,
+    previousSelectedFileId: string | null,
+  ): void {
+    if (operation.kind !== "idle") return;
+    const fileIds = restoreItems.map(({ item }) => item.id);
+    const restoring = { kind: "restoring" } as const;
+    operation = restoring;
+    render();
+    pendingTask = options.batchClient.restoreFiles(fileIds).then(async () => {
+      if (operation !== restoring) return;
+      if (!options.model.restoreSource(source, restoreItems, sourceIndex, previousSelectedFileId)) {
+        await options.batchClient.removeFiles(fileIds);
+        if (operation === restoring) settle({ kind: "error", detail: "無法復原檔案來源，請再試一次。" });
+        return;
+      }
+      settle({ kind: "restored", detail: `${source.name} 及其中 ${restoreItems.length} 個項目已復原。` });
+      options.status.announce(`${source.name} 及其中 ${restoreItems.length} 個項目已復原。`);
+    }).catch(() => {
+      if (operation === restoring) {
+        settle({ kind: "error", detail: "無法復原檔案來源，請再試一次。" });
+        options.status.announce("無法復原檔案來源，請再試一次。");
+      }
+    });
+  }
+
+  function startRemoveSource(sourceId: string): void {
+    if (operation.kind !== "idle") return;
+    const snapshot = options.model.snapshot();
+    const sourceIndex = snapshot.sources.findIndex((candidate) => candidate.id === sourceId);
+    const source = snapshot.sources[sourceIndex];
+    if (!source) return;
+    const restoreItems = snapshot.files.flatMap((item, index) => item.sourceId === sourceId ? [{ index, item }] : []);
+    const fileIds = restoreItems.map(({ item }) => item.id);
+    const previousSelectedFileId = snapshot.selectedFileId;
+    const removing = { kind: "removing" } as const;
+    operation = removing;
+    render();
+    pendingTask = options.batchClient.removeFiles(fileIds).then(async () => {
+      if (operation !== removing) return;
+      const removed = options.model.removeSource(sourceId);
+      if (removed.length !== restoreItems.length) {
+        await options.batchClient.restoreFiles(fileIds);
+        if (operation === removing) settle({ kind: "error", detail: "無法移除檔案來源，請再試一次。" });
+        return;
+      }
+      settle({
+        kind: "removed",
+        detail: `已移除 ${source.name} 及其中 ${removed.length} 個項目；電腦中的原始檔案沒有變更。`,
+        onUndo: () => startRestoreSource(source, restoreItems, sourceIndex, previousSelectedFileId),
+      });
+      options.status.announce(`${source.name} 已從清單移除，共 ${removed.length} 個項目；電腦中的原始檔案沒有變更。`);
+    }).catch(() => {
+      if (operation === removing) {
+        settle({ kind: "error", detail: "無法移除檔案來源，請再試一次。" });
+        options.status.announce("無法移除檔案來源，請再試一次。");
+      }
+    });
   }
 
   return {
     bind() {
       options.batchClient.setProgressListener((progress) => {
-        const batch = activeBatch;
+        const batch = currentBatch();
         if (!batch || progress.sourceId !== batch.activeSourceId) return;
         batch.latestProgress = progress;
-        if (batch.processingVisible && !batch.cancelled) {
-          setOperationStatus({ kind: "processing", progress });
+        if (operation.kind === "adding" && operation.batch === batch && operation.phase === "visible") {
+          renderOperationStatus();
         }
       });
       options.view.bind({
         onCancelFileOperation: cancelFileOperation,
-        onChooseFile: () => { if (!activeBatch && !selectionPending) options.view.fileInput().click(); },
-        onClearWorkspace: () => { if (!activeBatch && !selectionPending && options.view.confirmClear()) clear(); },
-        onFilesChosen: (files) => {
-          if (activeBatch || selectionPending) return;
-          selectionPending = true;
-          options.view.setFilePickerLocked(true, false);
-          render();
-          selectionQueue = selectionQueue.catch(() => undefined).then(() => addFiles(files)).finally(() => {
-            selectionPending = false;
-            if (!activeBatch) options.view.setFilePickerLocked(false, false);
-            render();
-          });
-          void selectionQueue.catch(() => options.status.announce("無法加入檔案。"));
-        },
+        onChooseFile: () => { if (operation.kind === "idle") options.view.fileInput().click(); },
+        onClearWorkspace: () => { if (operation.kind !== "resetting" && options.view.confirmClear()) clear(); },
+        onFilesChosen: startAdd,
         onPreviewRequest: (fileId, filter, page) => void requestPreview(fileId, filter, page),
-        onRemoveFile: (fileId) => {
-          const snapshot = options.model.snapshot();
-          const fileIndex = snapshot.files.findIndex((item) => item.id === fileId);
-          const item = snapshot.files[fileIndex];
-          if (!item) return;
-          const sourceIndex = snapshot.sources.findIndex((source) => source.id === item.sourceId);
-          const source = snapshot.sources[sourceIndex];
-          if (!source) return;
-          const wasSelected = snapshot.selectedFileId === fileId;
-          const removed = options.model.remove(fileId);
-          if (!removed) return;
-          void options.batchClient.removeFiles([fileId]);
-          options.status.announce(`${removed.virtualPath} 已從清單移除；電腦中的原始檔案沒有變更。`);
-          setOperationStatus({
-            kind: "removed",
-            detail: `已移除 ${removed.virtualPath}；電腦中的原始檔案沒有變更。`,
-            onUndo: () => {
-              if (!options.model.restore(removed, source, fileIndex, sourceIndex, wasSelected)) return;
-              void options.batchClient.restoreFiles([fileId]);
-              setOperationStatus({ kind: "restored", detail: `${removed.virtualPath} 已復原。` });
-              options.status.announce(`${removed.virtualPath} 已復原。`);
-            },
-          });
-        },
-        onRemoveSource: (sourceId) => {
-          const snapshot = options.model.snapshot();
-          const sourceIndex = snapshot.sources.findIndex((candidate) => candidate.id === sourceId);
-          const source = snapshot.sources[sourceIndex];
-          if (!source) return;
-          const restoreItems = snapshot.files.flatMap((item, index) => item.sourceId === sourceId ? [{ index, item }] : []);
-          const previousSelectedFileId = snapshot.selectedFileId;
-          const removed = options.model.removeSource(sourceId);
-          void options.batchClient.removeFiles(removed.map((item) => item.id));
-          options.status.announce(`${source.name} 已從清單移除，共 ${removed.length} 個項目；電腦中的原始檔案沒有變更。`);
-          setOperationStatus({
-            kind: "removed",
-            detail: `已移除 ${source.name} 及其中 ${removed.length} 個項目；電腦中的原始檔案沒有變更。`,
-            onUndo: () => {
-              if (!options.model.restoreSource(source, restoreItems, sourceIndex, previousSelectedFileId)) return;
-              void options.batchClient.restoreFiles(removed.map((item) => item.id));
-              setOperationStatus({ kind: "restored", detail: `${source.name} 及其中 ${removed.length} 個項目已復原。` });
-              options.status.announce(`${source.name} 及其中 ${removed.length} 個項目已復原。`);
-            },
-          });
-        },
+        onRemoveFile: startRemoveFile,
+        onRemoveSource: startRemoveSource,
         onMarkAllViewed: () => {
           const count = options.model.markAllViewed();
           options.status.announce(count > 0 ? `已將 ${count} 個檔案標示為已查看。` : "沒有尚未查看的檔案。");
         },
         onVisibleRowsIncludedChange: (sourceRows, included) => {
+          if (operation.kind !== "idle") return;
           const selected = options.model.selectedItem();
           if (!selected?.file) return;
           void options.batchClient.setRowsIncluded(selected.id, sourceRows, included, options.model.snapshot().outputFormat)
-            .then((file) => options.model.update(selected.id, (item) => { item.file = file; }));
+            .then((file) => options.model.update(selected.id, (item) => { item.file = file; }))
+            .catch(() => undefined);
           options.status.announce(included
             ? `已選取本頁，共變更 ${sourceRows.length} 列。`
             : `已取消選取本頁，共變更 ${sourceRows.length} 列。`);
         },
         onRowIncludedChange: (sourceRow, included) => {
+          if (operation.kind !== "idle") return;
           const selected = options.model.selectedItem();
           if (!selected?.file) return;
           void options.batchClient.setRowIncluded(selected.id, sourceRow, included, options.model.snapshot().outputFormat)
-            .then((file) => options.model.update(selected.id, (item) => { item.file = file; }));
+            .then((file) => options.model.update(selected.id, (item) => { item.file = file; }))
+            .catch(() => undefined);
           options.status.announce(`第 ${sourceRow} 列已${included ? "納入" : "排除"}輸出。`);
         },
         onSelectFile: (fileId) => { options.model.select(fileId); },
       });
       options.model.subscribe(render);
-      setOperationStatus({ kind: "idle" });
       render();
     },
-    whenIdle() { return selectionQueue; },
+    whenIdle() { return pendingTask; },
   };
 }

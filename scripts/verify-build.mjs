@@ -34,6 +34,10 @@ const dataPreviewViewSource = readFileSync(
   new URL("../src/app/sections/input/data-preview-view.ts", import.meta.url),
   "utf8",
 );
+const advancedPreferencesSource = readFileSync(
+  new URL("../src/browser/advanced-preferences.ts", import.meta.url),
+  "utf8",
+);
 const inputSectionViewSource = readFileSync(
   new URL("../src/app/sections/input/input-section-view.ts", import.meta.url),
   "utf8",
@@ -60,6 +64,10 @@ const outputAdapterSource = readFileSync(
 );
 const outputPlanSource = readFileSync(
   new URL("../src/app/sections/output/output-plan.ts", import.meta.url),
+  "utf8",
+);
+const outputControllerSource = readFileSync(
+  new URL("../src/app/sections/output/output-controller.ts", import.meta.url),
   "utf8",
 );
 const otherFilesViewSource = readFileSync(
@@ -416,8 +424,8 @@ assert.match(
 );
 assert.match(
   outputPlanSource,
-  /blockingOutputIssues = outputIssues\.filter\(\(issue\) => issue\.blocking\)[\s\S]*?blockingOutputIssues\.length === 0/u,
-  "Download eligibility and problem counts must use only blocking output findings.",
+  /blockingOutputIssues = files\.flatMap[\s\S]*?file\.blockingOutputIssues[\s\S]*?hasProblems = problems\.length > 0 \|\| blockingOutputIssues\.length > 0[\s\S]*?&& !hasProblems/u,
+  "Download eligibility must use only structural problems and blocking output findings.",
 );
 assert.match(
   outputAdapterSource,
@@ -432,8 +440,13 @@ assert.match(
 assert.doesNotMatch(dataPreviewViewSource, /PRIVATE_USE_RECOVERED[\s\S]*?filter/u);
 assert.match(
   indexHtml,
-  /<ul id="output-issue-list"[^>]*hidden><\/ul>/u,
-  "Section 2 must provide a dedicated list for detailed download problems.",
+  /<details id="output-issue-disclosure"[^>]*class="action-issue-disclosure"[^>]*hidden>[\s\S]*?<summary id="output-issue-summary"[^>]*class="issue-disclosure-toggle action-issue-toggle">[\s\S]*?<ul id="output-issue-list"[^>]*class="action-issue-list"/u,
+  "Section 2 must keep detailed download problems in the shared collapsed disclosure.",
+);
+assert.match(
+  indexHtml,
+  /<details id="advanced-issue-disclosure"[^>]*class="action-issue-disclosure"[^>]*hidden>[\s\S]*?<summary id="advanced-issue-summary"[^>]*class="issue-disclosure-toggle action-issue-toggle">[\s\S]*?<ul id="advanced-issue-list"[^>]*class="action-issue-list"/u,
+  "Section 3 must keep detailed reminders in the shared collapsed disclosure.",
 );
 assert.doesNotMatch(indexHtml, /settings-file|settings-status|source-encoding|workflow-tab/u);
 assert.doesNotMatch(indexHtml, /正向轉換|反向轉換|全域設定|欄位設定/u);
@@ -453,7 +466,7 @@ assert.match(
 assert.doesNotMatch(dataPreviewViewSource, /row-problem-cell|preview-issue-toggle--problem/u);
 assert.match(
   dataPreviewViewSource,
-  /button\.dataset\.issueId = issueId[\s\S]*?button\.setAttribute\("aria-controls", issueId\)[\s\S]*?button\.setAttribute\("aria-expanded"[\s\S]*?issueRow\.hidden = !expandedIssues\.has\(issueId\)/u,
+  /button\.className = "issue-disclosure-toggle preview-issue-toggle row-status-text"[\s\S]*?button\.dataset\.issueId = issueId[\s\S]*?button\.setAttribute\("aria-controls", issueId\)[\s\S]*?button\.setAttribute\("aria-expanded"[\s\S]*?issueRow\.hidden = !expandedIssues\.has\(issueId\)/u,
   "Issue details must start collapsed and use explicit accessible controls.",
 );
 assert.match(
@@ -498,7 +511,7 @@ assert.match(
 );
 assert.match(
   indexHtml,
-  /id="source-file-picker"[\s\S]*?id="select-source-button"[\s\S]*?id="clear-workspace-button"[\s\S]*?id="file-operation-status"[^>]*class="notice file-operation-status"[^>]*data-tone="neutral"/u,
+  /id="source-file-picker"[\s\S]*?id="select-source-button"[\s\S]*?id="clear-workspace-button"[\s\S]*?id="file-operation-status"[^>]*class="file-operation-status action-card"[^>]*data-tone="neutral"/u,
   "The static picker must remain independent from the persistent operation banner.",
 );
 assert.doesNotMatch(
@@ -508,8 +521,8 @@ assert.doesNotMatch(
 );
 assert.match(
   indexHtml,
-  /class="file-operation-title"[\s\S]*?id="file-operation-title"[\s\S]*?id="file-operation-spinner"[^>]*hidden/u,
-  "The processing spinner must sit directly after the operation title.",
+  /class="action-title-line"[\s\S]*?id="file-operation-title"[\s\S]*?class="action-spinner-slot"[^>]*>[\s\S]*?id="file-operation-spinner"[^>]*hidden/u,
+  "The processing spinner must keep a fixed inline slot directly after the operation title.",
 );
 assert.match(
   indexHtml,
@@ -518,7 +531,7 @@ assert.match(
 );
 assert.match(
   indexHtml,
-  /id="file-operation-status"[\s\S]*?id="mark-all-viewed-button"[\s\S]*?id="file-operation-details"[^>]*hidden[\s\S]*?id="file-operation-details-summary"[^>]*class="secondary-button notice-action"/u,
+  /id="file-operation-status"[\s\S]*?id="mark-all-viewed-button"[^>]*class="secondary-button"[\s\S]*?id="file-operation-details"[^>]*hidden[\s\S]*?id="file-operation-details-summary"[^>]*class="button-control secondary-button issue-disclosure-toggle"/u,
   "Contextual acknowledgement and collapsed failure details must live in the shared banner.",
 );
 assert.doesNotMatch(indexHtml, /id="source-file-meta"/u, "The action area must not repeat file counts or total size.");
@@ -546,8 +559,33 @@ assert.match(
 );
 assert.match(
   indexHtml,
+  /class="workspace-tabs segmented-tabs"[^>]*role="tablist"/u,
+  "File-category tabs must use the shared segmented-control presentation.",
+);
+assert.match(
+  indexHtml,
   /id="active-files-panel"[\s\S]*?class="table-scroll inventory-table-scroll"[\s\S]*?id="file-tree-table"[\s\S]*?id="file-tree-total"[\s\S]*?id="other-files-panel"[\s\S]*?class="table-scroll inventory-table-scroll"[\s\S]*?class="inventory-table other-files-table"[\s\S]*?<th scope="col">檔案<\/th><th scope="col">格式<\/th><th scope="col">狀態<\/th><th scope="col">移除<\/th>[\s\S]*?id="other-files-list"[\s\S]*?id="other-files-total"/u,
   "Both tabs must use the same inventory shell with a persistent footer.",
+);
+assert.match(
+  indexHtml,
+  /id="other-files-panel"[\s\S]*?id="other-files-total"[\s\S]*?id="preview-region"[\s\S]*?id="data-workspace"/u,
+  "The shared preview must remain outside both file-list tab panels.",
+);
+assert.doesNotMatch(
+  indexHtml,
+  /id="(?:active|other)-files-panel"[^>]*state-transition/u,
+  "Whole file-list tab panels must switch atomically without display transitions.",
+);
+assert.match(
+  inputSectionViewSource,
+  /previewRegion\.dataset\.visible = String\(active\)[\s\S]*?previewRegion\.setAttribute\("aria-hidden", String\(!active\)\)[\s\S]*?previewRegion\.inert = !active[\s\S]*?previewRegionTransition\.update\(active \? "visible" : "hidden"\)/u,
+  "Tab selection must preserve preview state and geometry while controlling its separate region.",
+);
+assert.match(
+  resultStyles,
+  /\.preview-region\[data-visible="false"\]\s*\{[^}]*visibility:\s*hidden;[^}]*pointer-events:\s*none;/u,
+  "The inactive preview must disappear without collapsing document height.",
 );
 assert.match(
   otherFilesViewSource,
@@ -620,6 +658,11 @@ assert.doesNotMatch(
   "The hierarchy must rely on disclosure and indentation instead of decorative dots or icons.",
 );
 assert.doesNotMatch(indexHtml, /compact-summary|output-selected-summary|output-tree-summary/u);
+assert.doesNotMatch(
+  outputPlanSource,
+  /selectedSummary|selectedLabel|omittedRowCount|downloadableRows/u,
+  "Section 2 must not rebuild obsolete selected-file or downloadable-row summaries.",
+);
 assert.match(
   dataPreviewViewSource,
   /label:\s*"正確",\s*tone:\s*"valid"/u,
@@ -627,8 +670,8 @@ assert.match(
 );
 assert.match(
   indexHtml,
-  /id="output-heading">下載結果[\s\S]*?輸出格式已在第 0 區選定[\s\S]*?id="output-format-label"[\s\S]*?id="output-problem-link"[^>]*href="#file-tree-table"/u,
-  "Section 2 must stay concise and link back to Section 1 problems.",
+  /id="output-heading">下載結果[\s\S]*?輸出格式已在第 0 區選定[\s\S]*?id="download-status-summary"[^>]*class="action-summary"[\s\S]*?id="output-problem-link"[^>]*href="#file-tree-table"/u,
+  "Section 2 must keep its concise file and row summary with a link back to Section 1 problems.",
 );
 assert.match(
   indexHtml,
@@ -642,14 +685,29 @@ assert.doesNotMatch(
   "Published workspace files must not retain the obsolete processing or InternalFile compatibility paths.",
 );
 assert.match(
-  workspaceTypesSource,
+  outputPlanSource,
   /type OutputPreparationState = "error" \| "loading" \| "ready"/u,
-  "Output preparation must use an explicit finite state.",
+  "Section 2 output preparation must use an explicit finite state.",
+);
+assert.doesNotMatch(
+  workspaceTypesSource,
+  /OutputPreparationState|outputPreparationError|outputPreparationState/u,
+  "Section 2 operation state must not leak into the shared workspace snapshot.",
+);
+assert.doesNotMatch(
+  workspaceTypesSource,
+  /hasBlockingIssues|outputBlockingRows|outputIssues:|rowCount:/u,
+  "Worker summaries must not retain unused or duplicate Section 2 fields.",
 );
 assert.match(
-  formatControllerSource,
-  /setOutputFormat\(format, records\.length > 0 \? "loading" : "ready"\)[\s\S]*?setOutputPreparation\("ready"\)[\s\S]*?setOutputPreparation\([\s\S]*?"error"/u,
+  outputControllerSource,
+  /type Assessment =[\s\S]*?kind: "checking"[\s\S]*?kind: "error"[\s\S]*?async function checkOutput\(\)[\s\S]*?refreshOutput\([\s\S]*?assessment = \{ kind: "idle" \}/u,
   "Output-format preparation must settle in ready or error instead of leaving a permanent spinner.",
+);
+assert.doesNotMatch(
+  formatControllerSource,
+  /refreshOutput|setOutputPreparation|BatchClient/u,
+  "Section 0 must only publish synchronous format selections.",
 );
 assert.match(
   indexHtml,
@@ -662,9 +720,9 @@ assert.match(
   "Section 3 must reserve spinners beside its reference and download status titles.",
 );
 assert.match(
-  resultStyles,
-  /\.download-status-title-line\s*>\s*\.busy-spinner\[hidden\][\s\S]*?\.reference-status-title-line\s*>\s*\.busy-spinner\[hidden\]\s*\{\s*display:\s*none;/u,
-  "Section 2 and Section 3 status spinners must stay hidden after processing finishes.",
+  indexHtml,
+  /class="action-spinner-slot"[^>]*>[\s\S]*?id="download-status-spinner"[^>]*hidden[\s\S]*?class="action-spinner-slot"[^>]*>[\s\S]*?id="reference-status-spinner"[^>]*hidden[\s\S]*?class="action-spinner-slot"[^>]*>[\s\S]*?id="advanced-download-spinner"[^>]*hidden/u,
+  "Loading titles must reserve an inline spinner slot while keeping idle spinners hidden.",
 );
 assert.doesNotMatch(
   indexHtml,
@@ -685,13 +743,28 @@ assert.doesNotMatch(
 );
 assert.match(
   reusableComponentStyles,
-  /\.state-transition\s*\{[\s\S]*?opacity var\(--transition-fast\)[\s\S]*?@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.state-transition\s*\{[\s\S]*?transition: none;[\s\S]*?animation: none;/u,
-  "Semantic UI state transitions must share one reduced-motion-safe primitive.",
+  /\.segmented-tabs\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);[^}]*padding:\s*0\.4rem;[^}]*background:\s*var\(--color-surface-muted\);[\s\S]*?\.segmented-tabs \[role="tab"\]\[aria-selected="true"\]\s*\{[^}]*border-color:\s*var\(--color-accent-border\);[^}]*background:\s*var\(--color-surface\);[^}]*box-shadow:\s*var\(--shadow-ui\);/u,
+  "Segmented tabs must preserve a stable rail and clearly raised selected state.",
+);
+assert.match(
+  reusableComponentStyles,
+  /\.state-transition\[data-state-transition="a"\][\s\S]*?animation:\s*state-transition-a var\(--transition-fast\);[\s\S]*?@keyframes state-transition-a\s*\{\s*from\s*\{\s*opacity:\s*0\.94;\s*\}[\s\S]*?@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.state-transition,[\s\S]*?\.state-reveal\s*\{\s*animation:\s*none;/u,
+  "Semantic updates must share one subtle, reduced-motion-safe settle transition.",
+);
+assert.doesNotMatch(
+  reusableComponentStyles,
+  /allow-discrete|@starting-style|opacity:\s*0\.72|\.state-transition[^{]*\{[^}]*(?:display|visibility)/u,
+  "State transitions must not fade out or animate layout-affecting visibility changes.",
 );
 assert.match(
   stateTransitionSource,
   /if \(currentKey !== null && currentKey !== stateKey\)[\s\S]*?root\.dataset\.stateTransition/u,
   "State transitions must replay only for semantic state-key changes.",
+);
+assert.match(
+  fileOperationStatusViewSource,
+  /status\.kind === "processing"[\s\S]*?`processing:\$\{status\.progress\.sourceId\}:\$\{status\.progress\.virtualPath\}`[\s\S]*?: status\.kind/u,
+  "Processing copy must settle for a new filename without replaying for counter-only progress.",
 );
 assert.doesNotMatch(
   `${componentStyles}\n${reusableComponentStyles}\n${bootstrapStyles}\n${resultStyles}`,
@@ -755,8 +828,8 @@ assert.match(
 );
 assert.match(
   baseCss,
-  /\.theme-toggle\{[^}]*width:100%[^}]*height:var\(--control-height-compact\)/u,
-  "The theme capsule must fill the reserved header width.",
+  /\.theme-toggle\{[^}]*width:100%[^}]*height:var\(--control-height-compact\)[^}]*white-space:nowrap/u,
+  "The theme capsule must fill its reserved width without wrapping its short label.",
 );
 const headerMetaRule = baseCss.match(/\.header-meta\{[^}]*\}/u)?.[0];
 assert.ok(headerMetaRule, "The header metadata rule must exist.");
@@ -808,9 +881,79 @@ assert.match(
   "Forced-color users must receive static readiness text.",
 );
 assert.match(
-  baseCss,
-  /\.file-operation-actions\{[^}]*grid-template-columns:repeat\(2,minmax\(0,12rem\)\)[^}]*width:24\.5rem/u,
-  "Contextual operations must use two fixed action slots.",
+  foundationStyles,
+  /--action-slot-width:\s*12rem;[\s\S]*?--action-rail-width:\s*24\.5rem;[\s\S]*?--action-gap:\s*0\.5rem;/u,
+  "Shared action areas must use the established two-slot measurements.",
+);
+assert.match(
+  componentStyles,
+  /\.action-layout\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) var\(--action-rail-width\);[^}]*align-items:\s*start;/u,
+  "Action cards must align their copy and action rail at the top.",
+);
+assert.match(
+  componentStyles,
+  /\.action-card\s*\{[^}]*padding:\s*1rem;[^}]*background:\s*var\(--color-surface-soft\);/u,
+  "Action cards must share one surface and inset.",
+);
+assert.doesNotMatch(
+  reusableComponentStyles,
+  /\.notice-action\b/u,
+  "Obsolete contextual-action sizing must not override the shared button height.",
+);
+assert.doesNotMatch(
+  indexHtml,
+  /class="[^"]*(?:notice-action|source-file-picker|download-status-title-line|reference-status-title-line)[^"]*"/u,
+  "Shared action markup must not retain superseded layout aliases.",
+);
+assert.match(
+  componentStyles,
+  /\.file-operation-status\s*\{[^}]*min-height:\s*4\.625rem;[^}]*border-left:\s*var\(--border-width-emphasis\) solid var\(--color-neutral\);/u,
+  "The operation card must reserve its normal size while allowing enlarged content to grow.",
+);
+assert.match(
+  indexHtml,
+  /id="source-file-picker"[^>]*class="[^"]*action-card action-layout"[\s\S]*?id="file-operation-status"[^>]*class="file-operation-status action-card"[\s\S]*?id="output-download-status"[^>]*class="[^"]*action-card action-layout"[\s\S]*?id="reference-file-picker"[^>]*class="[^"]*action-card action-layout"[\s\S]*?id="advanced-download-status"[^>]*class="[^"]*action-card action-layout"/u,
+  "Sections 1 through 3 must reuse the shared action-card shell.",
+);
+assert.match(
+  componentStyles,
+  /\.action-actions\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, var\(--action-slot-width\)\)\);[^}]*align-self:\s*start;[^}]*width:\s*var\(--action-rail-width\);/u,
+  "Shared action areas must expose two equal, top-aligned button slots.",
+);
+assert.match(
+  componentStyles,
+  /\.issue-disclosure-toggle\s*\{[^}]*position:\s*relative;[^}]*padding-right:[^}]*list-style:\s*none;[\s\S]*?\.issue-disclosure-toggle::after\s*\{[^}]*position:\s*absolute;[^}]*right:[^}]*content:\s*"\+";[\s\S]*?details\[open\] > \.issue-disclosure-toggle::after\s*\{[^}]*content:\s*"−";/u,
+  "Issue disclosures across the site must share the preview-style open and close marker.",
+);
+assert.match(
+  componentStyles,
+  /\.action-actions-single\s*>\s*:first-child\s*\{[^}]*grid-column:\s*2;/u,
+  "Single download actions must occupy the rightmost desktop slot.",
+);
+assert.match(
+  componentStyles,
+  /\.action-spinner-slot\s*\{[^}]*width:\s*var\(--indicator-size\);[^}]*height:\s*var\(--indicator-size\);/u,
+  "Loading titles must preserve fixed inline spinner geometry.",
+);
+assert.match(
+  componentStyles,
+  /\.compact-control\s*\{[^}]*min-height:\s*var\(--control-height-compact\);[^}]*font-size:\s*0\.88rem;/u,
+  "Only explicitly compact controls may use the shared smaller treatment.",
+);
+assert.match(
+  componentStyles,
+  /:is\(button, \.button-control\)\s*\{[^}]*min-height:\s*var\(--control-height\);[^}]*padding:\s*var\(--control-padding\);[^}]*border:\s*var\(--border-ui-transparent\);/u,
+  "Native disclosures styled as buttons must share the button geometry and border foundation.",
+);
+assert.match(
+  foundationStyles,
+  /button:focus-visible,\s*\.button-control:focus-visible,[\s\S]*?outline:\s*3px solid var\(--color-focus\);/u,
+  "Button-like native controls must share the visible keyboard focus treatment.",
+);
+assert.match(
+  indexHtml,
+  /id="row-filter"[^>]*class="compact-control"[\s\S]*?id="previous-page-button"[^>]*class="secondary-button compact-control"[\s\S]*?id="next-page-button"[^>]*class="secondary-button compact-control"/u,
+  "The preview filter and pagination buttons must share the compact control size.",
 );
 assert.match(baseCss, /\.file-operation-details,#cancel-file-operation,#undo-file-operation\{[^}]*grid-column:2/u);
 assert.match(baseCss, /#mark-all-viewed-button\{[^}]*grid-column:1/u);
@@ -831,8 +974,18 @@ assert.match(
 );
 assert.match(
   baseCss,
-  /\.file-operation-status\{[^}]*height:4\.5rem[^}]*overflow:visible/u,
-  "The operation banner must reserve a compact stable desktop height.",
+  /\.file-operation-status\{[^}]*min-height:4\.625rem[^}]*overflow:visible/u,
+  "The operation banner must reserve a stable desktop minimum while allowing content growth.",
+);
+assert.match(
+  componentStyles,
+  /@container panel \(max-width:\s*36rem\)[\s\S]*?\.file-operation-status\s*\{[^}]*min-height:\s*8\.375rem;[\s\S]*?@container panel \(max-width:\s*24rem\)[\s\S]*?\.file-operation-status\s*\{[^}]*min-height:\s*11\.375rem;/u,
+  "Responsive operation banners must reserve enough minimum height and grow with wrapped controls.",
+);
+assert.doesNotMatch(
+  componentStyles,
+  /\.file-operation-status\s*\{[^}]*\n\s*height:/u,
+  "The operation card must not use a fixed height that can overlap enlarged content.",
 );
 assert.match(
   baseCss,
@@ -865,6 +1018,16 @@ assert.match(
   resultStyles,
   /\.inventory-table thead th:first-child\s*\{[^}]*left:\s*0[^}]*z-index:[^}]*background|\.inventory-table thead th:first-child\s*\{[^}]*left:\s*0[^}]*box-shadow/u,
   "The filename header must share the sticky horizontal position and opaque layer.",
+);
+assert.match(
+  resultStyles,
+  /\.inventory-table\s*\{[^}]*--inventory-file-column-width:\s*24rem;[^}]*--inventory-number-column-width:\s*5\.75rem;[^}]*--inventory-other-detail-column-width:\s*23rem;[\s\S]*?\.inventory-table :is\(th, td\):first-child\s*\{[^}]*width:\s*var\(--inventory-file-column-width\);[^}]*min-width:\s*var\(--inventory-file-column-width\);[^}]*max-width:\s*var\(--inventory-file-column-width\);[\s\S]*?\.inventory-table\.other-files-table :is\(th, td\):nth-child\(2\),\s*\.inventory-table\.other-files-table :is\(th, td\):nth-child\(3\)\s*\{[^}]*width:\s*var\(--inventory-other-detail-column-width\);[^}]*min-width:\s*var\(--inventory-other-detail-column-width\);[^}]*max-width:\s*var\(--inventory-other-detail-column-width\);/u,
+  "Both inventory tabs must share a fixed filename track and equal intrinsic table width.",
+);
+assert.match(
+  resultStyles,
+  /@container panel \(max-width:\s*36rem\)\s*\{\s*\.inventory-table\s*\{[^}]*--inventory-file-column-width:\s*17rem;/u,
+  "Both narrow inventory tabs must reduce the shared filename track together.",
 );
 assert.match(
   resultStyles,
@@ -928,8 +1091,18 @@ assert.match(
 );
 assert.match(
   dataPreviewViewSource,
-  /const FILTERABLE_ROW_STATES:[\s\S]*?function syncFilterOptions\(page: PreviewPage\): void \{[\s\S]*?option\.disabled = page\.filterCounts\[filter\] === 0[\s\S]*?rowFilter\.value = "all";/u,
-  "Filters without matching rows must be disabled, with a safe fallback to all rows.",
+  /const ROW_FILTERS:[^=]+=\s*\[[\s\S]*?"all"[\s\S]*?const filterLabels = new Map\([\s\S]*?function syncFilterOptions\(page: PreviewPage\): void \{[\s\S]*?const count = page\.filterCounts\[filter\];[\s\S]*?option\.disabled = filter !== "all" && count === 0;[\s\S]*?option\.textContent = [^;]+\$\{count\}[^;]+;[\s\S]*?rowFilter\.value = "all";/u,
+  "Every preview filter must show its row count, with zero-count choices disabled and a safe fallback to all rows.",
+);
+assert.match(
+  componentStyles,
+  /select option\s*\{[^}]*color:\s*var\(--color-text\);[^}]*font-weight:\s*700;[\s\S]*?select option:disabled\s*\{[^}]*color:\s*var\(--color-text-subtle\);[^}]*background:\s*var\(--color-surface-muted\);[^}]*font-weight:\s*500;/u,
+  "Available and unavailable native select options must remain readable and visually distinct.",
+);
+assert.match(
+  resultStyles,
+  /\.filter-control\s*\{[^}]*width:\s*12rem;[\s\S]*?\.filter-control select\s*\{[^}]*min-width:\s*12rem;/u,
+  "Preview filter copy changes must not resize the control.",
 );
 assert.match(
   resultStyles,
@@ -983,8 +1156,18 @@ assert.doesNotMatch(
 );
 assert.match(
   resultStyles,
-  /\.filter-control\s*\{[^}]*white-space:\s*nowrap/u,
-  "The preview filter label must not collapse into vertical text.",
+  /\.subsection-heading\s*\{[^}]*align-items:\s*flex-start/u,
+  "The preview filter must align with the top of the filename block.",
+);
+assert.match(
+  `${componentStyles}\n${resultStyles}`,
+  /\.field-control\s*\{[^}]*display:\s*grid;[\s\S]*?\.control-heading\s*\{[^}]*font-size:\s*1rem;[\s\S]*?\.advanced-columns\s*\{[^}]*padding:\s*0;[^}]*border:\s*0;/u,
+  "Dropdown and checkbox groups must share one heading hierarchy without a separate fieldset frame.",
+);
+assert.doesNotMatch(
+  indexHtml,
+  /第一次使用時不預先勾選；之後會勾選上次使用的相同欄位。/u,
+  "Advanced preference behavior must not add explanatory copy to the primary UI.",
 );
 assert.match(
   resultStyles,
@@ -1041,6 +1224,11 @@ assert.match(
   bootSource,
   /localStorage\.getItem\("csv2txt\.theme"\)/u,
   "The early boot script must restore the saved theme before first paint.",
+);
+assert.match(
+  advancedPreferencesSource,
+  /const STORAGE_KEY = "csv2txt\.advanced-columns\.v1"[\s\S]*?subtle\.digest\("SHA-256"[\s\S]*?getRandomValues\(new Uint8Array\(16\)\)[\s\S]*?storage\?\.setItem\(STORAGE_KEY, JSON\.stringify\(next\)\)/u,
+  "Advanced column preferences must persist only salted SHA-256 fingerprints.",
 );
 assert.match(
   themeSource,

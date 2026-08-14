@@ -58,13 +58,12 @@ export interface ProcessSourceResult {
 
 export interface AdvancedReferenceSummary {
   headers: readonly string[];
-  issueCount: number;
+  issues: readonly string[];
   sheetName: string;
   sheetNames: readonly string[];
 }
 
 export interface AdvancedResultSummary {
-  matchedRowCount: number;
   resultRowCount: number;
   selectedRowCount: number;
   unmatchedRowCount: number;
@@ -73,6 +72,7 @@ export interface AdvancedResultSummary {
 export type BatchRequest =
   | {
       type: "process-source";
+      workspaceEpoch: number;
       sourceId: string;
       sourceName: string;
       inputType: SourceFileType | "zip";
@@ -81,21 +81,21 @@ export type BatchRequest =
       existingPaths: readonly string[];
       outputFormat: OutputFormat;
     }
-  | { type: "cancel-source"; sourceId: string }
-  | { type: "clear-files" }
-  | { type: "preview-page"; fileId: string; filter: PreviewFilter; page: number; outputFormat: OutputFormat }
-  | { type: "set-row-included"; fileId: string; sourceRow: number; included: boolean; outputFormat: OutputFormat }
-  | { type: "set-rows-included"; fileId: string; sourceRows: readonly number[]; included: boolean; outputFormat: OutputFormat }
-  | { type: "refresh-output"; fileIds: readonly string[]; outputFormat: OutputFormat }
-  | { type: "create-output"; fileIds: readonly string[]; outputFormat: OutputFormat; createdAt: string }
-  | { type: "discard-files"; fileIds: readonly string[] }
-  | { type: "remove-files"; fileIds: readonly string[] }
-  | { type: "restore-files"; fileIds: readonly string[] }
+  | { type: "cancel-source"; sourceId: string; workspaceEpoch: number }
+  | { type: "reset-workspace"; workspaceEpoch: number }
+  | { type: "preview-page"; fileId: string; filter: PreviewFilter; page: number; outputFormat: OutputFormat; workspaceEpoch: number }
+  | { type: "set-row-included"; fileId: string; sourceRow: number; included: boolean; outputFormat: OutputFormat; workspaceEpoch: number }
+  | { type: "set-rows-included"; fileId: string; sourceRows: readonly number[]; included: boolean; outputFormat: OutputFormat; workspaceEpoch: number }
+  | { type: "refresh-output"; fileIds: readonly string[]; outputFormat: OutputFormat; workspaceEpoch: number }
+  | { type: "create-output"; fileIds: readonly string[]; outputFormat: OutputFormat; createdAt: string; workspaceEpoch: number }
+  | { type: "discard-files"; fileIds: readonly string[]; workspaceEpoch: number }
+  | { type: "remove-files"; fileIds: readonly string[]; workspaceEpoch: number }
+  | { type: "restore-files"; fileIds: readonly string[]; workspaceEpoch: number }
   | { type: "inspect-reference"; bytes: Uint8Array }
   | { type: "clear-reference" }
   | { type: "select-reference-sheet"; sheetName: string }
-  | { type: "advanced-result"; fileIds: readonly string[]; keyColumnIndex: number; selectedColumnIndices: readonly number[] }
-  | { type: "create-advanced-output"; fileIds: readonly string[]; keyColumnIndex: number; selectedColumnIndices: readonly number[]; createdAt: string };
+  | { type: "advanced-result"; fileIds: readonly string[]; keyColumnIndex: number; selectedColumnIndices: readonly number[]; workspaceEpoch: number }
+  | { type: "create-advanced-output"; fileIds: readonly string[]; keyColumnIndex: number; selectedColumnIndices: readonly number[]; createdAt: string; workspaceEpoch: number };
 
 export type BatchResponseValue =
   | ProcessSourceResult

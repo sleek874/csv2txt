@@ -36,6 +36,7 @@
 ### UI、離線與安全
 
 - Section 1 treegrid 呈現空白列、無法解析、資料、正確、錯誤、警告、已選列與目前格式輸出問題；Section 2 只保留所選格式摘要、下載狀態與下載動作。
+- Sections 2／3 的操作卡共用狀態、檔案／列摘要、固定 action rail 與預設收合的問題 disclosure；展開內容不重新置中桌面按鈕。
 - 未還原 PUA 與預計替代的位置在預覽以 `■` 顯示，code point 留在展開問題區；原始 PUA 仍由 IR 保存。BIG-5E 輸入的無對照 byte segment 在 IR 以 `？` 代替並在預覽該位置顯示 `■`，其餘可解碼內容保留。技術代碼與 byte 證據只在 disclosure 顯示。
 - ZIP reader 限制巢狀深度、項目數、單檔／總展開量，拒絕 traversal、加密、symlink、ZIP64 與碰撞。
 - Excel、ZIP 與預覽字型維持 manifest-derived lazy resource group；正式 CSP 保持 connect-src 'none'。
@@ -52,8 +53,23 @@
 ### UI 後續整理
 
 - 資料預覽的欄寬在不同資料內容與 viewport 下仍不一致；下一次 UI pass 專門量測並統一欄寬策略，不在這次狀態轉場變更中混入 table sizing 行為。
-- 資料預覽的篩選下拉選單仍需補足開啟、選取與收合時的視覺效果；下一次 UI pass 應在不干擾鍵盤操作、reduced-motion 或固定版面的前提下統一細節。
-- 以實際鍵盤、reduced-motion、forced-colors 與窄螢幕檢查共用淡入淡出；動畫不得改變固定資訊區、預覽或下載狀態的幾何。
+- 資料預覽篩選保留原生 select 的開啟與收合，不建立瀏覽器不一致的自製選單動畫；選取後由共用 preview settle transition 平滑提交新內容。
+- 以實際鍵盤、forced-colors 與已載入資料檢查 segmented tabs、preview 顯示／隱藏及共用 settle transition；reduced-motion 與窄螢幕 headless smoke 已完成，動畫不得改變固定資訊區、預覽或下載狀態的幾何。
+
+### 輸出取消與 worker 排程
+
+目前觀察：
+
+- 建立下載期間移除檔案時，Section 1 會顯示等待訊息；移除命令已送出但在 worker 佇列等待。
+- 新增檔案預期使用相同佇列邊界，尚未以實際操作確認。
+- 列勾選框在主執行緒立即回應；同步輸出仍執行時，對應 worker 命令只會排隊。已觀察到舊生成完成後先開啟檔案儲存視窗，因此不能把 UI 回應視為 worker 已套用選取變更。
+- Section 0／1 改變 dependency key 時，Section 2／3 必須丟棄舊結果；Section 2 的提示不得永久停用目前已符合下載條件的按鈕。
+
+後續依量測選擇最小路線，不新增跨 section 的可變狀態：
+
+1. 共用由格式、canonical active file IDs、既有 `selectionRevision` 與 Section 3 mapping 衍生的 request key，在儲存前拒絕過期結果。
+2. 將 row materialization 與 advanced join 分段，在 worker event-loop yield 後檢查既有 revision，使排隊的勾選／移除命令可提早使舊工作停止；單次同步 serializer 仍只能在返回後丟棄結果。
+3. 若實測證明 XLSX serializer 的不可中止區段過長，再評估每次輸出的短生命週期 worker；需先量測 IR snapshot 複製、記憶體峰值與離線 chunk 成本，不先建立第二份長期 IR。
 
 ### Decoder 與來源診斷
 
@@ -68,6 +84,7 @@ Section 3 已完成：
 - Reference workbook 是 Section 3 專用的單一 XLS／XLSX，不加入 Section 1 tree。
 - Lookup 只讀所有勾選列的 final value，不回寫標準 pipeline。
 - 使用者選擇 worksheet、reference key 與要加入的欄位；primary 欄位11以 trim＋大寫比對。
+- 第一次使用不預選附加欄位；之後以本機 salt 加 SHA-256 header fingerprints 還原相同欄位，不保存 header、檔名或工作表名稱。
 - Primary duplicates 逐列保留；reference duplicates 展開為多筆；未命中保留原列並填入空白參照值。這些資料 issue 不阻止下載或 Section 2 標準輸出。
 - 結果以解析後文字值輸出為單一 `進階輸出-YYYYMMDDHHmm.xlsx`，不保留公式、不打包 ZIP。
 

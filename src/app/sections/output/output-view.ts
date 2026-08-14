@@ -12,25 +12,30 @@ export interface OutputView {
     onDownload: () => void;
   }): void;
   render(plan: OutputPlan, format: OutputFormat, busy: boolean): void;
-  renderError(detail: string): void;
+  renderError(detail: string, canRetry: boolean): void;
   save(output: CreatedOutput): void;
 }
 
 export function createOutputView(): OutputView {
   const root = requireElement<HTMLElement>("#output-step");
-  const formatLabel = requireDescendant<HTMLElement>(root, "#output-format-label");
   const downloadStatus = requireDescendant<HTMLElement>(root, "#output-download-status");
   const downloadButton = requireDescendant<HTMLButtonElement>(root, "#download-button");
   const downloadTitle = requireDescendant<HTMLElement>(root, "#download-status-title");
   const downloadSpinner = requireDescendant<HTMLElement>(root, "#download-status-spinner");
+  const downloadSummary = requireDescendant<HTMLElement>(root, "#download-status-summary");
   const downloadDetail = requireDescendant<HTMLElement>(root, "#download-status-detail");
+  const issueDisclosure = requireDescendant<HTMLDetailsElement>(root, "#output-issue-disclosure");
+  const issueSummary = requireDescendant<HTMLElement>(root, "#output-issue-summary");
+  const issueBlock = requireDescendant<HTMLElement>(issueDisclosure, ".issue-detail-block");
   const problemLink = requireDescendant<HTMLAnchorElement>(root, "#output-problem-link");
   const outputIssueList = requireDescendant<HTMLUListElement>(root, "#output-issue-list");
-  const transition = createStateTransition(downloadStatus);
+  const downloadCopy = requireDescendant<HTMLElement>(downloadStatus, ".action-copy");
+  const transition = createStateTransition(downloadCopy);
 
   function clearOutputIssues(): void {
     outputIssueList.replaceChildren();
-    outputIssueList.hidden = true;
+    issueDisclosure.open = false;
+    issueDisclosure.hidden = true;
     problemLink.hidden = true;
   }
 
@@ -38,13 +43,18 @@ export function createOutputView(): OutputView {
     const details = [
       ...plan.problems,
       ...plan.outputIssues.map(describeOutputIssue),
+      ...(plan.replacementRowCount > 0 && !plan.outputIssues.some((issue) => !issue.blocking)
+        ? [`有 ${plan.replacementRowCount.toLocaleString("zh-TW")} 列會以？代替無法轉出的字元，請核對。`]
+        : []),
     ];
     outputIssueList.replaceChildren(...details.map((detail) => {
       const item = document.createElement("li");
       item.textContent = detail;
       return item;
     }));
-    outputIssueList.hidden = details.length === 0;
+    issueSummary.textContent = `查看 ${details.length.toLocaleString("zh-TW")} 個${plan.hasProblems ? "問題" : "提醒"}`;
+    issueBlock.dataset.tone = plan.hasProblems ? "error" : "warning";
+    issueDisclosure.hidden = details.length === 0;
   }
 
   return {
@@ -57,12 +67,12 @@ export function createOutputView(): OutputView {
       const processing = busy || plan.preparationState === "loading";
       downloadStatus.toggleAttribute("aria-busy", processing);
       downloadSpinner.hidden = !processing;
-      formatLabel.textContent = FILE_FORMAT_LABELS[fileFormatForOutput(format)];
+      downloadSummary.textContent = `${FILE_FORMAT_LABELS[fileFormatForOutput(format)]}：${plan.totalSummary.fileCount.toLocaleString("zh-TW")} 個檔案，已勾選 ${plan.totalSummary.selectedRows.toLocaleString("zh-TW")} 列。`;
       downloadButton.textContent = plan.totalSummary.fileCount > 1 ? "下載 ZIP" : presentation.buttonLabel;
       if (busy) {
         downloadButton.disabled = true;
-        downloadTitle.textContent = plan.totalSummary.fileCount > 1 ? "正在建立 ZIP" : presentation.preparingLabel;
-        downloadDetail.textContent = "完成後會自動開始下載。";
+        downloadTitle.textContent = "正在建立下載";
+        downloadDetail.textContent = "完成後會自動下載。";
         transition.update("creating");
         return;
       }
@@ -75,8 +85,8 @@ export function createOutputView(): OutputView {
       }
       if (plan.preparationState === "loading") {
         downloadButton.disabled = true;
-        downloadTitle.textContent = "正在檢查輸出內容";
-        downloadDetail.textContent = "完成後即可繼續。";
+        downloadTitle.textContent = "正在準備下載";
+        downloadDetail.textContent = "請稍候。";
         transition.update("preparing");
         return;
       }
@@ -87,10 +97,10 @@ export function createOutputView(): OutputView {
         transition.update("preparation-error");
         return;
       }
-      if (plan.totalSummary.problemCount > 0) {
+      if (plan.hasProblems) {
         downloadButton.disabled = true;
-        downloadTitle.textContent = "下載前仍有問題";
-        downloadDetail.textContent = `第 1 區還有 ${plan.totalSummary.problemCount} 個項目需要查看。`;
+        downloadTitle.textContent = "請先處理問題";
+        downloadDetail.textContent = "請依下列提示處理後再下載。";
         problemLink.hidden = false;
         renderProblems(plan);
         transition.update("problems");
@@ -98,25 +108,20 @@ export function createOutputView(): OutputView {
       }
       downloadButton.disabled = false;
       downloadTitle.textContent = "可以下載";
-      const target = plan.totalSummary.fileCount > 1
-        ? `將把 ${plan.totalSummary.fileCount} 個檔案、共 ${plan.totalSummary.selectedRows} 列打包為 ZIP`
-        : `將輸出 ${plan.totalSummary.selectedRows} 列`;
-      const omitted = plan.omittedRowCount > 0
-        ? `${target}；另有 ${plan.omittedRowCount} 列未勾選。`
-        : `${target}。`;
       downloadDetail.textContent = plan.replacementRowCount > 0
-        ? `${omitted} 其中 ${plan.replacementRowCount} 列會以？代替無法轉出的字元，請核對。`
-        : omitted;
+        ? "請查看下列提醒，確認後再下載。"
+        : `按「${downloadButton.textContent}」儲存結果。`;
       if (plan.replacementRowCount > 0) {
         problemLink.hidden = false;
         renderProblems(plan);
       }
       transition.update(plan.replacementRowCount > 0 ? "ready-with-notices" : "ready");
     },
-    renderError(detail) {
+    renderError(detail, canRetry) {
       clearOutputIssues();
       downloadStatus.removeAttribute("aria-busy");
       downloadSpinner.hidden = true;
+      downloadButton.disabled = !canRetry;
       downloadTitle.textContent = "無法建立下載";
       downloadDetail.textContent = detail;
       transition.update("download-error");

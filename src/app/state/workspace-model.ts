@@ -1,6 +1,5 @@
 import type { FileFormat, OutputFormat } from "../../core/file-formats";
 import type {
-  OutputPreparationState,
   WorkspaceFileRecord,
   WorkspaceItem,
   WorkspaceSnapshot,
@@ -29,8 +28,7 @@ export interface WorkspaceModel {
   selectedItem(): WorkspaceItem | null;
   markAllViewed(): number;
   setInputFormat(format: FileFormat): void;
-  setOutputFormat(format: OutputFormat, preparationState?: OutputPreparationState): void;
-  setOutputPreparation(state: OutputPreparationState, error?: string | null): void;
+  setOutputFormat(format: OutputFormat): void;
   snapshot(): WorkspaceSnapshot;
   subscribe(listener: (snapshot: WorkspaceSnapshot) => void): () => void;
   update(fileId: string, update: (item: WorkspaceItem) => void): boolean;
@@ -44,16 +42,12 @@ export function createWorkspaceModel(): WorkspaceModel {
   let selectedFileId: string | null = null;
   let inputFormat: FileFormat = "txt";
   let outputFormat: OutputFormat = "big5-txt";
-  let outputPreparationError: string | null = null;
-  let outputPreparationState: OutputPreparationState = "ready";
 
   function currentSnapshot(): WorkspaceSnapshot {
     return {
       files: [...entries],
       inputFormat,
       outputFormat,
-      outputPreparationError,
-      outputPreparationState,
       selectedFileId,
       sources: [...sources],
     };
@@ -91,8 +85,6 @@ export function createWorkspaceModel(): WorkspaceModel {
       entries.splice(0);
       sources.splice(0);
       selectedFileId = null;
-      outputPreparationError = null;
-      outputPreparationState = "ready";
       emit();
     },
     remove(fileId) {
@@ -173,17 +165,9 @@ export function createWorkspaceModel(): WorkspaceModel {
       normalizeSelection();
       emit();
     },
-    setOutputFormat(format, preparationState = "ready") {
-      if (outputFormat === format && outputPreparationState === preparationState) return;
+    setOutputFormat(format) {
+      if (outputFormat === format) return;
       outputFormat = format;
-      outputPreparationState = preparationState;
-      outputPreparationError = null;
-      emit();
-    },
-    setOutputPreparation(state, error = null) {
-      if (outputPreparationState === state && outputPreparationError === error) return;
-      outputPreparationState = state;
-      outputPreparationError = error;
       emit();
     },
     markAllViewed() {

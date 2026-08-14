@@ -7,10 +7,10 @@ export interface AdvancedViewState {
   busy: "download" | "reference" | null;
   canDownload: boolean;
   error: string | null;
+  fileCount: number;
   headers: readonly string[];
-  issueCount: number;
+  issues: readonly string[];
   keyColumnIndex: number;
-  matchedRowCount: number;
   referenceFileName: string | null;
   resultBusy: boolean;
   resultRowCount: number;
@@ -63,9 +63,25 @@ export function createAdvancedView(): AdvancedView {
   const downloadStatus = requireDescendant<HTMLElement>(root, "#advanced-download-status");
   const downloadSpinner = requireDescendant<HTMLElement>(root, "#advanced-download-spinner");
   const downloadButton = requireDescendant<HTMLButtonElement>(root, "#advanced-download-button");
-  const referenceTransition = createStateTransition(picker);
-  const downloadTransition = createStateTransition(downloadStatus);
+  const issueDisclosure = requireDescendant<HTMLDetailsElement>(root, "#advanced-issue-disclosure");
+  const issueSummary = requireDescendant<HTMLElement>(root, "#advanced-issue-summary");
+  const issueList = requireDescendant<HTMLUListElement>(root, "#advanced-issue-list");
+  const referenceCopy = requireDescendant<HTMLElement>(picker, ".action-copy");
+  const downloadCopy = requireDescendant<HTMLElement>(downloadStatus, ".action-copy");
+  const referenceTransition = createStateTransition(referenceCopy);
+  const downloadTransition = createStateTransition(downloadCopy);
   let renderedHeaderKey = "";
+
+  function renderIssues(details: readonly string[]): void {
+    issueDisclosure.open = false;
+    issueDisclosure.hidden = details.length === 0;
+    issueSummary.textContent = `查看 ${details.length.toLocaleString("zh-TW")} 個提醒`;
+    issueList.replaceChildren(...details.map((detail) => {
+      const item = document.createElement("li");
+      item.textContent = detail;
+      return item;
+    }));
+  }
 
   function renderSelectOptions(
     select: HTMLSelectElement,
@@ -83,6 +99,7 @@ export function createAdvancedView(): AdvancedView {
   function renderColumnOptions(
     headers: readonly string[],
     selectedIndices: ReadonlySet<number>,
+    disabled: boolean,
     onChange: (index: number, selected: boolean) => void,
   ): void {
     const headerKey = JSON.stringify(headers);
@@ -104,6 +121,7 @@ export function createAdvancedView(): AdvancedView {
     columnOptions.querySelectorAll<HTMLInputElement>("input[type='checkbox']")
       .forEach((checkbox) => {
         checkbox.checked = selectedIndices.has(Number(checkbox.dataset.columnIndex));
+        checkbox.disabled = disabled;
       });
   }
 
@@ -127,6 +145,9 @@ export function createAdvancedView(): AdvancedView {
     render(state) {
       const hasReference = state.referenceFileName !== null;
       const downloadBusy = state.busy !== null || state.resultBusy;
+      const countSummary = `XLSX：${state.fileCount.toLocaleString("zh-TW")} 個檔案，已勾選 ${state.selectedRowCount.toLocaleString("zh-TW")} 列`;
+      summary.textContent = `${countSummary}${hasReference && !state.resultBusy ? `，將輸出 ${state.resultRowCount.toLocaleString("zh-TW")} 列` : ""}。`;
+      renderIssues([]);
       referenceSpinner.hidden = state.busy !== "reference";
       downloadStatus.toggleAttribute("aria-busy", downloadBusy);
       downloadSpinner.hidden = !downloadBusy;
@@ -156,17 +177,17 @@ export function createAdvancedView(): AdvancedView {
       controls.hidden = !hasReference;
       if (!hasReference) {
         downloadButton.disabled = true;
-        downloadTitle.textContent = "尚未準備進階輸出";
+        downloadTitle.textContent = state.busy === "reference" ? "正在準備下載" : "尚未準備下載";
         downloadDetail.textContent = state.busy === "reference"
-          ? "正在讀取參照 Excel。"
-          : "請先選擇一個有標題列的參照 Excel。";
-        summary.textContent = `${state.selectedRowCount} 列已勾選。`;
+          ? "請稍候。"
+          : "請先選擇參照 Excel。";
         downloadTransition.update(state.busy === "reference" ? "reference-loading" : "empty");
         return;
       }
 
       renderSelectOptions(sheetSelect, state.sheetNames, state.sheetName ?? "");
       sheetControl.hidden = state.sheetNames.length <= 1;
+      sheetSelect.disabled = downloadBusy;
       const headerValues = state.headers.map((_, index) => String(index));
       const headerKey = JSON.stringify(state.headers);
       if (keySelect.dataset.headers !== headerKey) {
@@ -176,40 +197,51 @@ export function createAdvancedView(): AdvancedView {
       if (headerValues.includes(String(state.keyColumnIndex))) {
         keySelect.value = String(state.keyColumnIndex);
       }
+      keySelect.disabled = downloadBusy;
       renderColumnOptions(
         state.headers,
         new Set(state.selectedColumnIndices),
+        downloadBusy,
         (index, selected) => selectedColumnHandler?.(index, selected),
       );
 
-      const issueDetail = state.issueCount > 0 ? `；另有 ${state.issueCount} 個讀取提醒，不影響下載` : "";
-      summary.textContent = `已勾選 ${state.selectedRowCount} 列；命中 ${state.matchedRowCount} 列，未命中 ${state.unmatchedRowCount} 列；將輸出 ${state.resultRowCount} 列${issueDetail}。`;
+      const extraRows = Math.max(0, state.resultRowCount - state.selectedRowCount);
+      const issues = [
+        ...state.issues,
+        ...(state.unmatchedRowCount > 0
+          ? [`有 ${state.unmatchedRowCount.toLocaleString("zh-TW")} 列找不到參照資料，加入的欄位會留白。`]
+          : []),
+        ...(extraRows > 0
+          ? [`部分資料找到多筆參照內容，結果會增加 ${extraRows.toLocaleString("zh-TW")} 列。`]
+          : []),
+      ];
+      renderIssues(issues);
       if (state.busy === "download") {
         downloadButton.disabled = true;
-        downloadTitle.textContent = "正在建立進階 XLSX";
-        downloadDetail.textContent = "完成後會自動開始下載。";
+        downloadTitle.textContent = "正在建立下載";
+        downloadDetail.textContent = "完成後會自動下載。";
         downloadTransition.update("creating");
         return;
       }
       if (state.busy === "reference") {
         downloadButton.disabled = true;
-        downloadTitle.textContent = "正在讀取參照 Excel";
-        downloadDetail.textContent = "完成後即可繼續。";
+        downloadTitle.textContent = "正在準備下載";
+        downloadDetail.textContent = "請稍候。";
         downloadTransition.update("reference-loading");
         return;
       }
       if (state.resultBusy) {
         downloadButton.disabled = true;
-        downloadTitle.textContent = "正在整理結果";
-        downloadDetail.textContent = "完成後即可下載。";
+        downloadTitle.textContent = "正在準備下載";
+        downloadDetail.textContent = "請稍候。";
         downloadTransition.update("result-loading");
         return;
       }
       downloadButton.disabled = !state.canDownload;
-      downloadTitle.textContent = state.selectedRowCount > 0 ? "可以下載" : "尚未勾選資料列";
+      downloadTitle.textContent = state.selectedRowCount > 0 ? "可以下載" : "尚未準備下載";
       downloadDetail.textContent = state.selectedRowCount > 0
-        ? `會逐列查詢並輸出 ${state.resultRowCount} 列；重複與未命中都不會阻止下載。`
-        : "請先在第 1 區勾選至少一列資料。";
+        ? issues.length > 0 ? "請查看下列提醒，確認後再下載。" : "按「下載進階 XLSX」儲存結果。"
+        : "請先在第 1 區勾選資料列。";
       downloadTransition.update(state.selectedRowCount > 0 ? "ready" : "no-selection");
     },
     save(output) {

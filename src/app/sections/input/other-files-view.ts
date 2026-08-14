@@ -7,7 +7,7 @@ import { completeFileTableBody, updateFileTableFooter } from "./file-table-view"
 export interface OtherFilesView {
   bind(onRemoveFile: (fileId: string) => void): void;
   clear(): void;
-  render(snapshot: WorkspaceSnapshot): void;
+  render(snapshot: WorkspaceSnapshot, removalLocked?: boolean): void;
 }
 
 export function otherFilePresentation(
@@ -45,7 +45,7 @@ export function createOtherFilesView(root: HTMLElement): OtherFilesView {
     clear() {
       renderEmpty();
     },
-    render(snapshot) {
+    render(snapshot, removalLocked = false) {
       const items = otherWorkspaceItems(snapshot);
       list.replaceChildren();
       if (items.length === 0) {
@@ -89,6 +89,7 @@ export function createOtherFilesView(root: HTMLElement): OtherFilesView {
         remove.dataset.removeFileId = item.id;
         remove.setAttribute("aria-label", `從清單移除 ${item.virtualPath}`);
         remove.title = "從清單移除";
+        remove.disabled = removalLocked;
         removeCell.append(remove);
       });
       completeFileTableBody(list, {

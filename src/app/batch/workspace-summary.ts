@@ -39,13 +39,9 @@ export function compactFileRecord(file: CompactFile, outputFormat: OutputFormat)
     fileIssueMessages: file.fileIssues
       .filter((issue) => issue.severity === "error" && issue.sourceRow === undefined)
       .map((issue) => issue.message),
-    hasBlockingIssues: file.hasBlockingIssues,
     id: file.id,
-    outputBlockingRows: new Set(blockingOutputIssues.map((issue) => issue.sourceRow)).size,
     outputFormat,
-    outputIssues: blockingOutputIssues,
     outputReplacementRows: new Set(outputIssues.filter((issue) => !issue.blocking).map((issue) => issue.sourceRow)).size,
-    rowCount: file.sourceRows.length,
     selectionRevision: file.selectionRevision,
     summary: file.summary,
     virtualPath: file.virtualPath,

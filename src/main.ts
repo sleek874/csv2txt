@@ -35,7 +35,7 @@ const inputController = createInputController({
   unloadGuard,
   view: createInputSectionView(),
 });
-const formatController = createFormatController({ batchClient, model, view: createFormatView() });
+const formatController = createFormatController({ model, view: createFormatView() });
 const outputController = createOutputController({
   batchClient,
   model,

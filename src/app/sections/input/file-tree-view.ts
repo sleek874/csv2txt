@@ -14,7 +14,7 @@ export interface FileTreeView {
     onSelect: (fileId: string) => void;
   }): void;
   clear(inputFormat: FileFormat): void;
-  render(snapshot: WorkspaceSnapshot, outputIssues: readonly OutputIssue[]): void;
+  render(snapshot: WorkspaceSnapshot, outputIssues: readonly OutputIssue[], removalLocked?: boolean): void;
 }
 
 export interface InventoryMetrics {
@@ -284,7 +284,7 @@ export function createFileTreeView(root: HTMLElement): FileTreeView {
     cell.textContent = String(value);
   }
 
-  function render(snapshot: WorkspaceSnapshot, outputIssues: readonly OutputIssue[]): void {
+  function render(snapshot: WorkspaceSnapshot, outputIssues: readonly OutputIssue[], removalLocked = false): void {
     const hadTreeFocus = document.activeElement instanceof Element && table.contains(document.activeElement);
     const focusedNodeId = document.activeElement instanceof HTMLButtonElement
       ? document.activeElement.dataset.treeNodeId
@@ -394,6 +394,7 @@ export function createFileTreeView(root: HTMLElement): FileTreeView {
         remove.hidden = true;
       }
       remove.title = "從清單移除";
+      remove.disabled = removalLocked;
       removeCell.append(remove);
 
       node.children.forEach((child) => appendNode(

@@ -10,7 +10,7 @@ import { createOutputPlan } from "../src/app/sections/output/output-plan.ts";
 import { OUTPUT_PRESENTATIONS } from "../src/app/sections/output/output-presentations.ts";
 import { inspectZip } from "../src/core/archive/zip.ts";
 import { parseBig5Txt } from "../src/core/formats/big5-txt.ts";
-import { hasBlockingFileIssues, summarizeInternalFile } from "../src/core/internal-model.ts";
+import { summarizeInternalFile } from "../src/core/internal-model.ts";
 import { validateOutput } from "../src/core/output-validation.ts";
 
 function internalFile(id, virtualPath, options = {}) {
@@ -54,15 +54,11 @@ function workspaceRecord(file, outputFormat) {
     fileIssueMessages: file.issues
       .filter((issue) => issue.severity === "error" && issue.sourceRow === undefined)
       .map((issue) => issue.message),
-    hasBlockingIssues: hasBlockingFileIssues(file),
     id: file.id,
-    outputBlockingRows: new Set(blockingOutputIssues.map((issue) => issue.sourceRow)).size,
     outputFormat,
-    outputIssues: blockingOutputIssues,
     outputReplacementRows: new Set(outputIssues
       .filter((issue) => !issue.blocking)
       .map((issue) => issue.sourceRow)).size,
-    rowCount: file.rows.length,
     selectionRevision: 0,
     summary: file.summary,
     virtualPath: file.virtualPath,
@@ -108,18 +104,11 @@ test("summarizes the full workspace and blocks an incomplete batch", () => {
   };
 
   const plan = createOutputPlan(snapshot);
-  assert.deepEqual(plan.selectedSummary, {
-    downloadableRows: 1,
-    problemCount: 0,
-    selectedRows: 1,
-  });
   assert.deepEqual(plan.totalSummary, {
-    downloadableRows: 1,
     fileCount: 2,
-    problemCount: 1,
     selectedRows: 1,
   });
-  assert.equal(plan.omittedRowCount, 1);
+  assert.equal(plan.hasProblems, true);
   assert.equal(plan.canDownload, false);
 });
 
@@ -141,11 +130,10 @@ test("excludes unchecked-row issues and changes from the Section 2 summary", () 
   assert.equal(omitted.summary.errorRows, 1);
   assert.equal(omitted.summary.warningRows, 0, "an error dominates the row warning");
   assert.deepEqual(plan.totalSummary, {
-    downloadableRows: 0,
     fileCount: 1,
-    problemCount: 1,
     selectedRows: 0,
   });
+  assert.equal(plan.hasProblems, true);
 });
 
 test("accepted files from other families never enter the active output totals", () => {
@@ -163,7 +151,7 @@ test("accepted files from other families never enter the active output totals", 
   });
 
   assert.equal(plan.totalSummary.fileCount, 1);
-  assert.equal(plan.totalSummary.problemCount, 0);
+  assert.equal(plan.hasProblems, false);
   assert.equal(plan.canDownload, true);
 });
 
@@ -193,8 +181,7 @@ test("keeps nonblocking output substitutions out of fatal counts", () => {
   });
 
   assert.equal(plan.outputIssues.length, 0, "nonblocking details stay in the preview worker page");
-  assert.equal(plan.totalSummary.problemCount, 0);
-  assert.equal(plan.totalSummary.downloadableRows, 1);
+  assert.equal(plan.hasProblems, false);
   assert.equal(plan.replacementRowCount, 1);
   assert.equal(plan.canDownload, true);
 });
@@ -217,8 +204,7 @@ test("does not repeat Section 1 row findings when the selected codec can seriali
   });
 
   assert.equal(file.summary.errorRows, 1);
-  assert.equal(plan.totalSummary.problemCount, 0);
-  assert.equal(plan.totalSummary.downloadableRows, 1);
+  assert.equal(plan.hasProblems, false);
   assert.equal(plan.canDownload, true);
 });
 
@@ -266,7 +252,7 @@ test("applies BIG-5E compatibility only to BIG-5E TXT output", async () => {
 
   const big5Plan = createOutputPlan(snapshot("big5-txt"));
   assert.equal(big5Plan.canDownload, true);
-  assert.equal(big5Plan.totalSummary.problemCount, 0);
+  assert.equal(big5Plan.hasProblems, false);
   assert.equal(big5Plan.replacementRowCount, 1);
   assert.equal(big5Plan.outputIssues.length, 0);
 
@@ -322,8 +308,7 @@ test("keeps replacement notices nonblocking while replacement overflow remains f
     ["OUTPUT_WIDTH_OVERFLOW", true],
   ]);
   assert.equal(plan.replacementRowCount, 1);
-  assert.equal(plan.totalSummary.problemCount, 1);
-  assert.equal(plan.totalSummary.downloadableRows, 0);
+  assert.equal(plan.hasProblems, true);
   assert.equal(plan.canDownload, false);
 });
 

@@ -80,6 +80,7 @@ test("parses a header row into unique non-blocking reference column names", () =
   ]);
   assert.equal(parsed.issues.length, 2);
   assert.ok(parsed.issues.every((issue) => issue.severity === "warning"));
+  assert.deepEqual(parsed.issues.map((issue) => issue.code), ["DUPLICATE_HEADER", "EMPTY_HEADER"]);
 });
 
 test("serializes an arbitrary headered organized workbook", () => {
@@ -105,4 +106,5 @@ test("preserves leading blank rows and reports formulas without cached results",
   assert.deepEqual(parsed.rows[0], Array(15).fill(""));
   assert.match(parsed.issues[0]?.message ?? "", /A2.*公式沒有已儲存的計算結果/u);
   assert.equal(parsed.issues[0]?.sourceRow, 2);
+  assert.equal(parsed.issues[0]?.code, "FORMULA_RESULT_MISSING");
 });

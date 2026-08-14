@@ -70,6 +70,9 @@ test("advanced download ignores data issues and expands duplicate reference matc
   let deferResult = false;
   let releaseResult;
   let savedOutput;
+  let resultRequestCount = 0;
+  let releaseSheet;
+  let sheetRequestCount = 0;
   const controller = createAdvancedController({
     batchClient: {
       async clearReference() {},
@@ -82,8 +85,8 @@ test("advanced download ignores data issues and expands duplicate reference matc
         };
       },
       async getAdvancedResult() {
+        resultRequestCount += 1;
         const value = {
-          matchedRowCount: 1,
           resultRowCount: 2,
           selectedRowCount: 1,
           unmatchedRowCount: 0,
@@ -94,12 +97,22 @@ test("advanced download ignores data issues and expands duplicate reference matc
       async inspectReference() {
         return {
           headers: ["ID", "Value"],
-          issueCount: 1,
+          issues: ["參照 Excel 有 1 個讀取提醒。"],
           sheetName: "Reference",
-          sheetNames: ["Reference"],
+          sheetNames: ["Reference", "Other"],
         };
       },
-      async selectReferenceSheet() { throw new Error("not used"); },
+      async selectReferenceSheet(sheetName) {
+        sheetRequestCount += 1;
+        return new Promise((resolve) => {
+          releaseSheet = () => resolve({
+            headers: ["ID", "Value"],
+            issues: [],
+            sheetName,
+            sheetNames: ["Reference", "Other"],
+          });
+        });
+      },
     },
     model,
     status: { announce() {} },
@@ -121,11 +134,22 @@ test("advanced download ignores data issues and expands duplicate reference matc
   await controller.whenIdle();
 
   assert.equal(state.canDownload, true);
-  assert.equal(state.issueCount, 1);
+  assert.deepEqual(state.issues, ["參照 Excel 有 1 個讀取提醒。"]);
+  assert.deepEqual(state.selectedColumnIndices, [], "first use starts with no appended reference columns");
   assert.equal(state.selectedRowCount, 1);
-  assert.equal(state.matchedRowCount, 1);
   assert.equal(state.resultRowCount, 2);
   assert.equal(state.resultBusy, false);
+  assert.equal(resultRequestCount, 1);
+
+  model.setOutputFormat("csv");
+  assert.equal(resultRequestCount, 1, "standard output changes do not invalidate the advanced join");
+
+  model.setInputFormat("xlsx");
+  await controller.whenIdle();
+  assert.equal(resultRequestCount, 2, "active input-family changes do invalidate the advanced join");
+  model.setInputFormat("csv");
+  await controller.whenIdle();
+  assert.equal(resultRequestCount, 3);
 
   deferResult = true;
   callbacks.onSelectedColumnChange(1, false);
@@ -140,4 +164,13 @@ test("advanced download ignores data issues and expands duplicate reference matc
   await controller.whenIdle();
   assert.deepEqual(createdRequest.fileIds, ["primary"]);
   assert.equal(savedOutput.filename, "advanced.xlsx");
+
+  deferResult = false;
+  callbacks.onSheetChange("Other");
+  assert.equal(state.busy, "reference");
+  callbacks.onSheetChange("Reference");
+  assert.equal(sheetRequestCount, 1, "a second sheet change is ignored while the first is running");
+  releaseSheet();
+  await controller.whenIdle();
+  assert.equal(state.sheetName, "Other");
 });

@@ -18,6 +18,10 @@ export type FileOperationStatus =
   | { kind: "result"; activeCount: number; activeFormat: FileFormat; failures: readonly UploadFailureGroup[]; otherCount: number }
   | { kind: "cancelled" }
   | { kind: "cleared" }
+  | { kind: "removing" }
+  | { kind: "restoring" }
+  | { kind: "resetting" }
+  | { kind: "error"; detail: string }
   | { kind: "removed"; detail: string; onUndo: () => void }
   | { kind: "restored"; detail: string };
 
@@ -50,7 +54,8 @@ export function createFileOperationStatusView(root: HTMLElement): FileOperationS
   const details = requireDescendant<HTMLDetailsElement>(box, "#file-operation-details");
   const detailsSummary = requireDescendant<HTMLElement>(box, "#file-operation-details-summary");
   const failures = requireDescendant<HTMLElement>(box, "#file-operation-failures");
-  const transition = createStateTransition(box);
+  const copy = requireDescendant<HTMLElement>(box, ".file-operation-copy");
+  const transition = createStateTransition(copy);
   let unreadCount = 0;
   let busy = false;
   let undoAction: (() => void) | null = null;
@@ -83,7 +88,11 @@ export function createFileOperationStatusView(root: HTMLElement): FileOperationS
       });
     },
     render(status) {
-      busy = status.kind === "processing" || status.kind === "cancelling";
+      busy = status.kind === "processing"
+        || status.kind === "cancelling"
+        || status.kind === "removing"
+        || status.kind === "restoring"
+        || status.kind === "resetting";
       spinner.hidden = !busy;
       cancel.hidden = status.kind !== "processing";
       undo.hidden = status.kind !== "removed";
@@ -97,6 +106,10 @@ export function createFileOperationStatusView(root: HTMLElement): FileOperationS
       if (status.kind === "cancelling") setCopy("正在取消本次新增", "正在停止處理並捨棄這次選取的結果。", "neutral");
       if (status.kind === "cancelled") setCopy("已取消本次新增", "這次選取的檔案都沒有加入；先前的檔案仍保留。", "neutral");
       if (status.kind === "cleared") setCopy("清單已清空", "電腦中的原始檔案沒有變更。", "neutral");
+      if (status.kind === "removing") setCopy("正在從清單移除", "完成後可立即復原。", "neutral");
+      if (status.kind === "restoring") setCopy("正在復原到清單", "完成後會重新顯示檔案與預覽。", "neutral");
+      if (status.kind === "resetting") setCopy("正在清空清單", "正在停止目前工作並清除主要工作區。", "neutral");
+      if (status.kind === "error") setCopy("無法完成檔案操作", status.detail, "error");
       if (status.kind === "removed") setCopy("已從清單移除", status.detail, "neutral");
       if (status.kind === "restored") setCopy("已復原到清單", status.detail, "success");
       if (status.kind === "result") {
@@ -132,7 +145,9 @@ export function createFileOperationStatusView(root: HTMLElement): FileOperationS
         }
       }
       updateMarkAllViewed();
-      transition.update(status.kind);
+      transition.update(status.kind === "processing"
+        ? `processing:${status.progress.sourceId}:${status.progress.virtualPath}`
+        : status.kind);
     },
     setUnreadCount(count) {
       unreadCount = count;

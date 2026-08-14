@@ -85,49 +85,65 @@
   text-underline-offset: 0.2em;
 }
 
-.notice-action {
-  min-height: var(--control-height-compact);
-  flex: none;
-  margin-left: auto;
-  padding: 0.35rem 0.8rem;
+.segmented-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+  padding: 0.4rem;
+  border: var(--border-ui);
+  border-radius: var(--radius-ui);
+  background: var(--color-surface-muted);
 }
 
-.state-transition {
-  transition:
-    opacity var(--transition-fast),
-    visibility var(--transition-fast) allow-discrete,
-    display var(--transition-fast) allow-discrete;
+.segmented-tabs [role="tab"] {
+  border-color: transparent;
+  color: var(--color-text-muted);
+  background: transparent;
+  box-shadow: none;
+}
+
+.segmented-tabs [role="tab"]:hover {
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+}
+
+.segmented-tabs [role="tab"][aria-selected="true"] {
+  border-color: var(--color-accent-border);
+  color: var(--color-accent-text);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-ui);
 }
 
 .state-transition[data-state-transition="a"] {
-  animation: state-transition-a 180ms ease-out;
+  animation: state-transition-a var(--transition-fast);
 }
 
 .state-transition[data-state-transition="b"] {
-  animation: state-transition-b 180ms ease-out;
+  animation: state-transition-b var(--transition-fast);
 }
 
-.state-transition[hidden] {
-  opacity: 0;
-}
-
-@starting-style {
-  .state-transition:not([hidden]) {
-    opacity: 0;
-  }
+.state-reveal:not([hidden]) {
+  animation: state-transition-a var(--transition-fast);
 }
 
 @keyframes state-transition-a {
-  45% { opacity: 0.72; }
+  from { opacity: 0.94; }
 }
 
 @keyframes state-transition-b {
-  45% { opacity: 0.72; }
+  from { opacity: 0.94; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .state-transition {
-    transition: none;
+  .state-transition,
+  .state-reveal {
     animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .segmented-tabs [role="tab"][aria-selected="true"] {
+    outline: 2px solid currentColor;
+    outline-offset: -4px;
   }
 }

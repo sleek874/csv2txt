@@ -17,11 +17,12 @@ import type {
 interface PendingRequest {
   reject: (error: Error) => void;
   resolve: (value: BatchResponseValue) => void;
+  workspaceEpoch?: number;
 }
 
 export interface BatchClient {
   cancelSource(sourceId: string): Promise<void>;
-  clear(): Promise<void>;
+  resetWorkspace(): Promise<void>;
   clearReference(): Promise<void>;
   createAdvancedOutput(fileIds: readonly string[], keyColumnIndex: number, selectedColumnIndices: readonly number[]): Promise<CreatedOutput>;
   createOutput(fileIds: readonly string[], outputFormat: OutputFormat): Promise<CreatedOutput>;
@@ -48,6 +49,7 @@ export function createBatchClient(): BatchClient {
   const previewPending = new Map<string, Promise<PreviewPage>>();
   const fileRevisions = new Map<string, number>();
   let previewContext = "";
+  let workspaceEpoch = 0;
 
   function rejectAll(message: string): void {
     pending.forEach(({ reject }) => reject(new Error(message)));
@@ -56,8 +58,9 @@ export function createBatchClient(): BatchClient {
 
   function currentWorker(): Worker {
     if (worker) return worker;
-    worker = new Worker(new URL("./batch-worker.ts", import.meta.url), { type: "module" });
-    worker.addEventListener("message", (event: MessageEvent<BatchWorkerMessage>) => {
+    const instance = new Worker(new URL("./batch-worker.ts", import.meta.url), { type: "module" });
+    worker = instance;
+    instance.addEventListener("message", (event: MessageEvent<BatchWorkerMessage>) => {
       const message = event.data;
       if (message.type === "progress") {
         progressListener?.(message);
@@ -69,13 +72,14 @@ export function createBatchClient(): BatchClient {
       if (message.type === "error") request.reject(new Error(message.message));
       else request.resolve(message.value);
     });
-    worker.addEventListener("error", () => {
-      rejectAll("背景處理已停止，請重新加入檔案。");
-      worker?.terminate();
-      worker = null;
-    });
-    worker.addEventListener("messageerror", () => rejectAll("無法讀取背景處理結果，請重新加入檔案。"));
-    return worker;
+    const stop = (message: string) => {
+      rejectAll(message);
+      instance.terminate();
+      if (worker === instance) worker = null;
+    };
+    instance.addEventListener("error", () => stop("背景處理已停止，請重新加入檔案。"));
+    instance.addEventListener("messageerror", () => stop("無法讀取背景處理結果，請重新加入檔案。"));
+    return instance;
   }
 
   function request<T extends BatchResponseValue>(value: BatchRequest, transfer: Transferable[] = []): Promise<T> {
@@ -84,8 +88,14 @@ export function createBatchClient(): BatchClient {
       pending.set(requestId, {
         reject,
         resolve: (response) => resolve(response as T),
+        ...("workspaceEpoch" in value ? { workspaceEpoch: value.workspaceEpoch } : {}),
       });
-      currentWorker().postMessage({ requestId, request: value } satisfies BatchRequestMessage, transfer);
+      try {
+        currentWorker().postMessage({ requestId, request: value } satisfies BatchRequestMessage, transfer);
+      } catch (error) {
+        pending.delete(requestId);
+        reject(error instanceof Error ? error : new Error("無法啟動背景處理。"));
+      }
     });
   }
 
@@ -99,7 +109,7 @@ export function createBatchClient(): BatchClient {
     if (cached) return Promise.resolve(cached);
     const active = previewPending.get(key);
     if (active) return active;
-    const result = request<PreviewPage>({ type: "preview-page", fileId, filter, page, outputFormat })
+    const result = request<PreviewPage>({ type: "preview-page", fileId, filter, page, outputFormat, workspaceEpoch })
       .then((value) => {
         previewCache.set(key, value);
         previewPending.delete(key);
@@ -128,27 +138,35 @@ export function createBatchClient(): BatchClient {
   }
 
   return {
-    async cancelSource(sourceId) { await request({ type: "cancel-source", sourceId }); },
-    async clear() {
+    async cancelSource(sourceId) {
+      await request({ type: "cancel-source", sourceId, workspaceEpoch });
+    },
+    async resetWorkspace() {
+      workspaceEpoch += 1;
       previewCache.clear();
       previewPending.clear();
       fileRevisions.clear();
       previewContext = "";
-      if (worker) await request({ type: "clear-files" });
+      pending.forEach((active, requestId) => {
+        if (active.workspaceEpoch === undefined || active.workspaceEpoch === workspaceEpoch) return;
+        pending.delete(requestId);
+        active.reject(new Error("工作區已重設。"));
+      });
+      if (worker) await request({ type: "reset-workspace", workspaceEpoch });
     },
     async clearReference() { await request({ type: "clear-reference" }); },
     createAdvancedOutput: (fileIds, keyColumnIndex, selectedColumnIndices) => request({
-      type: "create-advanced-output", fileIds, keyColumnIndex, selectedColumnIndices, createdAt: new Date().toISOString(),
+      type: "create-advanced-output", fileIds, keyColumnIndex, selectedColumnIndices, createdAt: new Date().toISOString(), workspaceEpoch,
     }),
     createOutput: (fileIds, outputFormat) => request({
-      type: "create-output", fileIds, outputFormat, createdAt: new Date().toISOString(),
+      type: "create-output", fileIds, outputFormat, createdAt: new Date().toISOString(), workspaceEpoch,
     }),
     async discardFiles(fileIds) {
       fileIds.forEach((id) => invalidatePreview(id));
-      await request({ type: "discard-files", fileIds });
+      await request({ type: "discard-files", fileIds, workspaceEpoch });
     },
     getAdvancedResult: (fileIds, keyColumnIndex, selectedColumnIndices) => request({
-      type: "advanced-result", fileIds, keyColumnIndex, selectedColumnIndices,
+      type: "advanced-result", fileIds, keyColumnIndex, selectedColumnIndices, workspaceEpoch,
     }),
     async getPreviewPage(fileId, filter, page, outputFormat) {
       const context = `${fileId}:${fileRevisions.get(fileId) ?? 0}:${outputFormat}:${filter}`;
@@ -168,26 +186,26 @@ export function createBatchClient(): BatchClient {
     },
     processSource(options) {
       const transferable = transferableBytes(options.bytes);
-      return request({ type: "process-source", ...options, bytes: transferable }, [transferable.buffer]);
+      return request({ type: "process-source", ...options, bytes: transferable, workspaceEpoch }, [transferable.buffer]);
     },
     refreshOutput(fileIds, outputFormat) {
       invalidatePreview();
-      return request({ type: "refresh-output", fileIds, outputFormat });
+      return request({ type: "refresh-output", fileIds, outputFormat, workspaceEpoch });
     },
     async removeFiles(fileIds) {
       fileIds.forEach((id) => invalidatePreview(id));
-      await request({ type: "remove-files", fileIds });
+      await request({ type: "remove-files", fileIds, workspaceEpoch });
     },
-    async restoreFiles(fileIds) { await request({ type: "restore-files", fileIds }); },
+    async restoreFiles(fileIds) { await request({ type: "restore-files", fileIds, workspaceEpoch }); },
     selectReferenceSheet: (sheetName) => request({ type: "select-reference-sheet", sheetName }),
     setProgressListener(listener) { progressListener = listener; },
     setRowIncluded(fileId, sourceRow, included, outputFormat) {
       invalidatePreview(fileId);
-      return request({ type: "set-row-included", fileId, sourceRow, included, outputFormat });
+      return request({ type: "set-row-included", fileId, sourceRow, included, outputFormat, workspaceEpoch });
     },
     setRowsIncluded(fileId, sourceRows, included, outputFormat) {
       invalidatePreview(fileId);
-      return request({ type: "set-rows-included", fileId, sourceRows, included, outputFormat });
+      return request({ type: "set-rows-included", fileId, sourceRows, included, outputFormat, workspaceEpoch });
     },
   };
 }

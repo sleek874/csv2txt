@@ -21,7 +21,7 @@ function parsedRow(label) {
   return [label, ...Array(14).fill("x")];
 }
 
-function controllerHarness({ archiveError, archiveExtraction, confirmClear = true, onArchiveExtract, onProcessStart, onProcessingInfo, parsedRows, processError, processGate } = {}) {
+function controllerHarness({ archiveError, archiveExtraction, confirmClear = true, onArchiveExtract, onProcessStart, onProcessingInfo, parsedRows, processError, processGate, restoreGate } = {}) {
   let callbacks;
   let snapshot = { files: [], inputFormat: "csv", selectedFileId: null, outputFormat: "big5-txt", sources: [] };
   const announcements = [];
@@ -37,7 +37,14 @@ function controllerHarness({ archiveError, archiveExtraction, confirmClear = tru
     confirmClear() { return confirmClear; },
     fileInput() { return { click() {} }; },
     focusFilePicker() {},
-    render(value) { snapshot = value; },
+    render(value, options = {}) {
+      snapshot = value;
+      pickerLocks.push({
+        clearEnabled: options.clearEnabled ?? false,
+        locked: options.operationLocked ?? false,
+        visible: options.processingVisible ?? false,
+      });
+    },
     renderOperationStatus(status) {
       operationStatuses.push(status);
       if (status.kind === "processing") onProcessingInfo?.(status.progress);
@@ -47,9 +54,9 @@ function controllerHarness({ archiveError, archiveExtraction, confirmClear = tru
       if (status.kind === "removed") undos.push({ message: status.detail, onUndo: status.onUndo });
     },
     renderPreviewPage() {},
-    setFilePickerLocked(locked, visible) { pickerLocks.push({ locked, visible }); },
   };
   const workerFiles = new Map();
+  const removedWorkerFiles = new Map();
   const cancelledSources = new Set();
   let progressListener = null;
 
@@ -58,12 +65,8 @@ function controllerHarness({ archiveError, archiveExtraction, confirmClear = tru
     return Object.assign(file, {
       blockingOutputIssues: outputIssues.filter((issue) => issue.blocking),
       fileIssueMessages: file.issues.filter((issue) => issue.severity === "error" && issue.sourceRow === undefined).map((issue) => issue.message),
-      hasBlockingIssues: file.rejectedRecords.length > 0,
-      outputBlockingRows: new Set(outputIssues.filter((issue) => issue.blocking).map((issue) => issue.sourceRow)).size,
       outputFormat,
-      outputIssues,
       outputReplacementRows: new Set(outputIssues.filter((issue) => !issue.blocking).map((issue) => issue.sourceRow)).size,
-      rowCount: file.rows.length,
       selectionRevision: file.selectionRevision ?? 0,
     });
   }
@@ -76,8 +79,16 @@ function controllerHarness({ archiveError, archiveExtraction, confirmClear = tru
 
   const batchClient = {
     async cancelSource(sourceId) { cancelledSources.add(sourceId); },
-    async clear() { workerFiles.clear(); },
-    async discardFiles(fileIds) { fileIds.forEach((id) => workerFiles.delete(id)); },
+    async resetWorkspace() {
+      workerFiles.clear();
+      removedWorkerFiles.clear();
+    },
+    async discardFiles(fileIds) {
+      fileIds.forEach((id) => {
+        workerFiles.delete(id);
+        removedWorkerFiles.delete(id);
+      });
+    },
     async getPreviewPage() { throw new Error("not used"); },
     async processSource(request) {
       progressListener?.({ current: 0, phase: request.inputType === "zip" ? "extracting" : "processing", sourceId: request.sourceId, total: 1, virtualPath: request.sourceName });
@@ -134,8 +145,21 @@ function controllerHarness({ archiveError, archiveExtraction, confirmClear = tru
       };
     },
     async refreshOutput(fileIds, outputFormat) { return fileIds.map((id) => record(workerFiles.get(id), outputFormat)); },
-    async removeFiles(fileIds) { fileIds.forEach((id) => workerFiles.delete(id)); },
-    async restoreFiles() {},
+    async removeFiles(fileIds) {
+      fileIds.forEach((id) => {
+        const file = workerFiles.get(id);
+        if (file) removedWorkerFiles.set(id, file);
+        workerFiles.delete(id);
+      });
+    },
+    async restoreFiles(fileIds) {
+      if (restoreGate) await restoreGate;
+      fileIds.forEach((id) => {
+        const file = removedWorkerFiles.get(id);
+        if (file) workerFiles.set(id, file);
+        removedWorkerFiles.delete(id);
+      });
+    },
     setProgressListener(listener) { progressListener = listener; },
     async setRowIncluded(fileId, sourceRow, included, outputFormat) {
       const file = workerFiles.get(fileId);
@@ -248,6 +272,30 @@ test("ignores another file selection while the current selection is processing",
   assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["first.csv"]);
 });
 
+test("clear stays enabled and preempts an in-flight upload", async () => {
+  let releaseProcessing;
+  let signalStarted;
+  const gatePromise = new Promise((resolve) => { releaseProcessing = resolve; });
+  const started = new Promise((resolve) => { signalStarted = resolve; });
+  const harness = controllerHarness({
+    onProcessStart() { signalStarted(); },
+    processGate: gatePromise,
+  });
+
+  harness.callbacks().onFilesChosen([sourceFile("large.csv", "A,01")]);
+  await started;
+  assert.ok(harness.pickerLocks.some(({ clearEnabled, locked }) => clearEnabled && locked));
+  harness.callbacks().onClearWorkspace();
+  assert.equal(harness.operationStatuses.at(-1)?.kind, "resetting");
+  assert.deepEqual(harness.snapshot().files, []);
+
+  releaseProcessing();
+  await harness.controller.whenIdle();
+  assert.deepEqual(harness.snapshot().files, []);
+  assert.equal(harness.operationStatuses.at(-1)?.kind, "cleared");
+  assert.equal(harness.operationStatuses.some(({ kind }) => kind === "result"), false);
+});
+
 test("cancelling a slow selection discards the whole staged batch and preserves prior files", async () => {
   let releaseProcessing;
   let signalStarted;
@@ -286,16 +334,38 @@ test("individual removal and clear all only change the browser workspace", async
   harness.callbacks().onFilesChosen([sourceFile("first.csv", "A,01"), sourceFile("second.csv", "B,02")]);
   await harness.controller.whenIdle();
   harness.callbacks().onRemoveFile(harness.snapshot().files[0].id);
+  assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["first.csv", "second.csv"]);
+  await harness.controller.whenIdle();
   assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["second.csv"]);
   assert.deepEqual(harness.snapshot().sources.map((source) => source.name), ["second.csv"]);
   assert.match(harness.undos.at(-1)?.message, /原始檔案沒有變更/u);
   harness.undos.at(-1)?.onUndo();
+  await harness.controller.whenIdle();
   assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["first.csv", "second.csv"]);
   assert.deepEqual(harness.snapshot().sources.map((source) => source.name), ["first.csv", "second.csv"]);
   harness.callbacks().onClearWorkspace();
+  await harness.controller.whenIdle();
   assert.deepEqual(harness.snapshot().files, []);
   assert.deepEqual(harness.snapshot().sources, []);
   assert.match(harness.announcements.at(-1), /原始檔案沒有變更/u);
+});
+
+test("undo publishes a restored file only after worker restoration completes", async () => {
+  let releaseRestore;
+  const restoreGate = new Promise((resolve) => { releaseRestore = resolve; });
+  const harness = controllerHarness({ restoreGate });
+  harness.callbacks().onFilesChosen([sourceFile("first.csv", "A,01")]);
+  await harness.controller.whenIdle();
+  harness.callbacks().onRemoveFile(harness.snapshot().files[0].id);
+  await harness.controller.whenIdle();
+
+  harness.undos.at(-1)?.onUndo();
+  assert.equal(harness.operationStatuses.at(-1)?.kind, "restoring");
+  assert.deepEqual(harness.snapshot().files, []);
+  releaseRestore();
+  await harness.controller.whenIdle();
+  assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["first.csv"]);
+  assert.equal(harness.operationStatuses.at(-1)?.kind, "restored");
 });
 
 test("clear all keeps the workspace when confirmation is cancelled", async () => {
@@ -313,11 +383,13 @@ test("removing an archive source is undoable with its extracted files", async ()
   await harness.controller.whenIdle();
   const sourceId = harness.snapshot().sources[0]?.id;
   harness.callbacks().onRemoveSource(sourceId);
+  await harness.controller.whenIdle();
   assert.deepEqual(harness.snapshot().files, []);
   assert.deepEqual(harness.snapshot().sources, []);
   assert.match(harness.announcements.at(-1), /共 1 個項目/u);
   assert.match(harness.undos.at(-1)?.message, /bundle\.zip/u);
   harness.undos.at(-1)?.onUndo();
+  await harness.controller.whenIdle();
   assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), [
     "bundle/folder/from-zip.csv",
   ]);

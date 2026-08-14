@@ -1,7 +1,13 @@
+import { compareCanonicalVirtualPaths } from "../../core/archive/policy";
 import type { WorkspaceItem, WorkspaceSnapshot } from "./workspace-types";
 
 export function activeWorkspaceItems(snapshot: WorkspaceSnapshot): WorkspaceItem[] {
   return snapshot.files.filter((item) => item.sourceFormat === snapshot.inputFormat);
+}
+
+export function canonicalActiveWorkspaceItems(snapshot: WorkspaceSnapshot): WorkspaceItem[] {
+  return activeWorkspaceItems(snapshot)
+    .sort((left, right) => compareCanonicalVirtualPaths(left.virtualPath, right.virtualPath));
 }
 
 export function otherWorkspaceItems(snapshot: WorkspaceSnapshot): WorkspaceItem[] {

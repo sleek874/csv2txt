@@ -135,6 +135,7 @@ export function parseSpreadsheet(
       const cell = sheet[address] as CellObject | undefined;
       if (cell?.f !== undefined && cell.v === undefined) {
         issues.push({
+          code: "FORMULA_RESULT_MISSING",
           message: `Excel 儲存格 ${address} 的公式沒有已儲存的計算結果；請在試算表軟體中重新計算並儲存後再試。`,
           severity: "error",
           sourceRow: rowIndex + 1,
@@ -166,12 +167,14 @@ function uniqueHeaders(rawHeaders: readonly string[], columnCount: number): {
     }
     if (!rawHeader) {
       issues.push({
+        code: "EMPTY_HEADER",
         message: `第 ${columnIndex + 1} 欄沒有標題，已使用「${header}」。`,
         severity: "warning",
         sourceRow: 1,
       });
     } else if (header !== rawHeader) {
       issues.push({
+        code: "DUPLICATE_HEADER",
         message: `標題「${rawHeader}」重複，已將這一欄命名為「${header}」。`,
         severity: "warning",
         sourceRow: 1,
