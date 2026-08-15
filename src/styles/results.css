@@ -250,7 +250,7 @@
 .file-tree-copy {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) 9.5rem;
+  grid-template-columns: minmax(0, 1fr) max-content;
   gap: 0.4rem;
   align-items: center;
 }
@@ -375,8 +375,16 @@
 
 .data-table {
   --preview-row-height: 2.4rem;
+  --preview-byte-columns-width: 208ch;
+  --preview-leading-columns-width: 14.5rem;
+  --preview-field-padding-width: 16.5rem;
 
-  width: max-content;
+  table-layout: fixed;
+  width: calc(
+    var(--preview-byte-columns-width)
+    + var(--preview-leading-columns-width)
+    + var(--preview-field-padding-width)
+  );
   min-width: 100%;
   font-size: 0.84rem;
 }
@@ -575,42 +583,31 @@
 .data-table tr[data-tone="warning"] .row-status-cell { color: var(--color-warning-text); }
 .data-table tr[data-tone="valid"] .row-status-cell { color: var(--color-success-text); }
 
-.data-table td[data-tone] {
-  font-weight: 700;
-}
-
 .data-table td[data-tone="error"] {
+  border-left: var(--border-width-emphasis) solid var(--color-error);
   color: var(--color-error-text);
+  background: var(--color-error-bg);
 }
 
 .data-table td[data-tone="warning"] {
+  border-left: var(--border-width-emphasis) solid var(--color-warning);
   color: var(--color-warning-text);
+  background: var(--color-warning-bg);
 }
 
 .data-cell-value {
-  display: inline-block;
+  display: block;
   min-width: 0;
-}
-
-.data-table td[data-tone="error"] .data-cell-value {
-  box-shadow: inset 0 calc(-1 * var(--border-width-preview)) var(--color-error);
-}
-
-.data-table td[data-tone="warning"] .data-cell-value {
-  box-shadow: inset 0 calc(-1 * var(--border-width-preview)) var(--color-warning);
-}
-
-.data-cell-value {
   overflow: visible;
   font-family: "Sarasa Mono TC", ui-monospace, "Cascadia Code", Consolas, monospace;
   font-size: 0.92rem;
+  font-weight: 400;
   font-variant-ligatures: none;
   line-height: 1.5;
   text-overflow: clip;
 }
 
 .data-cell-value.is-empty {
-  color: var(--color-text-subtle);
   font-family: Inter, "Noto Sans TC", system-ui, sans-serif;
   font-style: normal;
 }

@@ -344,7 +344,7 @@ export function createFileTreeView(root: HTMLElement): FileTreeView {
       badgeLine.className = "file-tree-badge-line";
       if (metrics.unreadCount > 0) appendBadge(
         badgeLine,
-        node.item ? "新加入" : `新加入 ${metrics.unreadCount}`,
+        `新${metrics.unreadCount}`,
         "info",
       );
       copy.append(nameLine, badgeLine);

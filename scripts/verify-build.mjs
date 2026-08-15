@@ -1021,6 +1021,16 @@ assert.match(
 );
 assert.match(
   resultStyles,
+  /\.file-tree-copy\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) max-content/u,
+  "Unread badges must reserve only their content width and otherwise preserve filename space.",
+);
+assert.match(
+  fileTreeViewSource,
+  /`新\$\{metrics\.unreadCount\}`/u,
+  "Unread badges must keep their count without the longer joined wording.",
+);
+assert.match(
+  resultStyles,
   /\.inventory-table\s*\{[^}]*--inventory-file-column-width:\s*24rem;[^}]*--inventory-number-column-width:\s*5\.75rem;[^}]*--inventory-other-detail-column-width:\s*23rem;[\s\S]*?\.inventory-table :is\(th, td\):first-child\s*\{[^}]*width:\s*var\(--inventory-file-column-width\);[^}]*min-width:\s*var\(--inventory-file-column-width\);[^}]*max-width:\s*var\(--inventory-file-column-width\);[\s\S]*?\.inventory-table\.other-files-table :is\(th, td\):nth-child\(2\),\s*\.inventory-table\.other-files-table :is\(th, td\):nth-child\(3\)\s*\{[^}]*width:\s*var\(--inventory-other-detail-column-width\);[^}]*min-width:\s*var\(--inventory-other-detail-column-width\);[^}]*max-width:\s*var\(--inventory-other-detail-column-width\);/u,
   "Both inventory tabs must share a fixed filename track and equal intrinsic table width.",
 );
@@ -1061,9 +1071,10 @@ assert.doesNotMatch(
 );
 assert.match(
   resultStyles,
-  /\.data-table\s*\{[^}]*width:\s*max-content[^}]*min-width:\s*100%/u,
-  "The preview table must expand from intrinsic fixed-field widths.",
+  /\.data-table\s*\{[^}]*--preview-byte-columns-width:\s*208ch;[^}]*--preview-leading-columns-width:\s*14\.5rem;[^}]*--preview-field-padding-width:\s*16\.5rem;[^}]*table-layout:\s*fixed;[^}]*width:\s*calc\([^}]*var\(--preview-byte-columns-width\)[^}]*var\(--preview-leading-columns-width\)[^}]*var\(--preview-field-padding-width\)[^}]*\);[^}]*min-width:\s*100%/u,
+  "The preview table must keep one fixed width derived from the 208-byte fields and stable utility columns.",
 );
+assert.doesNotMatch(resultStyles, /\.data-table\s*\{[^}]*width:\s*max-content/u);
 assert.match(
   resultStyles,
   /\.data-table :is\(th, td\):nth-child\(12\)\s*\{[^}]*--preview-field-width:\s*120ch/u,
@@ -1111,7 +1122,7 @@ assert.match(
 );
 assert.match(
   resultStyles,
-  /\.data-table\s*\{[^}]*--preview-row-height:\s*2\.4rem[^}]*width:\s*max-content/u,
+  /\.data-table\s*\{[^}]*--preview-row-height:\s*2\.4rem[^}]*table-layout:\s*fixed/u,
   "The preview table must own one reusable natural row-height value.",
 );
 assert.doesNotMatch(
@@ -1176,18 +1187,28 @@ assert.match(
 );
 assert.match(
   resultStyles,
-  /\.data-cell-value\s*\{[^}]*display:\s*inline-block[^}]*min-width:\s*0/u,
-  "Preview issue markers must size to the displayed value instead of the whole cell.",
+  /\.data-cell-value\s*\{[^}]*display:\s*block[^}]*min-width:\s*0[^}]*font-family:\s*"Sarasa Mono TC"[^}]*font-weight:\s*400/u,
+  "Preview values must keep one fixed-width font and consistent weight in every status.",
 );
 assert.doesNotMatch(
   resultStyles,
   /\.data-table td\[data-tone="(?:error|warning)"\]\s*\{[^}]*box-shadow/u,
-  "Preview issue markers must not paint across the whole table cell.",
+  "Preview issue cells must not use the obsolete underline marker.",
 );
 assert.match(
   resultStyles,
-  /\.data-table td\[data-tone="error"\] \.data-cell-value\s*\{[^}]*box-shadow:[^}]*var\(--color-error\)[\s\S]*?\.data-table td\[data-tone="warning"\] \.data-cell-value\s*\{[^}]*box-shadow:[^}]*var\(--color-warning\)/u,
-  "Preview error and warning markers must remain visible on their displayed values.",
+  /\.data-table td\[data-tone="error"\]\s*\{[^}]*border-left:\s*var\(--border-width-emphasis\) solid var\(--color-error\);[^}]*color:\s*var\(--color-error-text\);[^}]*background:\s*var\(--color-error-bg\);[\s\S]*?\.data-table td\[data-tone="warning"\]\s*\{[^}]*border-left:\s*var\(--border-width-emphasis\) solid var\(--color-warning\);[^}]*color:\s*var\(--color-warning-text\);[^}]*background:\s*var\(--color-warning-bg\);/u,
+  "Preview error and warning cells must combine stable text and background colors with a non-color border cue.",
+);
+assert.doesNotMatch(
+  resultStyles,
+  /\.data-table td\[data-tone="(?:error|warning)"\] \.data-cell-value/u,
+  "Preview issue styling must not depend on a value-sized marker.",
+);
+assert.doesNotMatch(
+  resultStyles,
+  /\.data-cell-value\.is-empty\s*\{[^}]*color:/u,
+  "Empty preview markers must inherit the current cell text tone.",
 );
 assert.match(
   componentStyles,
