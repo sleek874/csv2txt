@@ -38,7 +38,7 @@
 - Section 1 treegrid 呈現空白列、無法解析、資料、正確、錯誤、警告、已選列與目前格式輸出問題；Section 2 只保留所選格式摘要、下載狀態與下載動作。
 - Sections 2／3 的操作卡共用狀態、檔案／列摘要、固定 action rail 與預設收合的問題 disclosure；展開內容不重新置中桌面按鈕。
 - 未還原 PUA 與預計替代的位置在預覽以 `■` 顯示，code point 留在展開問題區；原始 PUA 仍由 IR 保存。BIG-5E 輸入的無對照 byte segment 在 IR 以 `？` 代替並在預覽該位置顯示 `■`，其餘可解碼內容保留。技術代碼與 byte 證據只在 disclosure 顯示。
-- ZIP reader 限制巢狀深度、項目數、單檔／總展開量，拒絕 traversal、加密、symlink、ZIP64 與碰撞。
+- 使用者選取的來源與參照 Excel、ZIP 內每個 entry 都採 100 MiB 單檔上限；ZIP reader 另限制巢狀深度與項目數，拒絕 traversal、加密、symlink、ZIP64 與碰撞，不限制累計輸入大小。
 - Excel、ZIP 與預覽字型維持 manifest-derived lazy resource group；正式 CSP 保持 connect-src 'none'。
 - 靜態 build verifier 持續檢查 semantic shell、ARIA reference、legacy residue、離線資源與 JavaScript budget。
 

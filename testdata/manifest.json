@@ -5,7 +5,7 @@
   "fixedRecordWidthBytes": 208,
   "maximumRowsPerFile": 6000,
   "maximumDistinctDataFiles": 300,
-  "generatedDataFileCount": 46,
+  "generatedDataFileCount": 47,
   "fieldNames": [
     {
       "field": 1,
@@ -371,6 +371,16 @@
       "expandedBytes": 64270710,
       "format": "txt",
       "purpose": "ZIP 解壓與大量批次的人工效能壓力情境；不屬於一般 6,000 列 dataset 上限。"
+    }
+  ],
+  "manualExtremeArchives": [
+    {
+      "entryCount": 200,
+      "name": "extreme-200-txt-10000-rows.zip",
+      "rowsPerEntry": 10000,
+      "expandedBytes": 420000000,
+      "format": "txt",
+      "purpose": "200 檔、每檔 10,000 列的人工瀏覽器壓力情境；自動測試只驗證 ZIP metadata，不完整解壓。"
     }
   ]
 }

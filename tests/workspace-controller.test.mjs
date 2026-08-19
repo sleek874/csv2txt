@@ -4,6 +4,7 @@ import test from "node:test";
 import { createInputController } from "../src/app/sections/input/input-controller.ts";
 import { createWorkspaceModel } from "../src/app/state/workspace-model.ts";
 import { createInternalFile } from "../src/core/conversion-pipeline.ts";
+import { FILE_SIZE_LIMIT_BYTES } from "../src/core/file-size-policy.ts";
 import { detectSourceFileType, fileFormatForSourceType } from "../src/core/file-formats.ts";
 import { summarizeInternalFile } from "../src/core/internal-model.ts";
 import { validateOutput } from "../src/core/output-validation.ts";
@@ -14,6 +15,15 @@ function sourceFile(name, contents) {
     async arrayBuffer() { return bytes.slice().buffer; },
     name,
     size: bytes.byteLength,
+  };
+}
+
+function sourceFileWithSize(name, size, contents = "A,01") {
+  const bytes = new TextEncoder().encode(contents);
+  return {
+    async arrayBuffer() { return bytes.slice().buffer; },
+    name,
+    size,
   };
 }
 
@@ -211,6 +221,22 @@ test("new file selections append to the existing workspace", async () => {
   assert.ok(harness.snapshot().files.every((file) => file.unread));
   assert.equal(harness.model.selectedItem()?.virtualPath, "first.csv");
   assert.equal(harness.messages.length, 0);
+});
+
+test("accepts 100 MiB source files and rejects only files above the shared limit", async () => {
+  const harness = controllerHarness();
+  harness.callbacks().onFilesChosen([
+    sourceFileWithSize("accepted.csv", FILE_SIZE_LIMIT_BYTES),
+    sourceFileWithSize("too-large.csv", FILE_SIZE_LIMIT_BYTES + 1),
+  ]);
+  await harness.controller.whenIdle();
+
+  assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["accepted.csv"]);
+  assert.deepEqual(harness.messages[0]?.groups, [{
+    files: ["too-large.csv"],
+    label: "檔案超過 100 MB",
+    tone: "error",
+  }]);
 });
 
 test("ZIP extraction appends files using their virtual paths", async () => {

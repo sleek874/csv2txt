@@ -1,9 +1,11 @@
+import { FILE_SIZE_LIMIT_BYTES } from "../file-size-policy";
+
 export const ARCHIVE_LIMITS = {
   maxArchiveDepth: 5,
   maxEntries: 500,
-  maxExpandedFileBytes: 25 * 1024 * 1024,
-  maxExpandedTotalBytes: 100 * 1024 * 1024,
-  maxOutputBytes: 100 * 1024 * 1024,
+  maxOutputEntryBytes: FILE_SIZE_LIMIT_BYTES,
+  maxOutputSourceBytes: FILE_SIZE_LIMIT_BYTES,
+  maxOutputBytes: FILE_SIZE_LIMIT_BYTES,
   maxVirtualFolderDepth: 5,
 } as const;
 

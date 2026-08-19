@@ -1,5 +1,6 @@
 import type { OfflineCache } from "../../../browser/offline-cache";
 import type { UnloadGuard } from "../../../browser/unload-guard";
+import { exceedsFileSizeLimit, FILE_SIZE_LIMIT_LABEL } from "../../../core/file-size-policy";
 import { detectInputFileType } from "../../../core/file-formats";
 import { taipeiDateStamp } from "../../../core/validation";
 import type { BatchClient } from "../../batch/batch-client";
@@ -10,7 +11,6 @@ import type { WorkspaceItem, WorkspaceSource } from "../../state/workspace-types
 import type { FileOperationStatus, UploadFailureGroup } from "./file-operation-status-view";
 import type { InputSectionView } from "./input-section-view";
 
-const MAX_SOURCE_FILE_BYTES = 25 * 1024 * 1024;
 const PROCESSING_FEEDBACK_DELAY_MS = 300;
 
 interface InputControllerOptions {
@@ -57,7 +57,7 @@ function archiveFailureCategory(error: unknown): FailureCategory {
   if (/路徑不安全|路徑超過/u.test(message)) return { label: "不安全的壓縮檔內容", tone: "error" };
   if (/加密/u.test(message)) return { label: "受密碼保護", tone: "error" };
   if (/重複路徑/u.test(message)) return { label: "壓縮檔內有同名檔案", tone: "error" };
-  if (/25 MiB|100 MiB/u.test(message)) return { label: "檔案大小超過限制", tone: "error" };
+  if (/單檔.*超過/u.test(message)) return { label: `檔案超過 ${FILE_SIZE_LIMIT_LABEL}`, tone: "error" };
   if (/項目.*上限|項目累計/u.test(message)) return { label: "壓縮檔內檔案過多", tone: "error" };
   if (/巢狀/u.test(message)) return { label: "壓縮層數超過限制", tone: "error" };
   return { label: "無法開啟或內容損壞", tone: "error" };
@@ -148,9 +148,9 @@ export function createInputController(options: InputControllerOptions) {
       addFailure(batch, { label: `不支援的檔案類型（${extensionLabel(sourceFile.name)}）`, tone: "warning" }, sourceFile.name);
       return;
     }
-    if (sourceFile.size === 0 || sourceFile.size > MAX_SOURCE_FILE_BYTES) {
+    if (sourceFile.size === 0 || exceedsFileSizeLimit(sourceFile.size)) {
       addFailure(batch, {
-        label: sourceFile.size === 0 ? "空白檔案" : "檔案大小超過限制",
+        label: sourceFile.size === 0 ? "空白檔案" : `檔案超過 ${FILE_SIZE_LIMIT_LABEL}`,
         tone: "error",
       }, sourceFile.name);
       return;

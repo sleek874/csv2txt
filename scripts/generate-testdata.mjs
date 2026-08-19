@@ -32,6 +32,11 @@ const EXTREME_ARCHIVE = {
   name: "extreme-51-txt-6001-rows.zip",
   rowsPerEntry: 6_001,
 };
+const MANUAL_EXTREME_ARCHIVE = {
+  entryCount: 200,
+  name: "extreme-200-txt-10000-rows.zip",
+  rowsPerEntry: 10_000,
+};
 const testdataDirectory = fileURLToPath(new URL("../testdata/", import.meta.url));
 const formatDirectories = Object.fromEntries(
   ["csv", "xls", "xlsx", "txt", "zip"].map((format) => [
@@ -360,8 +365,26 @@ const exclusionArchiveDefinition = {
     { path: "excluded/link.csv", reason: "symlink" },
   ],
 };
-const archiveFixtureCount = archiveDefinitions.length + 2;
+const archiveFixtureCount = archiveDefinitions.length + 3;
 const FIXTURE_MTIME = new Date("1980-01-01T00:00:00.000Z");
+
+function extremeArchiveEntries(definition, bytes) {
+  return Array.from({ length: definition.entryCount }, (_, index) => ({
+    path: `batch/synthetic-${String(index + 1).padStart(3, "0")}.txt`,
+    bytes,
+  }));
+}
+
+function extremeArchiveText(definition) {
+  const rows = Array.from(
+    { length: definition.rowsPerEntry },
+    (_, index) => baseRow(index),
+  );
+  rows.forEach(assertSerializableRow);
+  return serializeBig5Txt(
+    rows.map((values, index) => ({ sourceRow: index + 1, values })),
+  );
+}
 
 async function writeArchives() {
   mkdirSync(formatDirectories.zip, { recursive: true });
@@ -390,20 +413,18 @@ async function writeArchives() {
     ],
   }));
 
-  const extremeRows = Array.from(
-    { length: EXTREME_ARCHIVE.rowsPerEntry },
-    (_, index) => baseRow(index),
-  );
-  extremeRows.forEach(assertSerializableRow);
-  const extremeTxt = serializeBig5Txt(
-    extremeRows.map((values, index) => ({ sourceRow: index + 1, values })),
-  );
   writeFileSync(
     join(formatDirectories.zip, EXTREME_ARCHIVE.name),
-    await serializeZip(Array.from({ length: EXTREME_ARCHIVE.entryCount }, (_, index) => ({
-      path: `batch/synthetic-${String(index + 1).padStart(3, "0")}.txt`,
-      bytes: extremeTxt,
-    }))),
+    await serializeZip(extremeArchiveEntries(EXTREME_ARCHIVE, extremeArchiveText(EXTREME_ARCHIVE))),
+  );
+
+  const manualExtremeTxt = extremeArchiveText(MANUAL_EXTREME_ARCHIVE);
+  writeFileSync(
+    join(formatDirectories.zip, MANUAL_EXTREME_ARCHIVE.name),
+    zipSync(Object.fromEntries(
+      extremeArchiveEntries(MANUAL_EXTREME_ARCHIVE, manualExtremeTxt)
+        .map(({ path, bytes }) => [path, [bytes, { mtime: FIXTURE_MTIME }]]),
+    ), { level: 6 }),
   );
 }
 
@@ -457,6 +478,14 @@ async function generateAll() {
         * (FIXED_RECORD_WIDTH_BYTES + 2),
       format: "txt",
       purpose: "ZIP 解壓與大量批次的人工效能壓力情境；不屬於一般 6,000 列 dataset 上限。",
+    }],
+    manualExtremeArchives: [{
+      ...MANUAL_EXTREME_ARCHIVE,
+      expandedBytes: MANUAL_EXTREME_ARCHIVE.entryCount
+        * MANUAL_EXTREME_ARCHIVE.rowsPerEntry
+        * (FIXED_RECORD_WIDTH_BYTES + 2),
+      format: "txt",
+      purpose: "200 檔、每檔 10,000 列的人工瀏覽器壓力情境；自動測試只驗證 ZIP metadata，不完整解壓。",
     }],
   };
   writeFileSync(join(testdataDirectory, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");

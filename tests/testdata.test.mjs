@@ -3,8 +3,9 @@ import { readFileSync, readdirSync } from "node:fs";
 import { basename, extname } from "node:path";
 import test from "node:test";
 
-import { extractZip } from "../src/core/archive/zip.ts";
+import { extractZip, inspectZip } from "../src/core/archive/zip.ts";
 import { createInternalFile } from "../src/core/conversion-pipeline.ts";
+import { FILE_SIZE_LIMIT_BYTES } from "../src/core/file-size-policy.ts";
 import { FIXED_RECORD_WIDTH_BYTES } from "../src/core/fixed-profile.ts";
 import { parseBig5Txt } from "../src/core/formats/big5-txt.ts";
 import { parseCsvText } from "../src/core/formats/csv.ts";
@@ -45,7 +46,8 @@ test("mock data stays within the requested file and row limits", () => {
     manifest.datasets.length * manifest.formats.length
       + manifest.archives.length
       + manifest.exclusionArchives.length
-      + manifest.extremeArchives.length,
+      + manifest.extremeArchives.length
+      + manifest.manualExtremeArchives.length,
   );
   assert.equal(Math.max(...manifest.datasets.map((dataset) => dataset.rowCount)), 6_000);
   assert.ok(manifest.datasets.every((dataset) => dataset.rowCount <= 6_000));
@@ -79,6 +81,27 @@ for (const archive of manifest.extremeArchives) {
     assert.deepEqual(last.bytes, first.bytes);
     assertCrLf(first.bytes, first.relativePath);
     assert.equal(rowsFor("txt", basename(first.relativePath), first.bytes).length, archive.rowsPerEntry);
+    assert.ok(archive.rowsPerEntry > manifest.maximumRowsPerFile);
+  });
+}
+
+for (const archive of manifest.manualExtremeArchives) {
+  test(`${archive.name} preserves its manual stress metadata without full extraction`, () => {
+    const bytes = readFileSync(new URL(`zip/${archive.name}`, testdataDirectory));
+    const metadata = inspectZip(bytes);
+    assert.ok(bytes.byteLength <= FILE_SIZE_LIMIT_BYTES, "the selected ZIP stays within the upload limit");
+    assert.equal(metadata.length, archive.entryCount);
+    assert.equal(
+      metadata.reduce((total, entry) => total + entry.uncompressedSize, 0),
+      archive.expandedBytes,
+    );
+    assert.deepEqual(
+      metadata.map((entry) => entry.name),
+      Array.from({ length: archive.entryCount }, (_, index) => (
+        `batch/synthetic-${String(index + 1).padStart(3, "0")}.txt`
+      )),
+    );
+    assert.ok(metadata.every((entry) => entry.uncompressedSize <= FILE_SIZE_LIMIT_BYTES));
     assert.ok(archive.rowsPerEntry > manifest.maximumRowsPerFile);
   });
 }

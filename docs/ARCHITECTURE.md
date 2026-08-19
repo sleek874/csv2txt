@@ -124,6 +124,7 @@ interface InternalCell {
 | Output validation | 所選格式的替代位置、替代後 byte 寬度與 blocking output issues | 改寫 primary IR、把 codec 限制當來源錯誤 |
 | Output adapters | BIG-5E TXT bytes、UTF-8 CSV、XLSX workbook | Parser fallback、UI state |
 | Advanced lookup | 勾選列投影、參照 workbook、逐列 left join、整理後 workbook model | 改寫 primary IR、因資料 issue／重複／未命中阻擋下載 |
+| File-size policy | 使用者選取檔案與 ZIP entry 共用的 100 MiB 單檔邊界 | 工作區累計大小、格式解析 |
 | Archive | ZIP inventory、quota、安全路徑、ZIP output | 欄位規則 |
 | Batch orchestration | Queue、取消、格式分類、active-family selector、狀態聚合與整批輸出選擇 | Validator 細節、DOM markup |
 | Views | 雙格式選擇、selected-format／other tabs、共用清單 table shell、tree、summary、100-row page、問題 disclosure | 解析、checksum、ZIP 解壓 |
@@ -159,6 +160,7 @@ src/
     private-use-recovery-mapping.ts
     output-validation.ts
     bytes.ts
+    file-size-policy.ts
     file-formats.ts
   app/
     batch/
@@ -287,7 +289,7 @@ ZIP library 採獨立 lazy chunk，由 `codec-manager` 載入 `core/archive/zip.
 - Inventory 發現 ZIP 時載入 reader。
 - 只有準備下載時載入 writer 路徑。
 - 不在 UI component 直接 import ZIP dependency。
-- 解壓時使用 stream/filter/quota，不使用無界 `unzipSync` 處理整批內容。
+- 解壓時使用 stream/filter/per-entry quota，不使用無界 `unzipSync` 處理整批內容；每個 entry 都檢查宣告與實際展開大小，輸入不累計 bytes。
 - `zip.ts` 同時提供安全 extract 與 serialize；path、depth、quota、symlink 與 collision 規則放在相鄰 policy 模組。
 - Standard output 只有一個檔案時直接回傳 tabular codec artifact；兩個以上才載入 ZIP writer，保留 virtual path，並以 output codec 與台北分鐘時間戳命名 archive。
 

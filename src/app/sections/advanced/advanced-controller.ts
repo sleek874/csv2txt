@@ -3,14 +3,13 @@ import {
   createAdvancedColumnPreferences,
   type AdvancedColumnPreferences,
 } from "../../../browser/advanced-preferences";
+import { exceedsFileSizeLimit, FILE_SIZE_LIMIT_LABEL } from "../../../core/file-size-policy";
 import type { BatchClient } from "../../batch/batch-client";
 import type { AdvancedReferenceSummary, AdvancedResultSummary } from "../../batch/protocol";
 import type { AppStatus } from "../../shell/app-status";
 import type { WorkspaceModel } from "../../state/workspace-model";
 import { canonicalActiveWorkspaceItems } from "../../state/workspace-selectors";
 import type { AdvancedView, AdvancedViewState } from "./advanced-view";
-
-const MAX_REFERENCE_FILE_BYTES = 25 * 1024 * 1024;
 
 interface ReferenceState extends AdvancedReferenceSummary {
   fileName: string;
@@ -158,8 +157,8 @@ export function createAdvancedController(options: AdvancedControllerOptions) {
     render();
     try {
       if (!/\.(?:xls|xlsx)$/iu.test(file.name)) throw new Error("請選擇 XLS 或 XLSX 檔案。");
-      if (file.size === 0 || file.size > MAX_REFERENCE_FILE_BYTES) {
-        throw new Error(file.size === 0 ? "參照 Excel 是空的。" : "參照 Excel 超過 25 MB，請選擇較小的檔案。");
+      if (file.size === 0 || exceedsFileSizeLimit(file.size)) {
+        throw new Error(file.size === 0 ? "參照 Excel 是空的。" : `參照 Excel 超過 ${FILE_SIZE_LIMIT_LABEL}，請選擇較小的檔案。`);
       }
       const summary = await options.batchClient.inspectReference(new Uint8Array(await file.arrayBuffer()));
       if (generation !== currentGeneration) return;

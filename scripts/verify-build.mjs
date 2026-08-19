@@ -86,6 +86,10 @@ const fileOperationStatusViewSource = readFileSync(
   new URL("../src/app/sections/input/file-operation-status-view.ts", import.meta.url),
   "utf8",
 );
+const fileSizePolicySource = readFileSync(
+  new URL("../src/core/file-size-policy.ts", import.meta.url),
+  "utf8",
+);
 const formatControllerSource = readFileSync(
   new URL("../src/app/sections/format/format-controller.ts", import.meta.url),
   "utf8",
@@ -282,6 +286,11 @@ assert.match(indexHtml, /<script[^>]*src="\.\/boot\.js"[^>]*><\/script>/u);
 assert.match(indexHtml, /id="source-file"[^>]*\shidden(?:\s|>)/u);
 assert.match(indexHtml, /id="source-file"[^>]*accept="\.csv,\.xls,\.xlsx,\.txt,\.zip"/u);
 assert.match(indexHtml, /id="source-file"[^>]*\smultiple(?:\s|>)/u);
+assert.match(indexHtml, /每個檔案上限 100 MB/u);
+assert.match(indexHtml, /選擇要用來補充資料的 Excel；檔案上限 100 MB/u);
+assert.match(fileSizePolicySource, /FILE_SIZE_LIMIT_MIB = 100/u);
+assert.match(fileOperationStatusViewSource, /FILE_SIZE_LIMIT_LABEL/u);
+assert.doesNotMatch(indexHtml, /25 M(?:B|iB)/u);
 assert.doesNotMatch(indexHtml, /id="app"[^>]*\shidden(?:\s|>)/u);
 assert.match(indexHtml, /<html[^>]*class="no-js"/u);
 assert.doesNotMatch(indexHtml, /noscript\.css/u);

@@ -2,6 +2,7 @@ import { Unzip, UnzipInflate, Zip, ZipDeflate } from "fflate";
 import * as iconv from "iconv-lite";
 
 import { concatenateBytes } from "../bytes";
+import { exceedsFileSizeLimit, FILE_SIZE_LIMIT_TECHNICAL_LABEL } from "../file-size-policy";
 import { detectSourceFileType } from "../file-formats";
 import { ARCHIVE_LIMITS, archiveRootName, safeArchivePath } from "./policy";
 import type {
@@ -17,9 +18,7 @@ const CENTRAL_DIRECTORY_ENTRY = 0x02014b50;
 const MAX_END_RECORD_SEARCH = 65_557;
 
 interface ArchiveQuota {
-  declaredExpandedBytes: number;
   entryCount: number;
-  expandedBytes: number;
   paths: Set<string>;
 }
 
@@ -243,12 +242,8 @@ function validateMetadata(entries: readonly ZipEntryMetadata[], quota: ArchiveQu
     if (!entry.isDirectory && entry.compression !== 0 && entry.compression !== 8) {
       throw new Error(`ZIP 項目使用不支援的壓縮方式：${entry.name}`);
     }
-    if (entry.uncompressedSize > ARCHIVE_LIMITS.maxExpandedFileBytes) {
-      throw new Error(`ZIP 內單檔超過 25 MiB：${entry.name}`);
-    }
-    quota.declaredExpandedBytes += entry.uncompressedSize;
-    if (quota.declaredExpandedBytes > ARCHIVE_LIMITS.maxExpandedTotalBytes) {
-      throw new Error("ZIP 宣告的展開內容累計超過 100 MiB。");
+    if (exceedsFileSizeLimit(entry.uncompressedSize)) {
+      throw new Error(`ZIP 內單檔超過 ${FILE_SIZE_LIMIT_TECHNICAL_LABEL}：${entry.name}`);
     }
   }
 }
@@ -256,7 +251,6 @@ function validateMetadata(entries: readonly ZipEntryMetadata[], quota: ArchiveQu
 function extractEntries(
   bytes: Uint8Array,
   metadata: readonly ZipEntryMetadata[],
-  quota: ArchiveQuota,
 ): Map<string, Uint8Array> {
   const expected = new Map(metadata.map((entry) => [entry.libraryName, entry]));
   const extracted = new Map<string, Uint8Array>();
@@ -292,11 +286,8 @@ function extractEntries(
           return;
         }
         fileBytes += chunk.byteLength;
-        quota.expandedBytes += chunk.byteLength;
-        if (fileBytes > ARCHIVE_LIMITS.maxExpandedFileBytes || quota.expandedBytes > ARCHIVE_LIMITS.maxExpandedTotalBytes) {
-          failure = new Error(fileBytes > ARCHIVE_LIMITS.maxExpandedFileBytes
-            ? `ZIP 內單檔實際展開超過 25 MiB：${safePath}`
-            : "ZIP 實際展開內容累計超過 100 MiB。");
+        if (exceedsFileSizeLimit(fileBytes)) {
+          failure = new Error(`ZIP 內單檔實際展開超過 ${FILE_SIZE_LIMIT_TECHNICAL_LABEL}：${safePath}`);
           file.terminate();
           return;
         }
@@ -338,7 +329,7 @@ async function extractArchive(
   safeArchivePath(`${rootPath}/placeholder`);
   const metadata = inspectZip(bytes);
   validateMetadata(metadata, quota);
-  const extracted = extractEntries(bytes, metadata, quota);
+  const extracted = extractEntries(bytes, metadata);
   const files: ExtractedSourceFile[] = [];
   const skippedEntries: SkippedArchiveEntry[] = metadata.flatMap((entry) => {
     if (entry.isDirectory) return [];
@@ -383,9 +374,7 @@ async function extractArchive(
 export async function extractZip(fileName: string, bytes: Uint8Array): Promise<ArchiveExtraction> {
   const rootName = archiveRootName(fileName);
   const extraction = await extractArchive(fileName, bytes, "", 1, {
-    declaredExpandedBytes: 0,
     entryCount: 0,
-    expandedBytes: 0,
     paths: new Set<string>(),
   });
   return {
@@ -416,12 +405,12 @@ export function serializeZip(entries: readonly ArchiveOutputEntry[]): Promise<Ui
       throw new Error(`ZIP 輸出路徑碰撞：${path}`);
     }
     paths.add(path);
-    if (entry.bytes.byteLength > ARCHIVE_LIMITS.maxExpandedFileBytes) {
-      throw new Error(`ZIP 輸出單檔超過 25 MiB：${path}`);
+    if (entry.bytes.byteLength > ARCHIVE_LIMITS.maxOutputEntryBytes) {
+      throw new Error(`ZIP 輸出單檔超過 ${FILE_SIZE_LIMIT_TECHNICAL_LABEL}：${path}`);
     }
     sourceBytes += entry.bytes.byteLength;
-    if (sourceBytes > ARCHIVE_LIMITS.maxExpandedTotalBytes) {
-      throw new Error("ZIP 輸出內容累計超過 100 MiB。");
+    if (sourceBytes > ARCHIVE_LIMITS.maxOutputSourceBytes) {
+      throw new Error(`ZIP 輸出內容累計超過 ${FILE_SIZE_LIMIT_TECHNICAL_LABEL}。`);
     }
     return { ...entry, path };
   });
@@ -437,7 +426,7 @@ export function serializeZip(entries: readonly ArchiveOutputEntry[]): Promise<Ui
       outputBytes += chunk.byteLength;
       if (outputBytes > ARCHIVE_LIMITS.maxOutputBytes) {
         zip.terminate();
-        reject(new Error("ZIP 輸出檔案超過 100 MiB。"));
+        reject(new Error(`ZIP 輸出檔案超過 ${FILE_SIZE_LIMIT_TECHNICAL_LABEL}。`));
         return;
       }
       if (chunk.byteLength > 0) {

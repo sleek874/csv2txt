@@ -6,6 +6,7 @@ import * as iconv from "iconv-lite";
 
 import { safeArchivePath } from "../src/core/archive/policy.ts";
 import { extractZip, inspectZip, serializeZip } from "../src/core/archive/zip.ts";
+import { exceedsFileSizeLimit, FILE_SIZE_LIMIT_BYTES } from "../src/core/file-size-policy.ts";
 
 function replaceNameBytes(bytes, before, after) {
   assert.equal(before.length, after.length);
@@ -16,6 +17,21 @@ function replaceNameBytes(bytes, before, after) {
       offset += before.length - 1;
     }
   }
+  return result;
+}
+
+function replaceDeclaredSizes(bytes, sizes) {
+  const result = bytes.slice();
+  const view = new DataView(result.buffer, result.byteOffset, result.byteLength);
+  let sizeIndex = 0;
+  for (let offset = 0; offset <= result.byteLength - 46; offset += 1) {
+    if (view.getUint32(offset, true) !== 0x02014b50) continue;
+    const size = sizes[sizeIndex];
+    assert.notEqual(size, undefined);
+    view.setUint32(offset + 24, size, true);
+    sizeIndex += 1;
+  }
+  assert.equal(sizeIndex, sizes.length);
   return result;
 }
 
@@ -109,6 +125,25 @@ test("recursively extracts nested ZIP files into named virtual folders", async (
   const nested = zipSync({ "data.txt": strToU8("record") });
   const extraction = await extractZip("outer.zip", zipSync({ "incoming/nested.zip": nested }));
   assert.deepEqual(extraction.files.map((file) => file.virtualPath), ["outer/incoming/nested/data.txt"]);
+});
+
+test("applies the 100 MiB limit independently to each ZIP member", async () => {
+  assert.equal(exceedsFileSizeLimit(FILE_SIZE_LIMIT_BYTES), false);
+  assert.equal(exceedsFileSizeLimit(FILE_SIZE_LIMIT_BYTES + 1), true);
+
+  const perEntrySize = 75 * 1024 * 1024;
+  const bytes = replaceDeclaredSizes(zipSync({
+    "first.csv": strToU8("A,01"),
+    "second.csv": strToU8("B,02"),
+  }), [perEntrySize, perEntrySize]);
+  assert.deepEqual(inspectZip(bytes).map((entry) => entry.uncompressedSize), [perEntrySize, perEntrySize]);
+  assert.equal((await extractZip("batch.zip", bytes)).files.length, 2, "member sizes are not accumulated");
+
+  const oversized = replaceDeclaredSizes(
+    zipSync({ "oversized.csv": strToU8("A,01") }),
+    [FILE_SIZE_LIMIT_BYTES + 1],
+  );
+  await assert.rejects(extractZip("batch.zip", oversized), /單檔超過 100 MiB/u);
 });
 
 test("serializes and reopens safe output entries", async () => {

@@ -1,4 +1,5 @@
 import { requireDescendant } from "../../../browser/dom";
+import { FILE_SIZE_LIMIT_LABEL } from "../../../core/file-size-policy";
 import { FILE_FORMAT_LABELS, type FileFormat } from "../../../core/file-formats";
 import type { ProcessingProgress } from "../../batch/protocol";
 import { createStateTransition } from "../../shell/state-transition";
@@ -101,7 +102,7 @@ export function createFileOperationStatusView(root: HTMLElement): FileOperationS
       failures.replaceChildren();
       undoAction = status.kind === "removed" ? status.onUndo : null;
 
-      if (status.kind === "idle") setCopy("請加入檔案", "可加入 TXT、CSV、XLS、XLSX 或 ZIP。", "neutral");
+      if (status.kind === "idle") setCopy("請加入檔案", `可加入 TXT、CSV、XLS、XLSX 或 ZIP；每個檔案上限 ${FILE_SIZE_LIMIT_LABEL}。`, "neutral");
       if (status.kind === "processing") setCopy("正在處理本次新增", processingDetail(status.progress), "neutral");
       if (status.kind === "cancelling") setCopy("正在取消本次新增", "正在停止處理並捨棄這次選取的結果。", "neutral");
       if (status.kind === "cancelled") setCopy("已取消本次新增", "這次選取的檔案都沒有加入；先前的檔案仍保留。", "neutral");

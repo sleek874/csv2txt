@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { createAdvancedController } from "../src/app/sections/advanced/advanced-controller.ts";
 import { createWorkspaceModel } from "../src/app/state/workspace-model.ts";
+import { FILE_SIZE_LIMIT_BYTES } from "../src/core/file-size-policy.ts";
 
 function selectedFileWithIssues() {
   const values = Array(15).fill("");
@@ -173,4 +174,50 @@ test("advanced download ignores data issues and expands duplicate reference matc
   releaseSheet();
   await controller.whenIdle();
   assert.equal(state.sheetName, "Other");
+});
+
+test("reference Excel uses the shared 100 MiB input limit", async () => {
+  let callbacks;
+  let inspectCount = 0;
+  let state;
+  const controller = createAdvancedController({
+    batchClient: {
+      async clearReference() {},
+      async getAdvancedResult() {
+        return { resultRowCount: 0, selectedRowCount: 0, unmatchedRowCount: 0 };
+      },
+      async inspectReference() {
+        inspectCount += 1;
+        return { headers: ["ID"], issues: [], sheetName: "Reference", sheetNames: ["Reference"] };
+      },
+    },
+    model: createWorkspaceModel(),
+    status: { announce() {} },
+    unloadGuard: { setPendingFile() {} },
+    view: {
+      bind(value) { callbacks = value; },
+      fileInput() { return { click() {} }; },
+      render(value) { state = value; },
+      save() {},
+    },
+  });
+  controller.bind();
+
+  callbacks.onReferenceChosen({
+    async arrayBuffer() { return new Uint8Array([1]).buffer; },
+    name: "accepted.xlsx",
+    size: FILE_SIZE_LIMIT_BYTES,
+  });
+  await controller.whenIdle();
+  assert.equal(inspectCount, 1);
+  assert.equal(state.error, null);
+
+  callbacks.onReferenceChosen({
+    async arrayBuffer() { throw new Error("oversized files must be rejected before reading"); },
+    name: "too-large.xlsx",
+    size: FILE_SIZE_LIMIT_BYTES + 1,
+  });
+  await controller.whenIdle();
+  assert.equal(inspectCount, 1);
+  assert.equal(state.error, "參照 Excel 超過 100 MB，請選擇較小的檔案。");
 });
