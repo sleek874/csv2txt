@@ -5,7 +5,7 @@
   "fixedRecordWidthBytes": 208,
   "maximumRowsPerFile": 6000,
   "maximumDistinctDataFiles": 300,
-  "generatedDataFileCount": 47,
+  "generatedDataFileCount": 49,
   "fieldNames": [
     {
       "field": 1,
@@ -381,6 +381,22 @@
       "expandedBytes": 420000000,
       "format": "txt",
       "purpose": "200 檔、每檔 10,000 列的人工瀏覽器壓力情境；自動測試只驗證 ZIP metadata，不完整解壓。"
+    }
+  ],
+  "archiveLimitViolations": [
+    {
+      "entryCount": 5001,
+      "expectedError": "ZIP 項目超過 5000 個上限。",
+      "kind": "entry-count",
+      "name": "over-limit-5001-entries.zip",
+      "uiLabel": "壓縮檔內檔案過多"
+    },
+    {
+      "archiveDepth": 11,
+      "expectedError": "ZIP 巢狀超過 10 層上限。",
+      "kind": "archive-depth",
+      "name": "over-limit-11-nested-zips.zip",
+      "uiLabel": "壓縮層數超過限制"
     }
   ]
 }

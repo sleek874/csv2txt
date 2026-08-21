@@ -1,12 +1,13 @@
 import { FILE_SIZE_LIMIT_BYTES } from "../file-size-policy";
 
 export const ARCHIVE_LIMITS = {
-  maxArchiveDepth: 5,
-  maxEntries: 500,
+  maxArchiveDepth: 10,
+  maxEntries: 5_000,
+  maxOutputEntries: 500,
   maxOutputEntryBytes: FILE_SIZE_LIMIT_BYTES,
   maxOutputSourceBytes: FILE_SIZE_LIMIT_BYTES,
   maxOutputBytes: FILE_SIZE_LIMIT_BYTES,
-  maxVirtualFolderDepth: 5,
+  maxVirtualFolderDepth: 10,
 } as const;
 
 export function safeArchivePath(path: string): string {

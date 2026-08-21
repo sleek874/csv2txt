@@ -373,7 +373,7 @@ Live region 只宣告批次開始、完成、取消與目前選取檔案的重�
 ## 12. Verification ownership
 
 - Core tests：fixed profile、normalization、validation、transformation、mapping、serializer。
-- Archive tests：safe path、depth 5、quota、symlink、collision、nested ZIP。
+- Archive tests：safe path、depth 10、quota、symlink、collision、nested ZIP。
 - Batch tests：decoder assignment、混合來源、filter、status aggregation、output selection、cancel stale work。
 - View tests：rules disclosure、priority、pagination 100、selection、issue disclosure、blocked download。
 - Advanced tests：reference workbook boundaries、exact/duplicate/missing match、stable output ordering；規格確認後才具體化。

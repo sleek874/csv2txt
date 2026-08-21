@@ -61,7 +61,7 @@ test("validates safe ZIP paths without hiding traversal", () => {
   assert.throws(() => safeArchivePath("../data.csv"), /路徑不安全/u);
   assert.throws(() => safeArchivePath("C:\\data.csv"), /路徑不安全/u);
   assert.throws(() => safeArchivePath("/data.csv"), /路徑不安全/u);
-  assert.throws(() => safeArchivePath("a/b/c/d/e/f/data.csv"), /5 層/u);
+  assert.throws(() => safeArchivePath("a/b/c/d/e/f/g/h/i/j/k/data.csv"), /10 層/u);
 });
 
 test("inspects and extracts supported entries while preserving virtual paths", async () => {

@@ -576,6 +576,32 @@ test("encrypted archives are categorized without leaving failed workspace items"
   }]);
 });
 
+for (const archiveFailure of [
+  {
+    error: "ZIP 項目超過 5000 個上限。",
+    file: "over-limit-5001-entries.zip",
+    label: "壓縮檔內檔案過多",
+  },
+  {
+    error: "ZIP 巢狀超過 10 層上限。",
+    file: "over-limit-11-nested-zips.zip",
+    label: "壓縮層數超過限制",
+  },
+]) {
+  test(`${archiveFailure.file} is shown with its plain-language archive error`, async () => {
+    const harness = controllerHarness({ archiveError: new Error(archiveFailure.error) });
+    harness.callbacks().onFilesChosen([sourceFile(archiveFailure.file, "zip")]);
+    await harness.controller.whenIdle();
+
+    assert.deepEqual(harness.snapshot().files, []);
+    assert.deepEqual(harness.snapshot().sources, []);
+    assert.deepEqual(harness.messages, [{
+      groups: [{ files: [archiveFailure.file], label: archiveFailure.label, tone: "error" }],
+      title: "這次沒有加入檔案",
+    }]);
+  });
+}
+
 test("corrupted supported files are categorized without leaving failed workspace items", async () => {
   const harness = controllerHarness({ processError: new Error("workbook container is invalid") });
   harness.callbacks().onFilesChosen([sourceFile("broken.xlsx", "not a workbook")]);

@@ -37,6 +37,22 @@ const MANUAL_EXTREME_ARCHIVE = {
   name: "extreme-200-txt-10000-rows.zip",
   rowsPerEntry: 10_000,
 };
+const ARCHIVE_LIMIT_VIOLATIONS = [
+  {
+    entryCount: 5_001,
+    expectedError: "ZIP 項目超過 5000 個上限。",
+    kind: "entry-count",
+    name: "over-limit-5001-entries.zip",
+    uiLabel: "壓縮檔內檔案過多",
+  },
+  {
+    archiveDepth: 11,
+    expectedError: "ZIP 巢狀超過 10 層上限。",
+    kind: "archive-depth",
+    name: "over-limit-11-nested-zips.zip",
+    uiLabel: "壓縮層數超過限制",
+  },
+];
 const testdataDirectory = fileURLToPath(new URL("../testdata/", import.meta.url));
 const formatDirectories = Object.fromEntries(
   ["csv", "xls", "xlsx", "txt", "zip"].map((format) => [
@@ -365,7 +381,7 @@ const exclusionArchiveDefinition = {
     { path: "excluded/link.csv", reason: "symlink" },
   ],
 };
-const archiveFixtureCount = archiveDefinitions.length + 3;
+const archiveFixtureCount = archiveDefinitions.length + 3 + ARCHIVE_LIMIT_VIOLATIONS.length;
 const FIXTURE_MTIME = new Date("1980-01-01T00:00:00.000Z");
 
 function extremeArchiveEntries(definition, bytes) {
@@ -384,6 +400,27 @@ function extremeArchiveText(definition) {
   return serializeBig5Txt(
     rows.map((values, index) => ({ sourceRow: index + 1, values })),
   );
+}
+
+function archiveLimitViolationBytes(definition) {
+  if (definition.kind === "entry-count") {
+    return zipSync(Object.fromEntries(
+      Array.from({ length: definition.entryCount }, (_, index) => [
+        `synthetic-${String(index + 1).padStart(3, "0")}.csv`,
+        [strToU8("A,01\n"), { mtime: FIXTURE_MTIME }],
+      ]),
+    ));
+  }
+
+  let bytes = zipSync({
+    "synthetic.csv": [strToU8("A,01\n"), { mtime: FIXTURE_MTIME }],
+  });
+  for (let depth = definition.archiveDepth; depth > 1; depth -= 1) {
+    bytes = zipSync({
+      [`level-${depth}.zip`]: [bytes, { mtime: FIXTURE_MTIME }],
+    });
+  }
+  return bytes;
 }
 
 async function writeArchives() {
@@ -426,6 +463,13 @@ async function writeArchives() {
         .map(({ path, bytes }) => [path, [bytes, { mtime: FIXTURE_MTIME }]]),
     ), { level: 6 }),
   );
+
+  for (const definition of ARCHIVE_LIMIT_VIOLATIONS) {
+    writeFileSync(
+      join(formatDirectories.zip, definition.name),
+      archiveLimitViolationBytes(definition),
+    );
+  }
 }
 
 async function generateAll() {
@@ -487,6 +531,7 @@ async function generateAll() {
       format: "txt",
       purpose: "200 檔、每檔 10,000 列的人工瀏覽器壓力情境；自動測試只驗證 ZIP metadata，不完整解壓。",
     }],
+    archiveLimitViolations: ARCHIVE_LIMIT_VIOLATIONS,
   };
   writeFileSync(join(testdataDirectory, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }

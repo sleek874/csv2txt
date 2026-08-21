@@ -5,14 +5,18 @@
 ## 目錄
 
 - `csv/`、`xls/`、`xlsx/`、`txt/`：四個目錄具有相同的 dataset basename、列數、順序與 15 欄值。CSV 為 UTF-8、TXT 為臺灣政府 BIG-5E 固定 208 bytes／列；所有檔案都沒有標題列。
-- `zip/`：四個混合格式情境 ZIP、`excluded-entries.zip`，以及兩個明確標示的極限壓力情境。`excluded-entries.zip` 包含一個可處理 CSV、一個捷徑項目與一個不支援副檔名，用來確認可處理檔案保留、其餘項目逐筆排除。
-- `manifest.json`：機器可讀的欄位 mock 名稱、dataset 類型、列數、預期摘要、一般 ZIP entry 清單與極限情境契約。
+- `zip/`：四個混合格式情境 ZIP、`excluded-entries.zip`、兩個明確標示的極限壓力情境，以及兩個超過 ZIP 安全限制的拒絕情境。`excluded-entries.zip` 包含一個可處理 CSV、一個捷徑項目與一個不支援副檔名，用來確認可處理檔案保留、其餘項目逐筆排除。
+- `manifest.json`：機器可讀的欄位 mock 名稱、dataset 類型、列數、預期摘要、一般 ZIP entry 清單、極限情境與拒絕情境契約。
 
-一般 dataset 最大為 `clean-large-6000`（6,000 列）。目前共 47 個 repository fixture，低於 300 個上限。
+一般 dataset 最大為 `clean-large-6000`（6,000 列）。目前共 49 個 repository fixture，低於 300 個上限。
 
 `extreme-51-txt-6001-rows.zip` 是另外管理的合成壓力情境：內含 51 個相同結構的 BIG-5E TXT，每檔 6,001 列，共 306,051 列、64,270,710 expanded bytes。它刻意超過一般 dataset 的 6,000 列上限；每個 entry 都低於產品的 100 MiB 單檔上限，產品不限制 ZIP 累計展開量。自動測試確認 archive entry、路徑、bytes、CRLF 與抽樣 parser 契約；完整瀏覽器載入、互動延遲與記憶體仍屬人工效能檢查，不由這份 fixture 宣稱通過。
 
 `extreme-200-txt-10000-rows.zip` 是更大的人工瀏覽器壓力情境：內含 200 個相同結構的 BIG-5E TXT，每檔 10,000 列，共 2,000,000 列、420,000,000 expanded bytes。產生器沿用相同的合成資料與 BIG-5E serializer，但以 fixture-only ZIP 包裝避開產品輸出 ZIP 的 100 MiB 累計限制。自動測試只確認 ZIP metadata、路徑、entry 數與單檔界線，不在一般測試中完整解壓或解析；瀏覽器載入、取消、互動延遲與記憶體必須人工檢查。
+
+`over-limit-5001-entries.zip` 含 5,001 個 synthetic CSV entry，比 5,000 個上限多一個。上傳結果應以 error 顯示「壓縮檔內檔案過多」，整個 ZIP 不加入工作區。
+
+`over-limit-11-nested-zips.zip` 含 11 層 ZIP（最外層算第 1 層），比 10 層上限多一層。上傳結果應以 error 顯示「壓縮層數超過限制」，整個 ZIP 不加入工作區。
 
 ## 推定欄位名稱
 
@@ -46,6 +50,8 @@
 - `excluded-entries.zip`：`accepted/clean-single.csv` 應正常加入；`excluded/link.csv` 是捷徑項目，`excluded/notes.md` 是不支援副檔名，兩者應安全略過並分行顯示路徑。
 - `extreme-51-txt-6001-rows.zip`：驗證接近大量批次的 ZIP 解壓、entry/path 與固定寬 bytes 契約；不作為一般功能資料集，也不代表主執行緒效能已獲核准。
 - `extreme-200-txt-10000-rows.zip`：供人工瀏覽器壓力檢查；一般自動測試只讀取 ZIP metadata，不完整載入 200 萬列。
+- `over-limit-5001-entries.zip`：驗證 ZIP entry 數超限時拒絕整個來源，並顯示「壓縮檔內檔案過多」。
+- `over-limit-11-nested-zips.zip`：驗證 ZIP 巢狀深度超限時拒絕整個來源，並顯示「壓縮層數超過限制」。
 
 重新產生：
 

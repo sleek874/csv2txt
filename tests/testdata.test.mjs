@@ -4,6 +4,7 @@ import { basename, extname } from "node:path";
 import test from "node:test";
 
 import { extractZip, inspectZip } from "../src/core/archive/zip.ts";
+import { ARCHIVE_LIMITS } from "../src/core/archive/policy.ts";
 import { createInternalFile } from "../src/core/conversion-pipeline.ts";
 import { FILE_SIZE_LIMIT_BYTES } from "../src/core/file-size-policy.ts";
 import { FIXED_RECORD_WIDTH_BYTES } from "../src/core/fixed-profile.ts";
@@ -47,7 +48,8 @@ test("mock data stays within the requested file and row limits", () => {
       + manifest.archives.length
       + manifest.exclusionArchives.length
       + manifest.extremeArchives.length
-      + manifest.manualExtremeArchives.length,
+      + manifest.manualExtremeArchives.length
+      + manifest.archiveLimitViolations.length,
   );
   assert.equal(Math.max(...manifest.datasets.map((dataset) => dataset.rowCount)), 6_000);
   assert.ok(manifest.datasets.every((dataset) => dataset.rowCount <= 6_000));
@@ -103,6 +105,23 @@ for (const archive of manifest.manualExtremeArchives) {
     );
     assert.ok(metadata.every((entry) => entry.uncompressedSize <= FILE_SIZE_LIMIT_BYTES));
     assert.ok(archive.rowsPerEntry > manifest.maximumRowsPerFile);
+  });
+}
+
+for (const archive of manifest.archiveLimitViolations) {
+  test(`${archive.name} exceeds the documented ${archive.kind} limit`, async () => {
+    const bytes = readFileSync(new URL(`zip/${archive.name}`, testdataDirectory));
+    assert.ok(bytes.byteLength <= FILE_SIZE_LIMIT_BYTES, "the selected ZIP stays within the upload size limit");
+    if (archive.kind === "entry-count") {
+      assert.equal(archive.entryCount, ARCHIVE_LIMITS.maxEntries + 1);
+    } else {
+      assert.equal(archive.archiveDepth, ARCHIVE_LIMITS.maxArchiveDepth + 1);
+      assert.equal(inspectZip(bytes).length, 1);
+    }
+    await assert.rejects(
+      extractZip(archive.name, bytes),
+      (error) => error instanceof Error && error.message === archive.expectedError,
+    );
   });
 }
 

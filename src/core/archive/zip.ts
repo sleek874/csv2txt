@@ -394,8 +394,8 @@ export function serializeZip(entries: readonly ArchiveOutputEntry[]): Promise<Ui
   if (entries.length === 0) {
     throw new Error("ZIP 沒有可輸出的檔案。");
   }
-  if (entries.length > ARCHIVE_LIMITS.maxEntries) {
-    throw new Error(`ZIP 輸出項目超過 ${ARCHIVE_LIMITS.maxEntries} 個上限。`);
+  if (entries.length > ARCHIVE_LIMITS.maxOutputEntries) {
+    throw new Error(`ZIP 輸出項目超過 ${ARCHIVE_LIMITS.maxOutputEntries} 個上限。`);
   }
   const paths = new Set<string>();
   let sourceBytes = 0;
