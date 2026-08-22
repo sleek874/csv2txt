@@ -31,7 +31,7 @@ function parsedRow(label) {
   return [label, ...Array(14).fill("x")];
 }
 
-function controllerHarness({ archiveError, archiveExtraction, confirmClear = true, onArchiveExtract, onProcessStart, onProcessingInfo, parsedRows, processError, processGate, restoreGate } = {}) {
+function controllerHarness({ archiveError, archiveExtraction, cancelDoesNotPreempt = false, confirmClear = true, onArchiveExtract, onProcessStart, onProcessingInfo, parsedRows, processError, processGate, restoreGate } = {}) {
   let callbacks;
   let snapshot = { files: [], inputFormat: "csv", selectedFileId: null, outputFormat: "big5-txt", sources: [] };
   const announcements = [];
@@ -88,7 +88,9 @@ function controllerHarness({ archiveError, archiveExtraction, confirmClear = tru
   }
 
   const batchClient = {
-    async cancelSource(sourceId) { cancelledSources.add(sourceId); },
+    async cancelSource(sourceId) {
+      if (!cancelDoesNotPreempt) cancelledSources.add(sourceId);
+    },
     async resetWorkspace() {
       workerFiles.clear();
       removedWorkerFiles.clear();
@@ -206,6 +208,7 @@ function controllerHarness({ archiveError, archiveExtraction, confirmClear = tru
     pickerLocks,
     snapshot: () => snapshot,
     undos,
+    workerVirtualPaths: () => [...workerFiles.values()].map((file) => file.virtualPath),
   };
 }
 
@@ -298,6 +301,60 @@ test("ignores another file selection while the current selection is processing",
   assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["first.csv"]);
 });
 
+test("cancelling settles while the selected file is still being read", async () => {
+  let releaseRead;
+  let signalRead;
+  const readGate = new Promise((resolve) => { releaseRead = resolve; });
+  const readStarted = new Promise((resolve) => { signalRead = resolve; });
+  const harness = controllerHarness();
+  harness.callbacks().onFilesChosen([{
+    async arrayBuffer() {
+      signalRead();
+      await readGate;
+      return new TextEncoder().encode("A,01").buffer;
+    },
+    name: "slow.csv",
+    size: 4,
+  }]);
+  await readStarted;
+
+  harness.callbacks().onCancelFileOperation();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(harness.operationStatuses.at(-1)?.kind, "cancelled");
+
+  releaseRead();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(harness.operationStatuses.at(-1)?.kind, "cancelled");
+  assert.deepEqual(harness.snapshot().files, []);
+});
+
+test("clear settles after worker reset without waiting for a stale local file read", async () => {
+  let releaseRead;
+  let signalRead;
+  const readGate = new Promise((resolve) => { releaseRead = resolve; });
+  const readStarted = new Promise((resolve) => { signalRead = resolve; });
+  const harness = controllerHarness();
+  harness.callbacks().onFilesChosen([{
+    async arrayBuffer() {
+      signalRead();
+      await readGate;
+      return new TextEncoder().encode("A,01").buffer;
+    },
+    name: "slow.csv",
+    size: 4,
+  }]);
+  await readStarted;
+
+  harness.callbacks().onClearWorkspace();
+  await harness.controller.whenIdle();
+  assert.equal(harness.operationStatuses.at(-1)?.kind, "cleared");
+
+  releaseRead();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(harness.operationStatuses.at(-1)?.kind, "cleared");
+  assert.deepEqual(harness.snapshot().files, []);
+});
+
 test("clear stays enabled and preempts an in-flight upload", async () => {
   let releaseProcessing;
   let signalStarted;
@@ -314,9 +371,11 @@ test("clear stays enabled and preempts an in-flight upload", async () => {
   harness.callbacks().onClearWorkspace();
   assert.equal(harness.operationStatuses.at(-1)?.kind, "resetting");
   assert.deepEqual(harness.snapshot().files, []);
+  await harness.controller.whenIdle();
+  assert.equal(harness.operationStatuses.at(-1)?.kind, "cleared");
 
   releaseProcessing();
-  await harness.controller.whenIdle();
+  await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(harness.snapshot().files, []);
   assert.equal(harness.operationStatuses.at(-1)?.kind, "cleared");
   assert.equal(harness.operationStatuses.some(({ kind }) => kind === "result"), false);
@@ -328,6 +387,7 @@ test("cancelling a slow selection discards the whole staged batch and preserves 
   const gatePromise = new Promise((resolve) => { releaseProcessing = resolve; });
   const started = new Promise((resolve) => { signalStarted = resolve; });
   const harness = controllerHarness({
+    cancelDoesNotPreempt: true,
     onProcessStart(request) { if (request.sourceName === "large.csv") signalStarted(); },
     processGate(request) { return request.sourceName === "large.csv" ? gatePromise : undefined; },
   });
@@ -347,10 +407,14 @@ test("cancelling a slow selection discards the whole staged batch and preserves 
 
   harness.callbacks().onCancelFileOperation();
   assert.equal(harness.operationStatuses.at(-1)?.kind, "cancelling");
-  releaseProcessing();
   await harness.controller.whenIdle();
+  assert.equal(harness.operationStatuses.at(-1)?.kind, "cancelled");
+
+  releaseProcessing();
+  await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["prior.csv"]);
+  assert.deepEqual(harness.workerVirtualPaths(), ["prior.csv"]);
   assert.equal(harness.operationStatuses.at(-1)?.kind, "cancelled");
   assert.match(harness.announcements.at(-1), /先前的檔案仍保留/u);
 });
@@ -564,43 +628,65 @@ test("new badges remain until deliberate selection or bulk acknowledgement", asy
 
 test("encrypted archives are categorized without leaving failed workspace items", async () => {
   const harness = controllerHarness({
-    archiveError: new Error("不支援加密的 ZIP 項目：private/data.csv"),
+    archiveExtraction: {
+      files: [],
+      skippedEntries: [{
+        relativePath: "private/data.csv",
+        reason: "encrypted",
+        virtualPath: "protected/private/data.csv",
+      }],
+    },
   });
   harness.callbacks().onFilesChosen([sourceFile("protected.zip", "zip")]);
   await harness.controller.whenIdle();
   assert.deepEqual(harness.snapshot().files, []);
   assert.deepEqual(harness.snapshot().sources, []);
   assert.deepEqual(harness.messages, [{
-    groups: [{ files: ["protected.zip"], label: "受密碼保護", tone: "error" }],
+    groups: [{ files: ["protected.zip／private/data.csv"], label: "受密碼保護", tone: "error" }],
     title: "這次沒有加入檔案",
   }]);
 });
 
-for (const archiveFailure of [
-  {
-    error: "ZIP 項目超過 5000 個上限。",
-    file: "over-limit-5001-entries.zip",
-    label: "壓縮檔內檔案過多",
-  },
-  {
-    error: "ZIP 巢狀超過 10 層上限。",
-    file: "over-limit-11-nested-zips.zip",
-    label: "壓縮層數超過限制",
-  },
-]) {
-  test(`${archiveFailure.file} is shown with its plain-language archive error`, async () => {
-    const harness = controllerHarness({ archiveError: new Error(archiveFailure.error) });
-    harness.callbacks().onFilesChosen([sourceFile(archiveFailure.file, "zip")]);
-    await harness.controller.whenIdle();
+test("the cumulative ZIP entry cap remains a whole-archive error", async () => {
+  const file = "over-limit-5001-entries.zip";
+  const harness = controllerHarness({ archiveError: new Error("ZIP 項目超過 5000 個上限。") });
+  harness.callbacks().onFilesChosen([sourceFile(file, "zip")]);
+  await harness.controller.whenIdle();
 
-    assert.deepEqual(harness.snapshot().files, []);
-    assert.deepEqual(harness.snapshot().sources, []);
-    assert.deepEqual(harness.messages, [{
-      groups: [{ files: [archiveFailure.file], label: archiveFailure.label, tone: "error" }],
-      title: "這次沒有加入檔案",
-    }]);
+  assert.deepEqual(harness.snapshot().files, []);
+  assert.deepEqual(harness.snapshot().sources, []);
+  assert.deepEqual(harness.messages, [{
+    groups: [{ files: [file], label: "壓縮檔內檔案過多", tone: "error" }],
+    title: "這次沒有加入檔案",
+  }]);
+});
+
+test("an over-depth nested ZIP is recorded without aborting its valid sibling", async () => {
+  const harness = controllerHarness({
+    archiveExtraction: {
+      files: [{
+        bytes: new TextEncoder().encode("A,01"),
+        relativePath: "accepted.csv",
+        size: 4,
+        virtualPath: "over-limit/accepted.csv",
+      }],
+      skippedEntries: [{
+        relativePath: "level-10/level-11.zip",
+        reason: "archive-depth",
+        virtualPath: "over-limit/level-10/level-11.zip",
+      }],
+    },
   });
-}
+  harness.callbacks().onFilesChosen([sourceFile("over-limit.zip", "zip")]);
+  await harness.controller.whenIdle();
+
+  assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["over-limit/accepted.csv"]);
+  assert.deepEqual(harness.messages[0]?.groups, [{
+    files: ["over-limit.zip／level-10/level-11.zip"],
+    label: "壓縮層數超過限制",
+    tone: "error",
+  }]);
+});
 
 test("corrupted supported files are categorized without leaving failed workspace items", async () => {
   const harness = controllerHarness({ processError: new Error("workbook container is invalid") });

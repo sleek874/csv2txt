@@ -2,9 +2,10 @@ export interface ZipEntryMetadata {
   compressedSize: number;
   compression: number;
   encrypted: boolean;
+  flags: number;
   isDirectory: boolean;
   isSymlink: boolean;
-  libraryName: string;
+  localHeaderOffset: number;
   name: string;
   nameEncoding: "utf-8" | "unicode-path" | "ascii" | "cp950" | "cp437";
   nameWasHeuristic: boolean;
@@ -22,9 +23,26 @@ export interface ExtractedSourceFile {
 
 export interface SkippedArchiveEntry {
   relativePath: string;
-  reason: "symlink" | "unsupported-type";
+  reason: ArchiveDiscardReason;
   virtualPath: string;
 }
+
+export type ArchiveDiscardReason =
+  | "archive-depth"
+  | "duplicate-path"
+  | "encrypted"
+  | "invalid-archive"
+  | "invalid-file"
+  | "symlink"
+  | "too-large"
+  | "unsafe-path"
+  | "unsupported-compression"
+  | "unsupported-type";
+
+export type ArchiveVisit =
+  | ({ candidateCount: number; kind: "file" } & ExtractedSourceFile)
+  | ({ candidateCount: number; kind: "discarded" } & SkippedArchiveEntry)
+  | { candidateCount: number; kind: "candidates"; virtualPath: string };
 
 export interface ArchiveExtraction {
   files: ExtractedSourceFile[];

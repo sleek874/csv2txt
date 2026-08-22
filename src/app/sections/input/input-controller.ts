@@ -4,7 +4,7 @@ import { exceedsFileSizeLimit, FILE_SIZE_LIMIT_LABEL } from "../../../core/file-
 import { detectInputFileType } from "../../../core/file-formats";
 import { taipeiDateStamp } from "../../../core/validation";
 import type { BatchClient } from "../../batch/batch-client";
-import type { PreviewFilter, ProcessingProgress } from "../../batch/protocol";
+import type { PreviewFilter, ProcessingProgress, SkippedEntry } from "../../batch/protocol";
 import type { AppStatus } from "../../shell/app-status";
 import type { WorkspaceModel } from "../../state/workspace-model";
 import type { WorkspaceItem, WorkspaceSource } from "../../state/workspace-types";
@@ -29,12 +29,14 @@ interface FailureCategory {
 
 interface UploadBatch {
   activeSourceId: string | null;
+  cancelSignal: Promise<void>;
   cancelled: boolean;
   reset: boolean;
   failures: Map<string, { category: FailureCategory; files: Set<string> }>;
   items: WorkspaceItem[];
   latestProgress: ProcessingProgress;
   revealTimer: ReturnType<typeof setTimeout> | null;
+  signalCancel: () => void;
   sources: WorkspaceSource[];
 }
 
@@ -61,6 +63,25 @@ function archiveFailureCategory(error: unknown): FailureCategory {
   if (/項目.*上限|項目累計/u.test(message)) return { label: "壓縮檔內檔案過多", tone: "error" };
   if (/巢狀/u.test(message)) return { label: "壓縮層數超過限制", tone: "error" };
   return { label: "無法開啟或內容損壞", tone: "error" };
+}
+
+function skippedArchiveCategory(reason: SkippedEntry["reason"], relativePath: string): FailureCategory {
+  switch (reason) {
+    case "symlink": return { label: "捷徑", tone: "warning" };
+    case "unsupported-type": return {
+      label: `不支援的檔案類型（${extensionLabel(relativePath)}）`,
+      tone: "warning",
+    };
+    case "duplicate-path": return { label: "壓縮檔內有同名檔案", tone: "error" };
+    case "encrypted": return { label: "受密碼保護", tone: "error" };
+    case "too-large": return { label: `檔案超過 ${FILE_SIZE_LIMIT_LABEL}`, tone: "error" };
+    case "unsafe-path": return { label: "不安全的壓縮檔內容", tone: "error" };
+    case "archive-depth": return { label: "壓縮層數超過限制", tone: "error" };
+    case "invalid-file": return { label: "無法開啟或內容格式不符", tone: "error" };
+    case "invalid-archive":
+    case "unsupported-compression":
+    default: return { label: "無法開啟或內容損壞", tone: "error" };
+  }
 }
 
 function addFailure(batch: UploadBatch, category: FailureCategory, file: string): void {
@@ -158,7 +179,12 @@ export function createInputController(options: InputControllerOptions) {
 
     let bytes: Uint8Array;
     try {
-      bytes = new Uint8Array(await sourceFile.arrayBuffer());
+      const buffer = await Promise.race([
+        sourceFile.arrayBuffer(),
+        batch.cancelSignal.then(() => null),
+      ]);
+      if (buffer === null) return;
+      bytes = new Uint8Array(buffer);
     } catch {
       addFailure(batch, { label: "無法讀取檔案", tone: "error" }, sourceFile.name);
       return;
@@ -193,7 +219,7 @@ export function createInputController(options: InputControllerOptions) {
 
     try {
       void options.offlineCache.prioritizePreviewFont().catch(() => undefined);
-      const result = await options.batchClient.processSource({
+      const processing = options.batchClient.processSource({
         sourceId: source.id,
         sourceName: sourceFile.name,
         inputType,
@@ -202,6 +228,16 @@ export function createInputController(options: InputControllerOptions) {
         existingPaths,
         outputFormat: options.model.snapshot().outputFormat,
       });
+      const result = await Promise.race([
+        processing,
+        batch.cancelSignal.then(() => null),
+      ]);
+      if (result === null) {
+        if (!batch.reset) void processing.then((completed) => (
+          options.batchClient.discardFiles(completed.entries.map((entry) => entry.id))
+        )).catch(() => undefined);
+        return;
+      }
       if (batch.cancelled) {
         if (!batch.reset) await options.batchClient.discardFiles(result.entries.map((entry) => entry.id));
         return;
@@ -221,9 +257,7 @@ export function createInputController(options: InputControllerOptions) {
       }
       result.skippedEntries.forEach((skipped) => addFailure(
         batch,
-        skipped.reason === "symlink"
-          ? { label: "捷徑", tone: "warning" }
-          : { label: `不支援的檔案類型（${extensionLabel(skipped.relativePath)}）`, tone: "warning" },
+        skippedArchiveCategory(skipped.reason, skipped.relativePath),
         `${sourceFile.name}／${skipped.relativePath}`,
       ));
       if (result.entries.length === 0 && result.skippedEntries.length === 0) {
@@ -244,8 +278,9 @@ export function createInputController(options: InputControllerOptions) {
 
   async function discardBatch(batch: UploadBatch): Promise<void> {
     const fileIds = batch.items.map((item) => item.id);
-    if (!batch.reset && fileIds.length > 0) await options.batchClient.discardFiles(fileIds);
+    if (!batch.reset && fileIds.length > 0) void options.batchClient.discardFiles(fileIds).catch(() => undefined);
     if (batch.reset) return;
+    if (operation.kind !== "cancelling" || operation.batch !== batch) return;
     settle({ kind: "cancelled" });
     options.status.announce("已取消本次新增；這次選取的檔案都沒有加入，先前的檔案仍保留。");
   }
@@ -311,14 +346,18 @@ export function createInputController(options: InputControllerOptions) {
   function startAdd(files: readonly File[]): void {
     if (operation.kind !== "idle") return;
     validationDate ??= taipeiDateStamp();
+    let signalCancel: () => void = () => undefined;
+    const cancelSignal = new Promise<void>((resolve) => { signalCancel = resolve; });
     const batch: UploadBatch = {
       activeSourceId: null,
+      cancelSignal,
       cancelled: false,
       reset: false,
       failures: new Map(),
       items: [],
       latestProgress: { current: 0, phase: "processing", sourceId: "", total: files.length, virtualPath: files[0]?.name ?? "" },
       revealTimer: null,
+      signalCancel,
       sources: [],
     };
     operation = { kind: "adding", batch, phase: "quiet" };
@@ -334,6 +373,7 @@ export function createInputController(options: InputControllerOptions) {
     const batch = currentBatch();
     if (!batch || batch.cancelled || operation.kind !== "adding") return;
     batch.cancelled = true;
+    batch.signalCancel();
     if (batch.revealTimer !== null) clearTimeout(batch.revealTimer);
     batch.revealTimer = null;
     operation = { kind: "cancelling", batch };
@@ -346,10 +386,10 @@ export function createInputController(options: InputControllerOptions) {
     if (batch) {
       batch.cancelled = true;
       batch.reset = true;
+      batch.signalCancel();
       if (batch.revealTimer !== null) clearTimeout(batch.revealTimer);
       batch.revealTimer = null;
     }
-    const previousTask = pendingTask;
     const resetOperation = { kind: "resetting" } as const;
     operation = resetOperation;
     previewRequest += 1;
@@ -357,15 +397,16 @@ export function createInputController(options: InputControllerOptions) {
     const resetTask = options.batchClient.resetWorkspace();
     options.model.clear();
     render();
-    pendingTask = Promise.allSettled([previousTask, resetTask]).then((results) => {
-      if (operation !== resetOperation) return;
-      if (results[1]?.status === "rejected") {
+    pendingTask = resetTask.then(() => {
+      if (operation === resetOperation) {
+        settle({ kind: "cleared" });
+        options.status.announce("檔案清單已清空；進階下載的參照檔仍保留。電腦中的原始檔案沒有變更。");
+      }
+    }, () => {
+      if (operation === resetOperation) {
         settle({ kind: "error", detail: "背景工作區無法重設，請重新整理頁面。" });
         options.status.announce("背景工作區無法重設，請重新整理頁面。");
-        return;
       }
-      settle({ kind: "cleared" });
-      options.status.announce("檔案清單已清空；進階下載的參照檔仍保留。電腦中的原始檔案沒有變更。");
     });
   }
 

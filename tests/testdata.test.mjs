@@ -114,14 +114,17 @@ for (const archive of manifest.archiveLimitViolations) {
     assert.ok(bytes.byteLength <= FILE_SIZE_LIMIT_BYTES, "the selected ZIP stays within the upload size limit");
     if (archive.kind === "entry-count") {
       assert.equal(archive.entryCount, ARCHIVE_LIMITS.maxEntries + 1);
+      await assert.rejects(
+        extractZip(archive.name, bytes),
+        (error) => error instanceof Error && error.message === archive.expectedError,
+      );
     } else {
       assert.equal(archive.archiveDepth, ARCHIVE_LIMITS.maxArchiveDepth + 1);
       assert.equal(inspectZip(bytes).length, 1);
+      const extraction = await extractZip(archive.name, bytes);
+      assert.deepEqual(extraction.files, []);
+      assert.deepEqual(extraction.skippedEntries.map((entry) => entry.reason), [archive.expectedReason]);
     }
-    await assert.rejects(
-      extractZip(archive.name, bytes),
-      (error) => error instanceof Error && error.message === archive.expectedError,
-    );
   });
 }
 

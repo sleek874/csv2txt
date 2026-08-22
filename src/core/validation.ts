@@ -1,4 +1,4 @@
-import { privateUseCodePoints } from "./encoding";
+import { containsPrivateUseCodePoint } from "./encoding";
 import { FIXED_FIELDS } from "./fixed-profile";
 import {
   cellValue,
@@ -153,8 +153,8 @@ function validateCell(
     return issues;
   }
 
-  const privateUse = privateUseCodePoints(value);
-  if (stage === "source" && privateUse.length > 0) {
+  const hasPrivateUse = containsPrivateUseCodePoint(value);
+  if (stage === "source" && hasPrivateUse) {
     issues.push(issue(
       stage,
       "warning",
@@ -166,16 +166,16 @@ function validateCell(
   }
 
   if (stage === "final" && (
-    privateUse.length > 0
+    hasPrivateUse
     || recoveredPrivateUse
   )) {
     issues.push(issue(
       stage,
-      privateUse.length > 0 ? "error" : "warning",
-      privateUse.length > 0
+      hasPrivateUse ? "error" : "warning",
+      hasPrivateUse
         ? "PRIVATE_USE_REMAINS"
         : "PRIVATE_USE_RECOVERED",
-      privateUse.length > 0 ? CHARACTER_RECOVERY_FAILED_MESSAGE : "請確認字元。",
+      hasPrivateUse ? CHARACTER_RECOVERY_FAILED_MESSAGE : "請確認字元。",
       row.sourceRow,
       field.index,
     ));

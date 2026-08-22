@@ -1,7 +1,11 @@
 import { createAdvancedOutputAdapter } from "../adapters/advanced-output-adapter";
 import { createInputAdapter } from "../adapters/input-adapter";
 import { createCodecManager } from "../resources/codec-manager";
-import { joinAdvancedRows, taipeiCurrentYear } from "../../core/advanced/lookup";
+import {
+  createAdvancedReferenceIndex,
+  taipeiCurrentYear,
+  type AdvancedReferenceIndex,
+} from "../../core/advanced/lookup";
 import { compareCanonicalVirtualPaths } from "../../core/archive/policy";
 import { createInternalFileWithRecovery } from "../../core/conversion-pipeline";
 import { detectSourceFileType, fileFormatForSourceType } from "../../core/file-formats";
@@ -12,6 +16,7 @@ import type {
   BatchResponseValue,
   ProcessSourceResult,
   ProcessingProgress,
+  SkippedEntry,
   StoredReference,
 } from "./protocol";
 import {
@@ -19,7 +24,10 @@ import {
   setCompactRowsIncluded,
   type CompactFile,
 } from "./compact-workspace";
-import { collectCompactAdvancedRows } from "./advanced-data";
+import {
+  createCompactAdvancedResult,
+  summarizeCompactAdvanced,
+} from "./advanced-data";
 import { queryPreviewPage } from "./preview-query";
 import { createProgressScheduler, yieldToWorker } from "./scheduler";
 import { createCompactOutput } from "./standard-output";
@@ -43,6 +51,11 @@ export function createBatchEngine(
   const cancelledSources = new Set<string>();
   let workspaceEpoch = 0;
   let reference: StoredReference | null = null;
+  let referenceIndex: {
+    keyColumnIndex: number;
+    table: StoredReference["table"];
+    value: AdvancedReferenceIndex;
+  } | null = null;
 
   function assertWorkspaceEpoch(requestEpoch: number): void {
     if (requestEpoch === workspaceEpoch) return;
@@ -105,40 +118,91 @@ export function createBatchEngine(
       }
 
       progress.publish({ current: 0, phase: "extracting", sourceId: request.sourceId, total: 0, virtualPath: request.sourceName }, true);
-      const extraction = await (await codecs.zip()).extractZip(request.sourceName, request.bytes);
+      const archive = await codecs.zip();
       assertSourceActive(request.sourceId);
-      const total = extraction.files.length;
-      let current = 0;
-      for (const extracted of extraction.files) {
-        assertSourceActive(request.sourceId);
-        if (existingPaths.has(extracted.virtualPath)) {
-          throw new Error(`清單中已有這個檔案，因此沒有重複加入：${extracted.virtualPath}`);
-        }
-        current += 1;
-        progress.publish({ current: current - 1, phase: "processing", sourceId: request.sourceId, total, virtualPath: extracted.virtualPath });
-        const id = `${request.sourceId}:entry:${current}`;
-        const type = detectSourceFileType(extracted.virtualPath);
-        if (!type) continue;
-        const file = await parseFile(id, extracted.virtualPath, extracted.bytes, request.today);
+      const skippedEntries: SkippedEntry[] = [];
+      let candidateIndex = 0;
+      let candidateCount = 0;
+      let candidateProgressPublished = false;
+      let excludedCandidateCount = 0;
+      let processedCount = 0;
+      for await (const visit of archive.walkZip(request.sourceName, request.bytes)) {
         assertSourceActive(request.sourceId);
         assertWorkspaceEpoch(request.workspaceEpoch);
-        files.set(id, file);
-        entries.push({
-          file: compactFileRecord(file, request.outputFormat),
-          id,
-          relativePath: extracted.relativePath,
-          size: extracted.size,
-          sourceFormat: fileFormatForSourceType(type),
-          virtualPath: extracted.virtualPath,
-        });
-        extracted.bytes = new Uint8Array(0);
-        await yieldToWorker();
+        candidateCount = Math.max(0, visit.candidateCount - excludedCandidateCount);
+        if (visit.kind === "candidates") {
+          progress.publish(
+            { current: processedCount, phase: "processing", sourceId: request.sourceId, total: candidateCount, virtualPath: visit.virtualPath },
+            !candidateProgressPublished,
+          );
+          candidateProgressPublished = true;
+          continue;
+        }
+        if (visit.kind === "discarded") {
+          const { candidateCount: _candidateCount, kind: _kind, ...skipped } = visit;
+          skippedEntries.push(skipped);
+          progress.publish({ current: processedCount, phase: "processing", sourceId: request.sourceId, total: candidateCount, virtualPath: visit.virtualPath });
+          await yieldToWorker();
+          continue;
+        }
+        candidateIndex += 1;
+        progress.publish({ current: processedCount, phase: "processing", sourceId: request.sourceId, total: candidateCount, virtualPath: visit.virtualPath });
+        let processedCandidate = true;
+        try {
+          if (existingPaths.has(visit.virtualPath)) {
+            skippedEntries.push({
+              reason: "duplicate-path",
+              relativePath: visit.relativePath,
+              virtualPath: visit.virtualPath,
+            });
+            excludedCandidateCount += 1;
+            candidateCount = Math.max(0, visit.candidateCount - excludedCandidateCount);
+            processedCandidate = false;
+            continue;
+          }
+          const type = detectSourceFileType(visit.virtualPath);
+          if (!type) {
+            excludedCandidateCount += 1;
+            candidateCount = Math.max(0, visit.candidateCount - excludedCandidateCount);
+            processedCandidate = false;
+            continue;
+          }
+          const id = `${request.sourceId}:entry:${candidateIndex}`;
+          let file: CompactFile;
+          try {
+            file = await parseFile(id, visit.virtualPath, visit.bytes, request.today);
+          } catch {
+            skippedEntries.push({
+              reason: "invalid-file",
+              relativePath: visit.relativePath,
+              virtualPath: visit.virtualPath,
+            });
+            continue;
+          }
+          assertSourceActive(request.sourceId);
+          assertWorkspaceEpoch(request.workspaceEpoch);
+          files.set(id, file);
+          entries.push({
+            file: compactFileRecord(file, request.outputFormat),
+            id,
+            relativePath: visit.relativePath,
+            size: visit.size,
+            sourceFormat: fileFormatForSourceType(type),
+            virtualPath: visit.virtualPath,
+          });
+          existingPaths.add(visit.virtualPath);
+        } finally {
+          visit.bytes = new Uint8Array(0);
+          if (processedCandidate) processedCount += 1;
+          progress.publish({ current: processedCount, phase: "processing", sourceId: request.sourceId, total: candidateCount, virtualPath: visit.virtualPath });
+          await yieldToWorker();
+        }
         assertSourceActive(request.sourceId);
         assertWorkspaceEpoch(request.workspaceEpoch);
       }
-      progress.publish({ current: total, phase: "finalizing", sourceId: request.sourceId, total, virtualPath: request.sourceName }, true);
+      progress.publish({ current: processedCount, phase: "finalizing", sourceId: request.sourceId, total: candidateCount, virtualPath: request.sourceName }, true);
       assertSourceActive(request.sourceId);
-      return { entries, skippedEntries: extraction.skippedEntries };
+      return { entries, skippedEntries };
     } catch (error) {
       entries.forEach((entry) => files.delete(entry.id));
       throw error;
@@ -186,18 +250,14 @@ export function createBatchEngine(
     };
   }
 
-  function advancedResult(
-    fileIds: readonly string[],
-    keyColumnIndex: number,
-    selectedColumnIndices: readonly number[],
-  ) {
+  function indexedReference(keyColumnIndex: number): AdvancedReferenceIndex {
     if (!reference) throw new Error("請先選擇參照 Excel。");
-    return joinAdvancedRows(
-      selectedFiles(fileIds).flatMap((file) => collectCompactAdvancedRows(file, taipeiCurrentYear())),
-      reference.table,
-      keyColumnIndex,
-      selectedColumnIndices,
-    );
+    if (referenceIndex?.table === reference.table && referenceIndex.keyColumnIndex === keyColumnIndex) {
+      return referenceIndex.value;
+    }
+    const value = createAdvancedReferenceIndex(reference.table, keyColumnIndex);
+    referenceIndex = { keyColumnIndex, table: reference.table, value };
+    return value;
   }
 
   return {
@@ -271,27 +331,33 @@ export function createBatchEngine(
           if (!sheetName) throw new Error("參照 Excel 不含任何工作表。");
           const table = await advancedAdapter.parse(bytes, sheetName);
           reference = { bytes, table, sheetNames: inspected.sheetNames };
+          referenceIndex = null;
           return referenceSummary();
         }
         case "clear-reference":
           reference = null;
+          referenceIndex = null;
           return null;
         case "select-reference-sheet":
           if (!reference) throw new Error("請先選擇參照 Excel。");
           reference.table = await advancedAdapter.parse(reference.bytes, request.sheetName);
+          referenceIndex = null;
           return referenceSummary();
         case "advanced-result": {
           assertWorkspaceEpoch(request.workspaceEpoch);
-          const result = advancedResult(request.fileIds, request.keyColumnIndex, request.selectedColumnIndices);
-          return {
-            resultRowCount: result.resultRowCount,
-            selectedRowCount: result.selectedRowCount,
-            unmatchedRowCount: result.unmatchedRowCount,
-          } satisfies AdvancedResultSummary;
+          return summarizeCompactAdvanced(
+            selectedFiles(request.fileIds),
+            indexedReference(request.keyColumnIndex),
+          ) satisfies AdvancedResultSummary;
         }
         case "create-advanced-output": {
           assertWorkspaceEpoch(request.workspaceEpoch);
-          const result = advancedResult(request.fileIds, request.keyColumnIndex, request.selectedColumnIndices);
+          const result = createCompactAdvancedResult(
+            selectedFiles(request.fileIds),
+            indexedReference(request.keyColumnIndex),
+            request.selectedColumnIndices,
+            taipeiCurrentYear(),
+          );
           return advancedAdapter.create(result, new Date(request.createdAt));
         }
       }

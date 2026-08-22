@@ -5,7 +5,7 @@ import { strToU8, zipSync } from "fflate";
 import * as iconv from "iconv-lite";
 
 import { safeArchivePath } from "../src/core/archive/policy.ts";
-import { extractZip, inspectZip, serializeZip } from "../src/core/archive/zip.ts";
+import { extractZip, inspectZip, serializeZip, walkZip } from "../src/core/archive/zip.ts";
 import { exceedsFileSizeLimit, FILE_SIZE_LIMIT_BYTES } from "../src/core/file-size-policy.ts";
 
 function replaceNameBytes(bytes, before, after) {
@@ -33,6 +33,18 @@ function replaceDeclaredSizes(bytes, sizes) {
   }
   assert.equal(sizeIndex, sizes.length);
   return result;
+}
+
+function markAsZip64(bytes) {
+  const result = bytes.slice();
+  const view = new DataView(result.buffer, result.byteOffset, result.byteLength);
+  for (let offset = result.byteLength - 22; offset >= 0; offset -= 1) {
+    if (view.getUint32(offset, true) !== 0x06054b50) continue;
+    view.setUint16(offset + 8, 0xffff, true);
+    view.setUint16(offset + 10, 0xffff, true);
+    return result;
+  }
+  throw new Error("test ZIP has no end record");
 }
 
 function crc32(bytes) {
@@ -143,7 +155,72 @@ test("applies the 100 MiB limit independently to each ZIP member", async () => {
     zipSync({ "oversized.csv": strToU8("A,01") }),
     [FILE_SIZE_LIMIT_BYTES + 1],
   );
-  await assert.rejects(extractZip("batch.zip", oversized), /單檔超過 100 MiB/u);
+  const oversizedExtraction = await extractZip("batch.zip", oversized);
+  assert.deepEqual(oversizedExtraction.files, []);
+  assert.deepEqual(oversizedExtraction.skippedEntries.map((entry) => entry.reason), ["too-large"]);
+});
+
+test("walks entries lazily and enters nested ZIPs before later siblings", async () => {
+  const bytes = zipSync({
+    "folder/": new Uint8Array(0),
+    "first.csv": strToU8("A,01"),
+    "nested.zip": zipSync({ "inside.txt": strToU8("record") }),
+    "last.csv": strToU8("B,02"),
+  });
+  const iterator = walkZip("batch.zip", bytes);
+
+  const discovered = await iterator.next();
+  assert.equal(discovered.value?.kind, "candidates");
+  assert.equal(discovered.value?.candidateCount, 2);
+
+  const first = await iterator.next();
+  assert.equal(first.value?.kind, "file");
+  assert.equal(first.value?.virtualPath, "batch/first.csv");
+  assert.equal(first.value?.candidateCount, 2, "direct leaf candidates are known before processing");
+
+  const nestedDiscovered = await iterator.next();
+  assert.equal(nestedDiscovered.value?.kind, "candidates");
+  assert.equal(nestedDiscovered.value?.candidateCount, 3);
+
+  const second = await iterator.next();
+  assert.equal(second.value?.kind, "file");
+  assert.equal(second.value?.virtualPath, "batch/nested/inside.txt");
+  assert.equal(second.value?.candidateCount, 3, "nested leaf candidates are added when discovered");
+
+  const third = await iterator.next();
+  assert.equal(third.value?.kind, "file");
+  assert.equal(third.value?.virtualPath, "batch/last.csv");
+  assert.equal(third.value?.candidateCount, 3);
+});
+
+test("does not inspect a later nested payload before it is requested", async () => {
+  const iterator = walkZip("batch.zip", zipSync({
+    "first.csv": strToU8("A,01"),
+    "broken.zip": strToU8("not a zip"),
+  }));
+
+  const discovered = await iterator.next();
+  assert.equal(discovered.value?.kind, "candidates");
+  assert.equal(discovered.value?.candidateCount, 1);
+
+  const first = await iterator.next();
+  assert.equal(first.value?.kind, "file");
+  assert.equal(first.value?.virtualPath, "batch/first.csv");
+  assert.equal(first.value?.candidateCount, 1);
+
+  const second = await iterator.next();
+  assert.equal(second.value?.kind, "discarded");
+  assert.equal(second.value?.reason, "invalid-archive");
+  assert.equal(second.value?.virtualPath, "batch/broken.zip");
+  assert.equal(second.value?.candidateCount, 1, "an invalid ZIP container is not a parser candidate");
+});
+
+test("keeps unsupported nested ZIP64 containers source-fatal", async () => {
+  const nested = markAsZip64(zipSync({ "inside.csv": strToU8("A,01") }));
+  await assert.rejects(
+    extractZip("batch.zip", zipSync({ "good.csv": strToU8("B,02"), "nested.zip": nested })),
+    /ZIP64/u,
+  );
 });
 
 test("serializes and reopens safe output entries", async () => {
@@ -167,7 +244,7 @@ test("rejects unsafe or colliding output paths", async () => {
   ]), /路徑碰撞/u);
 });
 
-test("rejects an archive with a tampered encrypted flag", () => {
+test("records an encrypted member without extracting it", async () => {
   const bytes = zipSync({ "data.csv": strToU8("A,01") }).slice();
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   for (let offset = 0; offset <= bytes.byteLength - 4; offset += 1) {
@@ -177,6 +254,33 @@ test("rejects an archive with a tampered encrypted flag", () => {
     }
   }
   assert.equal(inspectZip(bytes)[0]?.encrypted, true);
+  const extraction = await extractZip("batch.zip", bytes);
+  assert.deepEqual(extraction.files, []);
+  assert.deepEqual(extraction.skippedEntries.map((entry) => entry.reason), ["encrypted"]);
+});
+
+test("records unsafe and duplicate member paths while keeping safe siblings", async () => {
+  const unsafe = replaceNameBytes(
+    zipSync({ "safe.csv": strToU8("A,01"), "good.csv": strToU8("B,02") }),
+    strToU8("safe.csv"),
+    strToU8("../a.csv"),
+  );
+  const unsafeExtraction = await extractZip("batch.zip", unsafe);
+  assert.deepEqual(unsafeExtraction.files.map((file) => file.virtualPath), ["batch/good.csv"]);
+  assert.deepEqual(unsafeExtraction.skippedEntries.map((entry) => entry.reason), ["unsafe-path"]);
+
+  const duplicate = replaceNameBytes(
+    zipSync({ "a.csv": strToU8("A,01"), "b.csv": strToU8("B,02") }),
+    strToU8("b.csv"),
+    strToU8("a.csv"),
+  );
+  const duplicateExtraction = await extractZip("batch.zip", duplicate);
+  assert.equal(duplicateExtraction.files.length, 1);
+  assert.deepEqual(duplicateExtraction.skippedEntries.map((entry) => entry.reason), ["duplicate-path"]);
+  const duplicateVisits = [];
+  for await (const visit of walkZip("batch.zip", duplicate)) duplicateVisits.push(visit);
+  assert.equal(duplicateVisits[0]?.candidateCount, 2);
+  assert.equal(duplicateVisits.at(-1)?.candidateCount, 1, "a duplicate is removed from parser candidates");
 });
 
 test("safely skips symbolic links and unsupported extensions while keeping supported files", async () => {
@@ -207,4 +311,7 @@ test("safely skips symbolic links and unsupported extensions while keeping suppo
       virtualPath: "excluded-entries/excluded/link.csv",
     },
   ]);
+  const visits = [];
+  for await (const visit of walkZip("excluded-entries.zip", bytes)) visits.push(visit);
+  assert.ok(visits.every((visit) => visit.candidateCount === 1));
 });
