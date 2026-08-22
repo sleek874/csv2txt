@@ -250,7 +250,7 @@ test("keeps valid Unicode out of shared row findings regardless of BIG-5E mappin
 
 test("uses regex for the contract but presents friendly format errors", () => {
   const expectedPatterns = new Map([
-    [5, "^[a-z0-9]{5,10}$"],
+    [5, "^[A-Z0-9]{5,10}$"],
     [7, "^.+$"],
     [9, "^.+$"],
     [14, "^(?:[0-9]{8})?$"],
@@ -263,10 +263,12 @@ test("uses regex for the contract but presents friendly format errors", () => {
   const validFile = createInternalFile(
     "regex-valid",
     "regex-valid.csv",
-    { rows: [validRow({ 5: "ab123", 7: "中", 9: "台北", 14: "", 15: "" })] },
+    { rows: [validRow({ 5: "ab123", 7: "中", 9: "台北", 11: "a123456789", 14: "", 15: "" })] },
     "20260803",
   );
   assert.equal(validFile.summary.errorRows, 0, "only the field 14/15 pair may be empty");
+  assert.equal(validFile.rows[0]?.cells[4]?.normalizedValue, "AB123");
+  assert.equal(validFile.rows[0]?.cells[10]?.normalizedValue, "A123456789");
 
   const invalidFile = createInternalFile(
     "regex-invalid",

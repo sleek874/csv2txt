@@ -7,6 +7,7 @@ import {
   recoveredUnicodeCodePoint,
 } from "../src/core/private-use-recovery-mapping.ts";
 import {
+  containsPrivateUseCodePoint,
   decodeBig5E,
   decodeBig5EPartially,
   decodeSource,
@@ -125,6 +126,13 @@ test("keeps every generated PUA recovery inside the pinned formal-Unicode contra
 });
 
 test("recognizes all three Unicode Private Use Areas", () => {
+  assert.equal(containsPrivateUseCodePoint("正式 Unicode 堃"), false);
+  for (const codePoint of [0xe000, 0xf8ff, 0xf0000, 0xffffd, 0x100000, 0x10fffd]) {
+    assert.equal(containsPrivateUseCodePoint(`A${String.fromCodePoint(codePoint)}B`), true);
+  }
+  for (const codePoint of [0xdfff, 0xf900, 0xeffff, 0xffffe, 0x10fffe]) {
+    assert.equal(containsPrivateUseCodePoint(String.fromCodePoint(codePoint)), false);
+  }
   assert.deepEqual(
     privateUseCodePoints(`A${String.fromCodePoint(0xe000)}${String.fromCodePoint(0xf0000)}${String.fromCodePoint(0x100000)}${String.fromCodePoint(0xe000)}`),
     [0xe000, 0xf0000, 0x100000],

@@ -47,7 +47,7 @@ const ARCHIVE_LIMIT_VIOLATIONS = [
   },
   {
     archiveDepth: 11,
-    expectedError: "ZIP 巢狀超過 10 層上限。",
+    expectedReason: "archive-depth",
     kind: "archive-depth",
     name: "over-limit-11-nested-zips.zip",
     uiLabel: "壓縮層數超過限制",

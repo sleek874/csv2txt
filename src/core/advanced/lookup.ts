@@ -33,7 +33,12 @@ export interface AdvancedLookupResult {
   unmatchedRowCount: number;
 }
 
-function normalizedLookupKey(value: string): string {
+export interface AdvancedReferenceIndex {
+  headers: readonly string[];
+  rowsByKey: ReadonlyMap<string, readonly (readonly string[])[]>;
+}
+
+export function normalizedLookupKey(value: string): string {
   return value.trim().toLocaleUpperCase("en-US");
 }
 
@@ -106,29 +111,36 @@ function outputHeaders(referenceHeaders: readonly string[]): string[] {
   });
 }
 
-export function joinAdvancedRows(
-  primaryRows: readonly AdvancedPrimaryRow[],
+export function createAdvancedReferenceIndex(
   reference: ReferenceTable,
   keyColumnIndex: number,
+): AdvancedReferenceIndex {
+  const rowsByKey = new Map<string, (readonly string[])[]>();
+  for (const row of reference.rows) {
+    const key = normalizedLookupKey(row[keyColumnIndex] ?? "");
+    if (!key) continue;
+    const matches = rowsByKey.get(key) ?? [];
+    matches.push(row);
+    rowsByKey.set(key, matches);
+  }
+  return { headers: reference.headers, rowsByKey };
+}
+
+export function joinAdvancedRowsWithIndex(
+  primaryRows: Iterable<AdvancedPrimaryRow>,
+  reference: AdvancedReferenceIndex,
   selectedColumnIndices: readonly number[],
 ): AdvancedLookupResult {
   const validSelectedIndices = [...new Set(selectedColumnIndices)]
     .filter((index) => index >= 0 && index < reference.headers.length);
-  const referenceRowsByKey = new Map<string, (readonly string[])[]>();
-  for (const row of reference.rows) {
-    const key = normalizedLookupKey(row[keyColumnIndex] ?? "");
-    if (!key) continue;
-    const matches = referenceRowsByKey.get(key) ?? [];
-    matches.push(row);
-    referenceRowsByKey.set(key, matches);
-  }
-
   const rows: string[][] = [];
   let matchedRowCount = 0;
+  let selectedRowCount = 0;
   let unmatchedRowCount = 0;
   for (const primaryRow of primaryRows) {
+    selectedRowCount += 1;
     const matches = primaryRow.lookupKey
-      ? referenceRowsByKey.get(primaryRow.lookupKey) ?? []
+      ? reference.rowsByKey.get(primaryRow.lookupKey) ?? []
       : [];
     if (matches.length === 0) {
       unmatchedRowCount += 1;
@@ -146,7 +158,6 @@ export function joinAdvancedRows(
       ]);
     }
   }
-
   return {
     headers: [
       ...ADVANCED_PRIMARY_HEADERS,
@@ -155,7 +166,20 @@ export function joinAdvancedRows(
     matchedRowCount,
     resultRowCount: rows.length,
     rows,
-    selectedRowCount: primaryRows.length,
+    selectedRowCount,
     unmatchedRowCount,
   };
+}
+
+export function joinAdvancedRows(
+  primaryRows: readonly AdvancedPrimaryRow[],
+  reference: ReferenceTable,
+  keyColumnIndex: number,
+  selectedColumnIndices: readonly number[],
+): AdvancedLookupResult {
+  return joinAdvancedRowsWithIndex(
+    primaryRows,
+    createAdvancedReferenceIndex(reference, keyColumnIndex),
+    selectedColumnIndices,
+  );
 }

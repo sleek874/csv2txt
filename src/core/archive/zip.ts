@@ -1,4 +1,4 @@
-import { Unzip, UnzipInflate, Zip, ZipDeflate } from "fflate";
+import { Inflate, Zip, ZipDeflate } from "fflate";
 import * as iconv from "iconv-lite";
 
 import { concatenateBytes } from "../bytes";
@@ -6,8 +6,10 @@ import { exceedsFileSizeLimit, FILE_SIZE_LIMIT_TECHNICAL_LABEL } from "../file-s
 import { detectSourceFileType } from "../file-formats";
 import { ARCHIVE_LIMITS, archiveRootName, safeArchivePath } from "./policy";
 import type {
+  ArchiveDiscardReason,
   ArchiveExtraction,
   ArchiveOutputEntry,
+  ArchiveVisit,
   ExtractedSourceFile,
   SkippedArchiveEntry,
   ZipEntryMetadata,
@@ -15,12 +17,18 @@ import type {
 
 const END_OF_CENTRAL_DIRECTORY = 0x06054b50;
 const CENTRAL_DIRECTORY_ENTRY = 0x02014b50;
+const LOCAL_FILE_HEADER = 0x04034b50;
 const MAX_END_RECORD_SEARCH = 65_557;
+const INFLATE_CHUNK_BYTES = 64 * 1024;
 
 interface ArchiveQuota {
-  entryCount: number;
+  candidateCount: number;
+  scannedEntryCount: number;
   paths: Set<string>;
 }
+
+class ArchiveQuotaError extends Error {}
+class ArchiveFatalError extends Error {}
 
 function readUint16(view: DataView, offset: number): number {
   return view.getUint16(offset, true);
@@ -81,16 +89,15 @@ function decodeEntryName(
   rawName: Uint8Array,
   extra: Uint8Array,
   utf8: boolean,
-): Pick<ZipEntryMetadata, "libraryName" | "name" | "nameEncoding" | "nameWasHeuristic"> {
+): Pick<ZipEntryMetadata, "name" | "nameEncoding" | "nameWasHeuristic"> {
   if (utf8) {
     const name = strictUtf8(rawName);
-    return { libraryName: name, name, nameEncoding: "utf-8", nameWasHeuristic: false };
+    return { name, nameEncoding: "utf-8", nameWasHeuristic: false };
   }
 
   const storedUnicodePath = unicodePath(extra, rawName);
   if (storedUnicodePath !== null) {
     return {
-      libraryName: byteString(rawName),
       name: storedUnicodePath,
       nameEncoding: "unicode-path",
       nameWasHeuristic: false,
@@ -99,7 +106,7 @@ function decodeEntryName(
 
   if (rawName.every((byte) => byte < 0x80)) {
     const name = byteString(rawName);
-    return { libraryName: name, name, nameEncoding: "ascii", nameWasHeuristic: false };
+    return { name, nameEncoding: "ascii", nameWasHeuristic: false };
   }
 
   const cp950 = iconv.decode(rawName, "cp950");
@@ -110,7 +117,6 @@ function decodeEntryName(
     && /[\u3400-\u9fff\uf900-\ufaff]/u.test(cp950)
   ) {
     return {
-      libraryName: byteString(rawName),
       name: cp950,
       nameEncoding: "cp950",
       nameWasHeuristic: true,
@@ -118,7 +124,6 @@ function decodeEntryName(
   }
 
   return {
-    libraryName: byteString(rawName),
     name: iconv.decode(rawName, "cp437"),
     nameEncoding: "cp437",
     nameWasHeuristic: true,
@@ -154,13 +159,13 @@ export function inspectZip(bytes: Uint8Array): ZipEntryMetadata[] {
     throw new Error("ZIP 結尾資料不完整或含有未識別內容。");
   }
   if (diskNumber !== 0 || centralDirectoryDisk !== 0 || entriesOnDisk !== entryCount) {
-    throw new Error("不支援分割式 ZIP。");
+    throw new ArchiveFatalError("不支援分割式 ZIP。");
   }
   if (entryCount === 0xffff || centralDirectorySize === 0xffffffff || centralDirectoryOffset === 0xffffffff) {
-    throw new Error("目前不支援 ZIP64。");
+    throw new ArchiveFatalError("目前不支援 ZIP64。");
   }
   if (entryCount > ARCHIVE_LIMITS.maxEntries) {
-    throw new Error(`ZIP 項目超過 ${ARCHIVE_LIMITS.maxEntries} 個上限。`);
+    throw new ArchiveQuotaError(`ZIP 項目超過 ${ARCHIVE_LIMITS.maxEntries} 個上限。`);
   }
   if (centralDirectoryOffset + centralDirectorySize > endOffset) {
     throw new Error("ZIP 中央目錄位置無效。");
@@ -181,12 +186,13 @@ export function inspectZip(bytes: Uint8Array): ZipEntryMetadata[] {
     const extraLength = readUint16(view, offset + 30);
     const entryCommentLength = readUint16(view, offset + 32);
     const externalAttributes = readUint32(view, offset + 38);
+    const localHeaderOffset = readUint32(view, offset + 42);
     const nextOffset = offset + 46 + nameLength + extraLength + entryCommentLength;
     if (nextOffset > endOffset) {
       throw new Error("ZIP 項目名稱或附加資料不完整。");
     }
     if (compressedSize === 0xffffffff || uncompressedSize === 0xffffffff) {
-      throw new Error("目前不支援 ZIP64 項目。");
+      throw new ArchiveFatalError("目前不支援 ZIP64 項目。");
     }
 
     const rawName = bytes.subarray(offset + 46, offset + 46 + nameLength);
@@ -204,9 +210,11 @@ export function inspectZip(bytes: Uint8Array): ZipEntryMetadata[] {
       compressedSize,
       compression,
       encrypted: (flags & 0x0001) !== 0,
+      flags,
       isDirectory: decodedName.name.endsWith("/") || decodedName.name.endsWith("\\"),
       isSymlink: creatorSystem === 3 && (unixMode & 0xf000) === 0xa000,
       ...decodedName,
+      localHeaderOffset,
       rawName: rawName.slice(),
       uncompressedSize,
       utf8Flag,
@@ -224,170 +232,281 @@ function joinVirtualPath(...parts: string[]): string {
   return parts.filter(Boolean).join("/");
 }
 
-function validateMetadata(entries: readonly ZipEntryMetadata[], quota: ArchiveQuota): void {
-  const entryPaths = new Set<string>();
-  quota.entryCount += entries.length;
-  if (quota.entryCount > ARCHIVE_LIMITS.maxEntries) {
-    throw new Error(`ZIP 項目累計超過 ${ARCHIVE_LIMITS.maxEntries} 個上限。`);
-  }
-  for (const entry of entries) {
-    const path = safeArchivePath(entry.name);
-    if (!entry.isDirectory && entryPaths.has(path)) {
-      throw new Error(`ZIP 內出現重複路徑：${path}`);
-    }
-    entryPaths.add(path);
-    if (entry.encrypted) {
-      throw new Error(`不支援加密的 ZIP 項目：${entry.name}`);
-    }
-    if (!entry.isDirectory && entry.compression !== 0 && entry.compression !== 8) {
-      throw new Error(`ZIP 項目使用不支援的壓縮方式：${entry.name}`);
-    }
-    if (exceedsFileSizeLimit(entry.uncompressedSize)) {
-      throw new Error(`ZIP 內單檔超過 ${FILE_SIZE_LIMIT_TECHNICAL_LABEL}：${entry.name}`);
-    }
+function countEntries(entries: readonly ZipEntryMetadata[], quota: ArchiveQuota): void {
+  quota.scannedEntryCount += entries.length;
+  if (quota.scannedEntryCount > ARCHIVE_LIMITS.maxEntries) {
+    throw new ArchiveQuotaError(`ZIP 項目累計超過 ${ARCHIVE_LIMITS.maxEntries} 個上限。`);
   }
 }
 
-function extractEntries(
+function centralDirectoryStart(bytes: Uint8Array): number {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return readUint32(view, endOfCentralDirectoryOffset(view) + 16);
+}
+
+function compressedEntryBytes(
   bytes: Uint8Array,
-  metadata: readonly ZipEntryMetadata[],
-): Map<string, Uint8Array> {
-  const expected = new Map(metadata.map((entry) => [entry.libraryName, entry]));
-  const extracted = new Map<string, Uint8Array>();
-  let failure: Error | null = null;
-  const unzip = new Unzip((file) => {
-    if (failure) {
-      return;
-    }
-    try {
-      const entry = expected.get(file.name);
-      if (!entry || entry.compression !== file.compression) {
-        throw new Error(`ZIP 項目與中央目錄不一致：${file.name}`);
-      }
-      const safePath = safeArchivePath(entry.name);
-      if (entry.isDirectory) {
-        return;
-      }
-      if (entry.isSymlink) {
-        return;
-      }
-      const supported = detectSourceFileType(safePath) !== null || safePath.toLowerCase().endsWith(".zip");
-      if (!supported) {
-        return;
-      }
-      const chunks: Uint8Array[] = [];
-      let fileBytes = 0;
-      file.ondata = (error, chunk, final) => {
-        if (failure) {
-          return;
-        }
-        if (error) {
-          failure = error;
-          return;
-        }
-        fileBytes += chunk.byteLength;
-        if (exceedsFileSizeLimit(fileBytes)) {
-          failure = new Error(`ZIP 內單檔實際展開超過 ${FILE_SIZE_LIMIT_TECHNICAL_LABEL}：${safePath}`);
-          file.terminate();
-          return;
-        }
-        if (chunk.byteLength > 0) {
-          chunks.push(chunk.slice());
-        }
-        if (final) {
-          extracted.set(safePath, concatenateBytes(chunks, fileBytes));
-        }
-      };
-      file.start();
-    } catch (error) {
-      failure = error instanceof Error ? error : new Error("無法安全解壓 ZIP。");
-    }
-  });
-  unzip.register(UnzipInflate);
-  try {
-    unzip.push(bytes, true);
-  } catch (error) {
-    failure ??= error instanceof Error ? error : new Error("ZIP 解壓失敗。");
+  entry: ZipEntryMetadata,
+  dataBoundary: number,
+): Uint8Array {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const offset = entry.localHeaderOffset;
+  if (offset + 30 > dataBoundary || readUint32(view, offset) !== LOCAL_FILE_HEADER) {
+    throw new Error(`ZIP 項目的本機標頭不完整：${entry.name}`);
   }
-  if (failure) {
-    throw failure;
+  const flags = readUint16(view, offset + 6);
+  const compression = readUint16(view, offset + 8);
+  const nameLength = readUint16(view, offset + 26);
+  const extraLength = readUint16(view, offset + 28);
+  const dataOffset = offset + 30 + nameLength + extraLength;
+  const dataEnd = dataOffset + entry.compressedSize;
+  const localName = bytes.subarray(offset + 30, offset + 30 + nameLength);
+  if (
+    dataOffset > dataBoundary
+    || dataEnd > dataBoundary
+    || flags !== entry.flags
+    || compression !== entry.compression
+    || !equalBytes(localName, entry.rawName)
+  ) {
+    throw new Error(`ZIP 項目與中央目錄不一致：${entry.name}`);
   }
-  return extracted;
+  return bytes.subarray(dataOffset, dataEnd);
 }
 
-async function extractArchive(
+function extractEntry(
+  bytes: Uint8Array,
+  entry: ZipEntryMetadata,
+  safePath: string,
+  dataBoundary: number,
+): Uint8Array {
+  const compressed = compressedEntryBytes(bytes, entry, dataBoundary);
+  if (entry.compression === 0) {
+    if (exceedsFileSizeLimit(compressed.byteLength)) {
+      throw new Error(`ZIP 內單檔實際展開超過 ${FILE_SIZE_LIMIT_TECHNICAL_LABEL}：${safePath}`);
+    }
+    return compressed;
+  }
+
+  const chunks: Uint8Array[] = [];
+  let outputBytes = 0;
+  const inflate = new Inflate((chunk) => {
+    outputBytes += chunk.byteLength;
+    if (exceedsFileSizeLimit(outputBytes)) {
+      throw new Error(`ZIP 內單檔實際展開超過 ${FILE_SIZE_LIMIT_TECHNICAL_LABEL}：${safePath}`);
+    }
+    if (chunk.byteLength > 0) chunks.push(chunk.slice());
+  });
+  for (let offset = 0; offset < compressed.byteLength; offset += INFLATE_CHUNK_BYTES) {
+    const end = Math.min(offset + INFLATE_CHUNK_BYTES, compressed.byteLength);
+    inflate.push(compressed.subarray(offset, end), end === compressed.byteLength);
+  }
+  if (compressed.byteLength === 0) inflate.push(compressed, true);
+  return concatenateBytes(chunks, outputBytes);
+}
+
+function discarded(
+  quota: ArchiveQuota,
+  rootName: string,
+  rootPath: string,
+  entryName: string,
+  reason: ArchiveDiscardReason,
+  removeCandidate = false,
+): ArchiveVisit {
+  if (removeCandidate) quota.candidateCount -= 1;
+  const virtualPath = joinVirtualPath(rootPath, entryName.replaceAll("\\", "/"));
+  return {
+    candidateCount: quota.candidateCount,
+    kind: "discarded",
+    reason,
+    relativePath: virtualPath.slice(rootName.length + 1),
+    virtualPath,
+  };
+}
+
+function isSupportedLeafCandidate(
+  entry: ZipEntryMetadata,
+  rootPath: string,
+): boolean {
+  if (
+    entry.isDirectory
+    || entry.isSymlink
+    || entry.encrypted
+    || (entry.compression !== 0 && entry.compression !== 8)
+    || exceedsFileSizeLimit(entry.uncompressedSize)
+    || entry.name.toLowerCase().endsWith(".zip")
+  ) {
+    return false;
+  }
+  try {
+    const entryPath = safeArchivePath(entry.name);
+    safeArchivePath(joinVirtualPath(rootPath, entryPath));
+    return detectSourceFileType(entryPath) !== null;
+  } catch {
+    return false;
+  }
+}
+
+async function* walkArchive(
+  rootName: string,
   fileName: string,
   bytes: Uint8Array,
   parentPath: string,
   archiveDepth: number,
   quota: ArchiveQuota,
-): Promise<ArchiveExtraction> {
-  if (archiveDepth > ARCHIVE_LIMITS.maxArchiveDepth) {
-    throw new Error(`ZIP 巢狀超過 ${ARCHIVE_LIMITS.maxArchiveDepth} 層上限。`);
-  }
+): AsyncGenerator<ArchiveVisit> {
   const rootPath = joinVirtualPath(parentPath, archiveRootName(fileName));
   safeArchivePath(`${rootPath}/placeholder`);
   const metadata = inspectZip(bytes);
-  validateMetadata(metadata, quota);
-  const extracted = extractEntries(bytes, metadata);
-  const files: ExtractedSourceFile[] = [];
-  const skippedEntries: SkippedArchiveEntry[] = metadata.flatMap((entry) => {
-    if (entry.isDirectory) return [];
-    const reason = entry.isSymlink
-      ? "symlink"
-      : detectSourceFileType(entry.name) === null && !entry.name.toLowerCase().endsWith(".zip")
-        ? "unsupported-type"
-        : null;
-    if (!reason) return [];
-    return [{
-      relativePath: "",
-      reason,
-      virtualPath: safeArchivePath(joinVirtualPath(rootPath, entry.name)),
-    }];
-  });
-  for (const [entryPath, entryBytes] of extracted) {
-    const virtualPath = joinVirtualPath(rootPath, entryPath);
-    if (entryPath.toLowerCase().endsWith(".zip")) {
-      const segments = entryPath.split("/");
-      const nestedFileName = segments.pop() ?? "archive.zip";
-      const nested = await extractArchive(
-        nestedFileName,
-        entryBytes,
-        joinVirtualPath(rootPath, ...segments),
-        archiveDepth + 1,
-        quota,
-      );
-      files.push(...nested.files);
-      skippedEntries.push(...nested.skippedEntries);
+  const dataBoundary = centralDirectoryStart(bytes);
+  countEntries(metadata, quota);
+  const previousCandidateCount = quota.candidateCount;
+  const supportedCandidates = new Set(metadata.filter((entry) => (
+    isSupportedLeafCandidate(entry, rootPath)
+  )));
+  quota.candidateCount += supportedCandidates.size;
+  if (quota.candidateCount !== previousCandidateCount) {
+    yield {
+      candidateCount: quota.candidateCount,
+      kind: "candidates",
+      virtualPath: rootPath,
+    };
+  }
+  for (const entry of metadata) {
+    if (entry.isDirectory) continue;
+    let entryPath: string;
+    try {
+      entryPath = safeArchivePath(entry.name);
+    } catch {
+      yield discarded(quota, rootName, rootPath, entry.name, "unsafe-path");
       continue;
     }
-    const path = safeArchivePath(virtualPath);
-    if (quota.paths.has(path)) {
-      throw new Error(`ZIP 內出現重複路徑：${path}`);
+    const isZip = entryPath.toLowerCase().endsWith(".zip");
+    const type = detectSourceFileType(entryPath);
+    if (entry.isSymlink) {
+      yield discarded(quota, rootName, rootPath, entryPath, "symlink");
+      continue;
     }
-    quota.paths.add(path);
-    files.push({ bytes: entryBytes, relativePath: "", size: entryBytes.byteLength, virtualPath: path });
+    if (entry.encrypted) {
+      yield discarded(quota, rootName, rootPath, entryPath, "encrypted");
+      continue;
+    }
+    if (entry.compression !== 0 && entry.compression !== 8) {
+      yield discarded(quota, rootName, rootPath, entryPath, "unsupported-compression");
+      continue;
+    }
+    if (exceedsFileSizeLimit(entry.uncompressedSize)) {
+      yield discarded(quota, rootName, rootPath, entryPath, "too-large");
+      continue;
+    }
+    if (!type && !isZip) {
+      yield discarded(quota, rootName, rootPath, entryPath, "unsupported-type");
+      continue;
+    }
+    let virtualPath: string;
+    try {
+      virtualPath = safeArchivePath(joinVirtualPath(rootPath, entryPath));
+    } catch {
+      yield discarded(quota, rootName, rootPath, entryPath, "unsafe-path");
+      continue;
+    }
+    if (quota.paths.has(virtualPath)) {
+      yield discarded(
+        quota,
+        rootName,
+        rootPath,
+        entryPath,
+        "duplicate-path",
+        supportedCandidates.has(entry),
+      );
+      continue;
+    }
+    if (isZip && archiveDepth >= ARCHIVE_LIMITS.maxArchiveDepth) {
+      yield discarded(quota, rootName, rootPath, entryPath, "archive-depth");
+      continue;
+    }
+    const nestedSegments = isZip ? entryPath.split("/") : [];
+    const nestedFileName = isZip ? nestedSegments.pop() ?? "archive.zip" : "";
+    if (isZip) {
+      try {
+        safeArchivePath(joinVirtualPath(
+          rootPath,
+          ...nestedSegments,
+          archiveRootName(nestedFileName),
+          "placeholder",
+        ));
+      } catch {
+        yield discarded(quota, rootName, rootPath, entryPath, "unsafe-path");
+        continue;
+      }
+    }
+    quota.paths.add(virtualPath);
+
+    let entryBytes: Uint8Array;
+    try {
+      entryBytes = extractEntry(bytes, entry, entryPath, dataBoundary);
+    } catch {
+      yield discarded(
+        quota,
+        rootName,
+        rootPath,
+        entryPath,
+        "invalid-file",
+        supportedCandidates.has(entry),
+      );
+      continue;
+    }
+    if (isZip) {
+      try {
+        yield* walkArchive(
+          rootName,
+          nestedFileName,
+          entryBytes,
+          joinVirtualPath(rootPath, ...nestedSegments),
+          archiveDepth + 1,
+          quota,
+        );
+      } catch (error) {
+        if (error instanceof ArchiveFatalError || error instanceof ArchiveQuotaError) throw error;
+        yield discarded(quota, rootName, rootPath, entryPath, "invalid-archive");
+      }
+      continue;
+    }
+    yield {
+      bytes: entryBytes,
+      candidateCount: quota.candidateCount,
+      kind: "file",
+      relativePath: virtualPath.slice(rootName.length + 1),
+      size: entryBytes.byteLength,
+      virtualPath,
+    };
   }
-  return { files, skippedEntries };
+}
+
+export function walkZip(fileName: string, bytes: Uint8Array): AsyncGenerator<ArchiveVisit> {
+  const rootName = archiveRootName(fileName);
+  return walkArchive(rootName, fileName, bytes, "", 1, {
+    candidateCount: 0,
+    scannedEntryCount: 0,
+    paths: new Set<string>(),
+  });
 }
 
 export async function extractZip(fileName: string, bytes: Uint8Array): Promise<ArchiveExtraction> {
-  const rootName = archiveRootName(fileName);
-  const extraction = await extractArchive(fileName, bytes, "", 1, {
-    entryCount: 0,
-    paths: new Set<string>(),
-  });
-  return {
-    ...extraction,
-    files: extraction.files.map((file) => ({
-      ...file,
-      relativePath: file.virtualPath.slice(rootName.length + 1),
-    })),
-    skippedEntries: extraction.skippedEntries.map((entry) => ({
-      ...entry,
-      relativePath: entry.virtualPath.slice(rootName.length + 1),
-    })),
-  };
+  const files: ExtractedSourceFile[] = [];
+  const skippedEntries: SkippedArchiveEntry[] = [];
+  for await (const visit of walkZip(fileName, bytes)) {
+    if (visit.kind === "candidates") {
+      continue;
+    }
+    if (visit.kind === "file") {
+      const { candidateCount: _candidateCount, kind: _kind, ...file } = visit;
+      files.push(file);
+    } else {
+      const { candidateCount: _candidateCount, kind: _kind, ...entry } = visit;
+      skippedEntries.push(entry);
+    }
+  }
+  return { files, skippedEntries };
 }
 
 export function serializeZip(entries: readonly ArchiveOutputEntry[]): Promise<Uint8Array> {

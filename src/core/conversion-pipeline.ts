@@ -1,6 +1,6 @@
 import type { DataIssue, InternalFile } from "./internal-model";
 import { summarizeInternalFile } from "./internal-model";
-import { privateUseCodePoints } from "./encoding";
+import { containsPrivateUseCodePoint } from "./encoding";
 import { normalizedCharacterIndex, normalizeRows } from "./normalization";
 import type { PrivateUseRecoveryLookup } from "./private-use-recovery";
 import { applyTransformations } from "./transformations";
@@ -111,7 +111,7 @@ export async function createInternalFileWithRecovery(
   today = taipeiDateStamp(),
 ): Promise<InternalFile> {
   const needsRecovery = adapter.rows.some(
-    (row) => row.some((value) => privateUseCodePoints(value).length > 0),
+    (row) => row.some(containsPrivateUseCodePoint),
   );
   const privateUseLookup = needsRecovery
     ? (await import("./private-use-recovery-mapping")).recoveredUnicodeCodePoint

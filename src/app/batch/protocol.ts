@@ -8,6 +8,7 @@ import type {
 } from "../../core/internal-model";
 import type { OutputIssue } from "../../core/output-validation";
 import type { HeaderedSpreadsheet } from "../../core/formats/spreadsheet";
+import type { ArchiveDiscardReason } from "../../core/archive/types";
 
 export type PreviewFilter =
   | "all"
@@ -46,7 +47,7 @@ export interface ProcessedEntry {
 }
 
 export interface SkippedEntry {
-  reason: "symlink" | "unsupported-type";
+  reason: ArchiveDiscardReason;
   relativePath: string;
   virtualPath: string;
 }

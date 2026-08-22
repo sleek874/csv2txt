@@ -256,10 +256,25 @@ export function isPrivateUseCodePoint(codePoint: number): boolean {
     || (codePoint >= 0x100000 && codePoint <= 0x10fffd);
 }
 
+export function containsPrivateUseCodePoint(value: string): boolean {
+  for (let index = 0; index < value.length;) {
+    const codePoint = value.codePointAt(index);
+    if (codePoint === undefined) return false;
+    if (isPrivateUseCodePoint(codePoint)) return true;
+    index += codePoint > 0xffff ? 2 : 1;
+  }
+  return false;
+}
+
 export function privateUseCodePoints(value: string): number[] {
-  return [...new Set(
-    [...value]
-      .map((character) => character.codePointAt(0))
-      .filter((codePoint): codePoint is number => codePoint !== undefined && isPrivateUseCodePoint(codePoint)),
-  )];
+  const result: number[] = [];
+  const seen = new Set<number>();
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint !== undefined && isPrivateUseCodePoint(codePoint) && !seen.has(codePoint)) {
+      seen.add(codePoint);
+      result.push(codePoint);
+    }
+  }
+  return result;
 }
