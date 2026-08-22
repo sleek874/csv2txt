@@ -50,6 +50,10 @@ const big5TxtSource = readFileSync(
   new URL("../src/core/formats/big5-txt.ts", import.meta.url),
   "utf8",
 );
+const spreadsheetSource = readFileSync(
+  new URL("../src/core/formats/spreadsheet.ts", import.meta.url),
+  "utf8",
+);
 const outputValidationSource = readFileSync(
   new URL("../src/core/output-validation.ts", import.meta.url),
   "utf8",
@@ -420,6 +424,21 @@ assert.match(
   big5TxtSource,
   /serializeBig5Txt[\s\S]*?encodeBig5EWithReplacement\(value\)\.bytes[\s\S]*?encoded\.length > width/u,
   "BIG-5E serialization must substitute before enforcing fixed byte width.",
+);
+assert.match(
+  spreadsheetSource,
+  /function denseWorksheet[\s\S]*?utils\.aoa_to_sheet\(rows\.map\([\s\S]*?\{ dense: true \}\)/u,
+  "XLSX output must create dense worksheets for large rectangular data.",
+);
+assert.match(
+  spreadsheetSource,
+  /serializeSpreadsheet[\s\S]*?denseWorksheet\(rows\.map\(\(row\) => row\.values\)\)/u,
+  "Section 2 XLSX output must use dense worksheet storage.",
+);
+assert.match(
+  spreadsheetSource,
+  /serializeHeaderedSpreadsheet[\s\S]*?denseWorksheet\(\[headers, \.\.\.rows\]\)/u,
+  "Section 3 XLSX output must use dense worksheet storage.",
 );
 assert.match(
   outputValidationSource,

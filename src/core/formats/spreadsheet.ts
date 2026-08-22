@@ -28,8 +28,12 @@ export interface HeaderedSpreadsheet extends ParsedRows {
   sheetName: string;
 }
 
+function denseWorksheet(rows: readonly (readonly string[])[]): WorkSheet {
+  return utils.aoa_to_sheet(rows.map((row) => [...row]), { dense: true });
+}
+
 export function serializeSpreadsheet(rows: readonly SerializableRow[]): Uint8Array {
-  const sheet = utils.aoa_to_sheet(rows.map((row) => [...row.values]));
+  const sheet = denseWorksheet(rows.map((row) => row.values));
   const workbook = utils.book_new(sheet, "資料");
   return new Uint8Array(write(workbook, {
     type: "array",
@@ -43,10 +47,7 @@ export function serializeHeaderedSpreadsheet(
   rows: readonly (readonly string[])[],
   sheetName = "整理結果",
 ): Uint8Array {
-  const sheet = utils.aoa_to_sheet([
-    [...headers],
-    ...rows.map((row) => [...row]),
-  ]);
+  const sheet = denseWorksheet([headers, ...rows]);
   const workbook = utils.book_new(sheet, sheetName);
   return new Uint8Array(write(workbook, {
     type: "array",
