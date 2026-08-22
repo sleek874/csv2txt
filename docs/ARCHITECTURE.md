@@ -252,17 +252,21 @@ ZIP、Excel、CSV、BIG-5E TXT、驗證、標準／進階輸出與 ZIP 輸出由
 - Batch output format。
 - Concise application status。
 
-`protocol.ts` 定義 request ID、輸入／預覽／選取／輸出／進階流程命令與進度事件；`batch-client.ts` 是唯一 worker 生命週期 owner，負責 transferable bytes、stale response 隔離、目前頁與相鄰頁 cache。Worker error、message decode error 或同步 postMessage 失敗都會拒絕相關 request；不可用的 worker 會終止，下一次操作才建立乾淨 instance。`batch-worker.ts` 只接收訊息並轉交 `batch-engine.ts`；engine 編排 active files 與參照 workbook，並把重複 header、空白 header 與未儲存公式結果依類型整理為有界的 reference 提醒摘要，不把整份 issue graph 傳回主執行緒。`compact-workspace.ts` 保存 column-oriented values、selection bitset 與 sparse diagnostics，`workspace-summary.ts` 建立清單／輸出問題摘要，`preview-query.ts` 只建立最多 100 rows 的 page DTO，`standard-output.ts` 與 `advanced-data.ts` 分別投影標準輸出與進階查詢資料，`scheduler.ts` 負責節流進度及逐檔讓出 worker event loop。
+`protocol.ts` 定義 request ID、輸入／預覽／選取／輸出／進階流程命令與進度事件；`batch-client.ts` 是唯一 worker 生命週期 owner，負責 transferable bytes、stale response 隔離、目前頁與相鄰頁 cache。Worker error、message decode error 或同步 postMessage 失敗都會拒絕相關 request；不可用的 worker 會終止，下一次操作才建立乾淨 instance。`batch-worker.ts` 只接收訊息並轉交 `batch-engine.ts`；engine 編排 active files 與參照 workbook，並把重複 header、空白 header 與未儲存公式結果依類型整理為有界的 reference 提醒摘要，不把整份 issue graph 傳回主執行緒。`compact-workspace.ts` 保存 column-oriented values、selection bitset 與 sparse diagnostics，`workspace-summary.ts` 建立清單／輸出問題摘要，`preview-query.ts` 只建立最多 100 rows 的 page DTO，`standard-output.ts` 與 `advanced-data.ts` 分別投影標準輸出與進階查詢資料；進階摘要重用參照 key index 與主要資料 key counts，不建立完整 join rows，下載時才逐列投影。`scheduler.ts` 負責節流進度及逐檔讓出 worker event loop。
 
 Section 2／3 以目前格式、canonical active file IDs、各檔案既有 `selectionRevision` 與 Section 3 mapping 組成衍生 dependency key；不另存跨 section 的 output-intent state。建立結果返回主執行緒後若 key 已改變，只丟棄舊結果並顯示可重試提示。提示是否停用下載必須重新取自目前 output plan，不得沿用舊 generation 的 disabled 狀態。
 
-主執行緒的 `WorkspaceFileRecord` 只保存 file summary、file-level blocking 狀態、blocking output findings 與 replacement row count，不保存完整 rows。一般 row/cell diagnostics 留在 worker 的 sparse maps，只有目前頁相關項目跨越 protocol。每個檔案完成既有 parsing、normalization、validation 與 transformation 後，立即轉成 column-oriented compact state；`normalizedValue` 是 column base，只有不同的 `finalValue` 才另存 sparse override，避免整批長期保留 row/cell object graph。
+主執行緒的 `WorkspaceFileRecord` 只保存 file summary、file-level blocking 狀態、blocking output findings 與 replacement row count，不保存完整 rows。一般 row/cell diagnostics 留在 worker 的 sparse maps，只有目前頁相關項目跨越 protocol。每個檔案完成既有 parsing、normalization、validation 與 transformation 後，立即轉成 column-oriented compact state：固定小值域欄位使用 byte code；其餘欄位在單檔 distinct value 少於 10 時使用 byte dictionary，否則保存原字串 column。無法安全編碼的原值與其 cell issue 共存於同一筆 sparse detail；`normalizedValue` 是 column base，只有不同的 `finalValue` 才另存 sparse override，避免整批長期保留 row/cell object graph。
 
-清空主要工作區由 `batch-client.ts` 先推進 workspace epoch、拒絕舊 epoch 的 pending request，再以 worker command 清除 active／removed files 與 preview cache；獨立的 Section 3 reference workbook 不帶 workspace epoch，因此保留。移除／復原使用 worker 內的暫存區維持既有 undo。大型 ZIP 採單一 worker、逐檔 parse 後釋放 entry bytes，並在檔案邊界 cooperative yield，使預覽／選取命令可排入 worker event loop。Main thread 不提供同步 fallback。
+Compact state 是儲存方式，不是新的資料規則：重新 materialize 的 worker-facing row（不含後續流程不使用的原始 `sourceValue`）必須與既有 IR 相同；選取後的 TXT／CSV／XLSX serializer bytes 與進階 XLSX join bytes 也必須和 object-row 路徑相同。測試需涵蓋正規化、預設值、自動修正、無法 packed 的值、dictionary fallback、取消選取、重複 join 與未配對列。XLSX 改用 dense worksheet 只改記憶體表示，不改儲存格內容、順序或輸出契約。
+
+清空主要工作區由 `batch-client.ts` 先推進 workspace epoch、拒絕舊 epoch 的 pending request，再以 worker command 清除 active／removed files 與 preview cache；獨立的 Section 3 reference workbook 不帶 workspace epoch，因此保留。取消新增可先讓 UI 結束等待；若不可中止的讀檔或 parser 稍後才完成，controller 會接續丟棄其 worker 結果，避免留下畫面上看不到的檔案。移除／復原使用 worker 內的暫存區維持既有 undo。大型 ZIP 採單一 worker，以中央目錄定位 payload，深度優先走訪 nested ZIP；每次只展開一個 regular file，立刻沿用既有 parser 建立 compact state，再釋放該 entry bytes，並在檔案邊界 cooperative yield。處理進度以「已完成（接受或 parser 失敗）的支援 leaf candidate／目前已發現的支援 leaf candidate」表示；進入 nested ZIP 時只增加新發現的 TXT／CSV／XLS／XLSX leaf。資料夾、ZIP container、不支援副檔名與 archive-policy 排除項目另行回報，不進入分子或分母。Main thread 不提供同步 fallback；本階段也不改成 per-filetype byte stream，Excel 仍讀取完整 workbook bytes。
 
 所有標準輸出與進階 join 在 worker 取檔時，都依 NFC 正規化後的安全 `virtualPath` 以 code-unit 順序排序；controller 也以相同 canonical order 建立 dependency key 與 file ID request。清單樹仍保留使用者可理解的加入順序，輸出內容則不受 picker、移除或復原順序影響。
 
 Worker 採有界、近似序列的重型工作以控制記憶體與結果順序；只有 profiling 證明有益時才提高 concurrency。
+
+資源取捨：packed／dictionary column 會增加建立時的 value-domain 判斷與輸出時的 decode，但一般低基數欄位由每列一個字串 reference 降為一個 byte；高基數欄位在第 10 個 distinct value 時回退為原字串 column，避免維護無效的大 dictionary。ZIP walker 不再同時保留所有 sibling 的展開 bytes，但仍保留使用者選取的 ZIP bytes、目前 member、parser 暫存與 compact workspace；CSV／TXT parser、Excel workbook 與各檔輸出目前仍是整檔 materialization。進階摘要以 cached reference index 與每檔 selection-revision key counts 換取額外 cache 記憶體，避免每次 UI 摘要都建立完整 primary rows 和 join result；真正下載仍須配置完整結果 rows 與 XLSX bytes。
 
 ## 8. Resource reuse
 
@@ -289,7 +293,8 @@ ZIP library 採獨立 lazy chunk，由 `codec-manager` 載入 `core/archive/zip.
 - Inventory 發現 ZIP 時載入 reader。
 - 只有準備下載時載入 writer 路徑。
 - 不在 UI component 直接 import ZIP dependency。
-- 解壓時使用 stream/filter/per-entry quota，不使用無界 `unzipSync` 處理整批內容；每個 entry 都檢查宣告與實際展開大小，輸入不累計 bytes。
+- 解壓時先讀輕量中央目錄，再以 local-header offset 選擇單一 payload；DEFLATE 以有界 input chunks 展開，不使用無界 `unzipSync` 或先累積所有 sibling。每個 entry 都檢查宣告與實際展開大小，輸入不累計 bytes。
+- Walker 對 nested ZIP 採深度優先並逐項 yield。entry-specific 安全或解析失敗只回傳最小 path／reason 並繼續 sibling；只有頂層結構不可驗證、ZIP64／分割式容器或累計 entry quota 破壞全域可信度時中止來源 transaction。
 - `zip.ts` 同時提供安全 extract 與 serialize；path、depth、quota、symlink 與 collision 規則放在相鄰 policy 模組。
 - Standard output 只有一個檔案時直接回傳 tabular codec artifact；兩個以上才載入 ZIP writer，保留 virtual path，並以 output codec 與台北分鐘時間戳命名 archive。
 

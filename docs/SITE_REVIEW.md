@@ -45,7 +45,7 @@ File／ZIP 先依 `TXT`／`CSV`／`XLSX` family 分類；只有目前輸入 fami
 
 - 正式 CSP 保持 connect-src 'none'；沒有 upload endpoint、telemetry、runtime CDN 或第三方連線。
 - 檔案內容、路徑、issue、IR 與輸出不寫入 localStorage、IndexedDB、URL 或 log；localStorage 只保存 UI theme，以及 Section 3 的本機 salt 與 header SHA-256 fingerprints，不保存可讀 header、檔名或工作表名稱。
-- ZIP 在解壓前檢查中央目錄，限制 entry、深度及每個 entry 的 100 MiB 大小，拒絕 traversal、控制字元、加密、symlink、ZIP64、未知 compression 與碰撞；實際串流解壓時也逐檔計數，不限制累計輸入大小。
+- ZIP 在解壓前檢查中央目錄，限制 entry、深度及每個 entry 的 100 MiB 大小；reader 依 local offset 深度優先、一次展開及處理一個檔案。traversal、控制字元、加密、symlink、未知 compression、碰撞、過深 nested ZIP 與損壞 member 只丟棄並記錄該項，安全 sibling 繼續；ZIP64、分割式／不可驗證的頂層結構及累計 entry quota 仍使整個來源失敗。輸入不限制累計大小。
 - Service worker 的 base、Excel、archive 與 font 群組由 Vite manifest 產生，舊 app cache 會在 activate 清理。
 - robots.txt、llms.txt 與 sitemap.xml 由正式建置提供；本次 Lighthouse 的 robots fetch 失敗來自 `connect-src 'none'` 阻擋其頁內檢索器，因此保留隱私 CSP 並由 build verifier 檢查內容。
 
@@ -55,7 +55,7 @@ File／ZIP 先依 `TXT`／`CSV`／`XLSX` family 分類；只有目前輸入 fami
 - Mapping：已知 BIG-5E／HKSCS 衝突、未知 bytes、完整 mapping round-trip、PUA recovery／unresolved cases。
 - Data：CSV quoting／CRLF／literal values、Excel formatted values／formula cache、208-byte TXT／padding／final CRLF。
 - Pipeline：日期、證號、性別、問號 warning、跨欄、空白列、rejected evidence、TEL transformation、row inclusion、format-specific output gate。
-- Batch／ZIP：Unicode Path、CP950／CP437 filename fallback、nested ZIP、symlink、unsafe path、collision、fail-closed output；51 檔／306,051 列極限 fixture 會完整驗證 entry、expanded bytes、CRLF 與抽樣 parser 契約，200 檔／2,000,000 列 fixture 則只驗證 ZIP metadata 與單檔界線。
+- Batch／ZIP：Unicode Path、CP950／CP437 filename fallback、nested ZIP、symlink、unsafe path、collision、逐項失敗隔離、來源級 quota 回滾、fail-closed output；51 檔／306,051 列極限 fixture 會完整驗證 entry、expanded bytes、CRLF 與抽樣 parser 契約，200 檔／2,000,000 列 fixture 則只驗證 ZIP metadata 與單檔界線。
 - UI contracts：雙格式分類、tree aggregation、rejected filter、page-scoped bulk selection、ARIA references、responsive/static style rules。
 - Output state：Node 回歸測試與 Chrome smoke 都涵蓋建立下載期間切換輸入 family，確認舊檔不儲存、提示出現、spinner 停止，且目前有效下載按鈕恢復可用。
 - Production：CSP、agent discovery、offline manifest groups、no source maps、base／Excel JavaScript budgets。
@@ -65,7 +65,7 @@ File／ZIP 先依 `TXT`／`CSV`／`XLSX` family 分類；只有目前輸入 fami
 ## 剩餘風險
 
 1. 接收端是否接受這份官方 BIG-5E profile、padding 與 CRLF 尚需核准的去識別 fixture 實測；本機 round-trip 不能替代外部系統 acceptance。
-2. 大型 Excel／ZIP 已移入 dedicated worker；極限 ZIP fixture 的自動測試不證明 306,051 或 2,000,000 列的端到端耗時與記憶體可接受，其中 200 檔 fixture 更只讀取 metadata。100 MiB 單檔上限不是整批效能或記憶體保證，工作區與 ZIP 累計輸入大小由使用者自行控制。
+2. 大型 Excel／ZIP 已移入 dedicated worker；極限 ZIP fixture 的自動測試不證明 306,051 或 2,000,000 列的瀏覽器端到端耗時與記憶體可接受，其中 200 檔 fixture 更只讀取 metadata。2026-08-23 的單次 Node 24 local profile 以 51 檔／306,051 列完整走過 ZIP → parser → compact workspace，約 4.6 秒、maximum RSS 約 571 MiB、GC 後新增 retained heap 約 82 MiB；這不是 Chrome、低記憶體裝置、互動反應或輸出階段的保證。100 MiB 單檔上限也不是整批效能或記憶體保證，工作區與 ZIP 累計輸入大小由使用者自行控制。
 3. 部署 origin 的 service-worker 安裝、更新與完全離線 reload 尚需瀏覽器 smoke test。
 4. Lighthouse 與本次 headless smoke 不等於 screen reader、forced-colors、reduced-motion、原生 picker、下載對話框或完整鍵盤／觸控旅程；這些仍需人工或正式 browser automation 覆蓋。
 5. 專案本身尚未選定 license；在此之前不應接受第三方 contribution。
