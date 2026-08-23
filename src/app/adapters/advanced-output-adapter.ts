@@ -4,7 +4,7 @@ import type {
   WorkbookSummary,
 } from "../../core/formats/spreadsheet";
 import type { CodecManager } from "../resources/codec-manager";
-import { taipeiMinuteStamp, type CreatedOutput } from "./output-adapter";
+import { outputBlob, taipeiMinuteStamp, type CreatedOutput } from "../batch/output-artifact";
 
 export interface AdvancedOutputAdapter {
   create(result: AdvancedLookupResult, createdAt?: Date): Promise<CreatedOutput>;
@@ -17,9 +17,11 @@ export function createAdvancedOutputAdapter(codecs: CodecManager): AdvancedOutpu
     async create(result, createdAt = new Date()) {
       const spreadsheet = await codecs.spreadsheet();
       return {
-        bytes: spreadsheet.serializeHeaderedSpreadsheet(result.headers, result.rows),
+        blob: outputBlob(
+          spreadsheet.serializeHeaderedSpreadsheet(result.headers, result.rows),
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
         filename: `進階輸出-${taipeiMinuteStamp(createdAt)}.xlsx`,
-        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       };
     },
     async inspect(bytes) {

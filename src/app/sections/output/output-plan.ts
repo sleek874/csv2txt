@@ -17,7 +17,12 @@ export interface OutputPlan {
   preparationState: OutputPreparationState;
   problems: readonly string[];
   replacementRowCount: number;
-  totalSummary: { fileCount: number; selectedRows: number };
+  totalSummary: {
+    fileCount: number;
+    omittedFileCount: number;
+    selectedRows: number;
+    sourceFileCount: number;
+  };
 }
 
 export function createOutputPlan(
@@ -26,7 +31,8 @@ export function createOutputPlan(
   preparationError: string | null = null,
 ): OutputPlan {
   const outputEntries = canonicalActiveWorkspaceItems(snapshot);
-  const files = outputEntries.flatMap((item) => item.file ? [item.file] : []);
+  const sourceFiles = outputEntries.flatMap((item) => item.file ? [item.file] : []);
+  const files = sourceFiles.filter((file) => file.summary.includedRows > 0);
   const blockingOutputIssues = files.flatMap((file) => (
     file.outputFormat === snapshot.outputFormat ? file.blockingOutputIssues : []
   ));
@@ -44,9 +50,6 @@ export function createOutputPlan(
     ...files.flatMap((file) => file.summary.rejectedRows > 0
       ? [`${file.virtualPath}：有 ${file.summary.rejectedRows} 列無法解析，請修正來源或移除此檔案。`]
       : []),
-    ...files.flatMap((file) => file.summary.includedRows === 0
-      ? [`${file.virtualPath}：尚未勾選輸出列。`]
-      : []),
     ...[...pathFiles].flatMap(([path, ids]) => ids.length > 1
       ? [`輸出路徑重複：${path}`]
       : []),
@@ -55,7 +58,7 @@ export function createOutputPlan(
   const hasProblems = problems.length > 0 || blockingOutputIssues.length > 0;
 
   return {
-    canDownload: outputEntries.length > 0
+    canDownload: files.length > 0
       && effectivePreparationState === "ready"
       && !hasProblems,
     files,
@@ -68,8 +71,10 @@ export function createOutputPlan(
       total + (file.outputFormat === snapshot.outputFormat ? file.outputReplacementRows : 0)
     ), 0),
     totalSummary: {
-      fileCount: outputEntries.length,
+      fileCount: files.length,
+      omittedFileCount: sourceFiles.length - files.length,
       selectedRows: files.reduce((total, file) => total + file.summary.includedRows, 0),
+      sourceFileCount: sourceFiles.length,
     },
   };
 }

@@ -50,6 +50,14 @@ export interface ArchiveExtraction {
 }
 
 export interface ArchiveOutputEntry {
-  bytes: Uint8Array;
+  createBytes: () => Promise<Uint8Array> | Uint8Array;
   path: string;
+}
+
+export type ArchiveOutputCompression = "deflate" | "store";
+
+export interface ArchiveOutputOptions {
+  compression?: ArchiveOutputCompression;
+  isCancelled?: () => boolean;
+  yieldAfterEntry?: () => Promise<void>;
 }

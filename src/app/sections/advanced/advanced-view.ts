@@ -1,6 +1,6 @@
-import { downloadBytes } from "../../../browser/download";
+import { downloadBlob } from "../../../browser/download";
 import { requireDescendant, requireElement } from "../../../browser/dom";
-import type { CreatedOutput } from "../../adapters/output-adapter";
+import type { CreatedOutput } from "../../batch/output-artifact";
 import { createStateTransition } from "../../shell/state-transition";
 
 export interface AdvancedViewState {
@@ -245,7 +245,7 @@ export function createAdvancedView(): AdvancedView {
       downloadTransition.update(state.selectedRowCount > 0 ? "ready" : "no-selection");
     },
     save(output) {
-      downloadBytes(output.bytes, output.mimeType, output.filename);
+      downloadBlob(output.blob, output.filename);
     },
   };
 }

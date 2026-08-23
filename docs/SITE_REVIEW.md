@@ -1,11 +1,11 @@
 # 站點健康檢查
 
-檢查日期：2026-08-14
+檢查日期：2026-08-24
 範圍：格式分流、來源證據、共同資料管線、CSV／XLSX／TXT／ZIP I/O、工作區 UI 契約、離線建置、安全、dependency、測試與文件。
 
 ## 結論
 
-目前分支的 Node tests、TypeScript、正式建置、static build verifier、桌面 headless Chrome smoke 與 Lighthouse 已通過。Headless smoke 涵蓋啟動解除鎖定、主題切換、檔案分類 tabs、規則 disclosure、格式切換、合成 CSV 載入、預覽與下載就緒；不把這些結果延伸宣稱為螢幕閱讀器、原生 picker、下載對話框或真實裝置證據。
+目前工作樹的 Node tests、TypeScript、正式建置與 static build verifier 已通過。2026-08-14 的桌面 headless Chrome smoke 與 Lighthouse 屬於較早的 UI 範圍；本次逐檔輸出、取消下載與摘要調整尚未重跑瀏覽器測試，也不宣稱螢幕閱讀器、原生 picker、下載對話框或真實裝置證據。
 
 CSV serializer 使用標準 literal-value 輸出，固定 UTF-8 BOM、CRLF、無標題列並保存最終 IR；需要可靠的試算表文字型別與前置零時使用 XLSX。
 
@@ -38,6 +38,7 @@ File／ZIP 先依 `TXT`／`CSV`／`XLSX` family 分類；只有目前輸入 fami
 - 檔案處理狀態移到固定資訊區後，窄螢幕的靜態 picker 不再保留舊版 4.5rem loading 文字槽；處理中的幾何穩定改由資訊區單一負責。
 - Section 3 參照欄位操作在讀取 workbook、重算結果或建立下載時會鎖定，避免平行堆疊昂貴 join 或工作表切換；Excel 讀取提醒按類型合併為有界、白話的摘要。
 - Section 2 建立下載期間若切換 Section 0 輸入格式，舊輸出會捨棄並顯示重新下載提示；提示會依目前 output plan 恢復按鈕，不再沿用舊 generation 的 disabled 狀態。
+- Section 2 只保留一行格式／輸出檔案／勾選列／略過檔案摘要；既有狀態標題、問題 disclosure 與按鈕已表達的下一步不再重複。取消下載使用固定操作欄位與單一 polite 事件宣告，不把大量輸出進度放進 live region。
 
 自動與 headless 證據不能取代螢幕閱讀器、完整鍵盤操作、原生 file picker、下載 dialog 或真實裝置測試；這些仍列為發布前人工檢查。
 
@@ -51,21 +52,21 @@ File／ZIP 先依 `TXT`／`CSV`／`XLSX` family 分類；只有目前輸入 fami
 
 ## 本次驗證
 
-- `npm run verify`：20 個 Node test files、TypeScript、Vite production build、static build verifier。
+- `npm run verify`：21 個 Node test files、TypeScript、Vite production build、static build verifier。
 - Mapping：已知 BIG-5E／HKSCS 衝突、未知 bytes、完整 mapping round-trip、PUA recovery／unresolved cases。
 - Data：CSV quoting／CRLF／literal values、Excel formatted values／formula cache、208-byte TXT／padding／final CRLF。
 - Pipeline：日期、證號、性別、問號 warning、跨欄、空白列、rejected evidence、TEL transformation、row inclusion、format-specific output gate。
-- Batch／ZIP：Unicode Path、CP950／CP437 filename fallback、nested ZIP、symlink、unsafe path、collision、逐項失敗隔離、來源級 quota 回滾、fail-closed output；51 檔／306,051 列極限 fixture 會完整驗證 entry、expanded bytes、CRLF 與抽樣 parser 契約，200 檔／2,000,000 列 fixture 則只驗證 ZIP metadata 與單檔界線。
+- Batch／ZIP：Unicode Path、CP950／CP437 filename fallback、nested ZIP、symlink、unsafe path、collision、逐項失敗隔離、來源級 quota 回滾；Section 2 驗證零勾選檔案略過、逐檔建立／yield、CSV／TXT level 6、XLSX store、合作取消及 5,000／100 MiB／500 MiB policy。51 檔／306,051 列極限 fixture 會完整驗證 entry、expanded bytes、CRLF 與抽樣 parser 契約，200 檔／2,000,000 列 fixture 則只驗證 ZIP metadata 與單檔界線。
 - UI contracts：雙格式分類、tree aggregation、rejected filter、page-scoped bulk selection、ARIA references、responsive/static style rules。
-- Output state：Node 回歸測試與 Chrome smoke 都涵蓋建立下載期間切換輸入 family，確認舊檔不儲存、提示出現、spinner 停止，且目前有效下載按鈕恢復可用。
+- Output state：Node 回歸測試涵蓋建立下載期間切換輸入 family 與合作取消，確認舊檔或部分結果不儲存、spinner 停止，且目前有效下載按鈕恢復可用。
 - Production：CSP、agent discovery、offline manifest groups、no source maps、base／Excel JavaScript budgets。
-- Chrome 151、1280×900：使用隔離 profile 對 `http://127.0.0.1:4174/` 執行 DOM／互動 smoke，載入合成 fixture 後沒有 console warning 或 exception。
-- Lighthouse 13.4.1：Performance 100、Accessibility 100、Best Practices 100、SEO 92。SEO 扣分來自 Lighthouse 在 `connect-src 'none'` 下無法以頁內檢索器抓取 robots.txt；檔案本身由 build verifier 驗證，未為分數放寬 CSP。
+- 歷史瀏覽器基線（2026-08-14）：Chrome 151、1280×900 的隔離 profile smoke 載入合成 fixture 後沒有 console warning 或 exception；本次變更未重跑。
+- 歷史 Lighthouse 基線（2026-08-14）：13.4.1 的 Performance 100、Accessibility 100、Best Practices 100、SEO 92；本次變更未重跑。SEO 扣分來自 `connect-src 'none'` 阻擋頁內 robots 檢索器，未為分數放寬 CSP。
 
 ## 剩餘風險
 
 1. 接收端是否接受這份官方 BIG-5E profile、padding 與 CRLF 尚需核准的去識別 fixture 實測；本機 round-trip 不能替代外部系統 acceptance。
-2. 大型 Excel／ZIP 已移入 dedicated worker；極限 ZIP fixture 的自動測試不證明 306,051 或 2,000,000 列的瀏覽器端到端耗時與記憶體可接受，其中 200 檔 fixture 更只讀取 metadata。2026-08-23 的單次 Node 24 local profile 以 51 檔／306,051 列完整走過 ZIP → parser → compact workspace，約 4.6 秒、maximum RSS 約 571 MiB、GC 後新增 retained heap 約 82 MiB；這不是 Chrome、低記憶體裝置、互動反應或輸出階段的保證。100 MiB 單檔上限也不是整批效能或記憶體保證，工作區與 ZIP 累計輸入大小由使用者自行控制。
+2. 大型 Excel／ZIP 已移入 dedicated worker；極限 ZIP fixture 的自動測試不證明 306,051 或 2,000,000 列的瀏覽器端到端耗時與記憶體可接受，其中 200 檔 fixture 更只讀取 metadata。2026-08-23 的單次 Node 24 local profile 以 51 檔／306,051 列完整走過 ZIP → parser → compact workspace，約 4.6 秒、maximum RSS 約 571 MiB、GC 後新增 retained heap 約 82 MiB；這不是 Chrome、低記憶體裝置、互動反應或輸出階段的保證。新的逐檔輸出與 Blob path 也尚未以真實 500 MiB 瀏覽器下載驗證。100 MiB 單檔上限不是整批效能或記憶體保證，工作區與 ZIP 累計輸入大小由使用者自行控制。
 3. 部署 origin 的 service-worker 安裝、更新與完全離線 reload 尚需瀏覽器 smoke test。
 4. Lighthouse 與本次 headless smoke 不等於 screen reader、forced-colors、reduced-motion、原生 picker、下載對話框或完整鍵盤／觸控旅程；這些仍需人工或正式 browser automation 覆蓋。
 5. 專案本身尚未選定 license；在此之前不應接受第三方 contribution。

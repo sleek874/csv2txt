@@ -6,6 +6,7 @@ import * as iconv from "iconv-lite";
 
 import { safeArchivePath } from "../src/core/archive/policy.ts";
 import { extractZip, inspectZip, serializeZip, walkZip } from "../src/core/archive/zip.ts";
+import { ARCHIVE_LIMITS } from "../src/core/archive/policy.ts";
 import { exceedsFileSizeLimit, FILE_SIZE_LIMIT_BYTES } from "../src/core/file-size-policy.ts";
 
 function replaceNameBytes(bytes, before, after) {
@@ -33,6 +34,10 @@ function replaceDeclaredSizes(bytes, sizes) {
   }
   assert.equal(sizeIndex, sizes.length);
   return result;
+}
+
+async function blobBytes(blob) {
+  return new Uint8Array(await blob.arrayBuffer());
 }
 
 function markAsZip64(bytes) {
@@ -224,24 +229,49 @@ test("keeps unsupported nested ZIP64 containers source-fatal", async () => {
 });
 
 test("serializes and reopens safe output entries", async () => {
-  const bytes = await serializeZip([
-    { path: "folder/data.csv", bytes: strToU8("001,中文") },
-    { path: "records.txt", bytes: strToU8("record") },
-  ]);
+  const bytes = await blobBytes(await serializeZip([
+    { path: "folder/data.csv", createBytes: () => strToU8("001,中文") },
+    { path: "records.txt", createBytes: () => strToU8("record") },
+  ]));
   const extraction = await extractZip("result.zip", bytes);
   assert.deepEqual(extraction.files.map((file) => file.virtualPath), [
     "result/folder/data.csv",
     "result/records.txt",
   ]);
   assert.equal(new TextDecoder().decode(extraction.files[0]?.bytes), "001,中文");
+  assert.deepEqual(inspectZip(bytes).map((entry) => entry.compression), [8, 8]);
+
+  const stored = await blobBytes(await serializeZip([
+    { path: "book.xlsx", createBytes: () => strToU8("already-compressed") },
+  ], { compression: "store" }));
+  assert.equal(inspectZip(stored)[0]?.compression, 0);
 });
 
 test("rejects unsafe or colliding output paths", async () => {
-  assert.throws(() => serializeZip([{ path: "../outside.csv", bytes: strToU8("unsafe") }]), /路徑不安全/u);
-  assert.throws(() => serializeZip([
-    { path: "data.csv", bytes: strToU8("one") },
-    { path: "data.csv", bytes: strToU8("two") },
+  await assert.rejects(serializeZip([{ path: "../outside.csv", createBytes: () => strToU8("unsafe") }]), /路徑不安全/u);
+  await assert.rejects(serializeZip([
+    { path: "data.csv", createBytes: () => strToU8("one") },
+    { path: "data.csv", createBytes: () => strToU8("two") },
   ]), /路徑碰撞/u);
+});
+
+test("uses the shared 5000-entry, 100 MiB entry, and 500 MiB output policy", () => {
+  assert.equal(ARCHIVE_LIMITS.maxOutputEntries, 5_000);
+  assert.equal(ARCHIVE_LIMITS.maxOutputEntryBytes, 100 * 1024 * 1024);
+  assert.equal(ARCHIVE_LIMITS.maxOutputBytes, 500 * 1024 * 1024);
+  assert.equal("maxOutputSourceBytes" in ARCHIVE_LIMITS, false);
+});
+
+test("creates and yields output entries sequentially", async () => {
+  const events = [];
+  const blob = await serializeZip([
+    { path: "one.csv", createBytes: () => { events.push("one"); return strToU8("one"); } },
+    { path: "two.csv", createBytes: () => { events.push("two"); return strToU8("two"); } },
+  ], {
+    yieldAfterEntry: async () => { events.push("yield"); },
+  });
+  assert.deepEqual(events, ["one", "yield", "two", "yield"]);
+  assert.deepEqual(inspectZip(await blobBytes(blob)).map((entry) => entry.name), ["one.csv", "two.csv"]);
 });
 
 test("records an encrypted member without extracting it", async () => {

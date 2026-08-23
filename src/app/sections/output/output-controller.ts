@@ -20,12 +20,17 @@ export function createOutputController(options: OutputControllerOptions) {
     | { kind: "error"; key: string; message: string };
   type Generation =
     | { kind: "idle" }
-    | { kind: "generating"; key: string }
-    | { kind: "error"; key: string; message: string };
+    | { kind: "generating" }
+    | { kind: "cancelling" }
+    | { kind: "error"; message: string };
 
   let assessment: Assessment = { kind: "idle" };
   let generation: Generation = { kind: "idle" };
   let pendingTask = Promise.resolve();
+
+  function isCancelling(): boolean {
+    return generation.kind === "cancelling";
+  }
 
   function requestKey(): string {
     const snapshot = options.model.snapshot();
@@ -58,14 +63,19 @@ export function createOutputController(options: OutputControllerOptions) {
     const snapshot = options.model.snapshot();
     const currentPreparation = preparation();
     const plan = createOutputPlan(snapshot, currentPreparation.state, currentPreparation.error);
-    options.view.render(plan, snapshot.outputFormat, generation.kind === "generating");
+    const busy = generation.kind === "generating" || generation.kind === "cancelling";
+    options.view.render(plan, snapshot.outputFormat, busy, generation.kind === "cancelling");
     if (generation.kind === "error") options.view.renderError(generation.message, plan.canDownload);
   }
 
   async function checkOutput(): Promise<void> {
     const snapshot = options.model.snapshot();
     const stale = canonicalActiveWorkspaceItems(snapshot).flatMap((item) => (
-      item.file && item.file.outputFormat !== snapshot.outputFormat ? [item.file] : []
+      item.file
+        && item.file.summary.includedRows > 0
+        && item.file.outputFormat !== snapshot.outputFormat
+        ? [item.file]
+        : []
     ));
     if (stale.length === 0) {
       if (assessment.kind !== "idle") {
@@ -102,7 +112,7 @@ export function createOutputController(options: OutputControllerOptions) {
     const plan = createOutputPlan(snapshot);
     if (!plan.canDownload) return;
     const requestedState = requestKey();
-    generation = { kind: "generating", key: requestedState };
+    generation = { kind: "generating" };
     render();
     options.status.announce("正在建立下載。");
     try {
@@ -110,10 +120,14 @@ export function createOutputController(options: OutputControllerOptions) {
         plan.files.map((file) => file.id),
         snapshot.outputFormat,
       );
+      if (isCancelling()) {
+        generation = { kind: "idle" };
+        options.status.announce("已取消建立下載。");
+        return;
+      }
       if (requestKey() !== requestedState) {
         generation = {
           kind: "error",
-          key: requestKey(),
           message: "工作區已在建立下載期間變更，請重新下載。",
         };
         options.status.announce("工作區已變更，下載已取消。");
@@ -124,23 +138,38 @@ export function createOutputController(options: OutputControllerOptions) {
         ? `已建立 ${OUTPUT_PRESENTATIONS[snapshot.outputFormat].label} ZIP 下載。`
         : `已建立 ${OUTPUT_PRESENTATIONS[snapshot.outputFormat].label} 下載。`);
     } catch (error) {
+      if (isCancelling()) {
+        generation = { kind: "idle" };
+        options.status.announce("已取消建立下載。");
+        return;
+      }
       generation = {
         kind: "error",
-        key: requestKey(),
         message: requestKey() !== requestedState
           ? "工作區已在建立下載期間變更，請重新下載。"
           : error instanceof Error ? error.message : "請重新整理後再試。",
       };
       options.status.announce(requestKey() !== requestedState ? "工作區已變更，下載已取消。" : "無法建立下載。");
     } finally {
-      if (generation.kind === "generating") generation = { kind: "idle" };
+      if (generation.kind === "generating") {
+        generation = { kind: "idle" };
+      }
       render();
     }
+  }
+
+  function cancelDownload(): void {
+    if (generation.kind !== "generating") return;
+    generation = { kind: "cancelling" };
+    render();
+    options.status.announce("正在取消建立下載。");
+    void options.batchClient.cancelOutput().catch(() => undefined);
   }
 
   return {
     bind() {
       options.view.bind({
+        onCancel: cancelDownload,
         onDownload: () => { pendingTask = download(); void pendingTask; },
       });
       options.model.subscribe(() => {

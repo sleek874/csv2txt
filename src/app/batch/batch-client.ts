@@ -1,4 +1,4 @@
-import type { CreatedOutput } from "../adapters/output-adapter";
+import type { CreatedOutput } from "./output-artifact";
 import type { OutputFormat, SourceFileType } from "../../core/file-formats";
 import type { WorkspaceFileRecord } from "../state/workspace-types";
 import type {
@@ -21,6 +21,7 @@ interface PendingRequest {
 }
 
 export interface BatchClient {
+  cancelOutput(): Promise<void>;
   cancelSource(sourceId: string): Promise<void>;
   resetWorkspace(): Promise<void>;
   clearReference(): Promise<void>;
@@ -138,6 +139,9 @@ export function createBatchClient(): BatchClient {
   }
 
   return {
+    async cancelOutput() {
+      await request({ type: "cancel-output", workspaceEpoch });
+    },
     async cancelSource(sourceId) {
       await request({ type: "cancel-source", sourceId, workspaceEpoch });
     },

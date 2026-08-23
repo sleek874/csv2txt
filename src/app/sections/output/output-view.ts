@@ -1,17 +1,18 @@
-import { downloadBytes } from "../../../browser/download";
+import { downloadBlob } from "../../../browser/download";
 import { requireDescendant, requireElement } from "../../../browser/dom";
 import { FILE_FORMAT_LABELS, fileFormatForOutput, type OutputFormat } from "../../../core/file-formats";
 import { describeOutputIssue } from "../../../core/output-validation";
-import type { CreatedOutput } from "../../adapters/output-adapter";
+import type { CreatedOutput } from "../../batch/output-artifact";
 import { OUTPUT_PRESENTATIONS } from "./output-presentations";
 import type { OutputPlan } from "./output-plan";
 import { createStateTransition } from "../../shell/state-transition";
 
 export interface OutputView {
   bind(options: {
+    onCancel: () => void;
     onDownload: () => void;
   }): void;
-  render(plan: OutputPlan, format: OutputFormat, busy: boolean): void;
+  render(plan: OutputPlan, format: OutputFormat, busy: boolean, cancelling: boolean): void;
   renderError(detail: string, canRetry: boolean): void;
   save(output: CreatedOutput): void;
 }
@@ -19,11 +20,11 @@ export interface OutputView {
 export function createOutputView(): OutputView {
   const root = requireElement<HTMLElement>("#output-step");
   const downloadStatus = requireDescendant<HTMLElement>(root, "#output-download-status");
+  const cancelButton = requireDescendant<HTMLButtonElement>(root, "#cancel-output-button");
   const downloadButton = requireDescendant<HTMLButtonElement>(root, "#download-button");
   const downloadTitle = requireDescendant<HTMLElement>(root, "#download-status-title");
   const downloadSpinner = requireDescendant<HTMLElement>(root, "#download-status-spinner");
   const downloadSummary = requireDescendant<HTMLElement>(root, "#download-status-summary");
-  const downloadDetail = requireDescendant<HTMLElement>(root, "#download-status-detail");
   const issueDisclosure = requireDescendant<HTMLDetailsElement>(root, "#output-issue-disclosure");
   const issueSummary = requireDescendant<HTMLElement>(root, "#output-issue-summary");
   const issueBlock = requireDescendant<HTMLElement>(issueDisclosure, ".issue-detail-block");
@@ -59,48 +60,47 @@ export function createOutputView(): OutputView {
 
   return {
     bind(options) {
+      cancelButton.addEventListener("click", options.onCancel);
       downloadButton.addEventListener("click", options.onDownload);
     },
-    render(plan, format, busy) {
+    render(plan, format, busy, cancelling) {
       clearOutputIssues();
       const presentation = OUTPUT_PRESENTATIONS[format];
       const processing = busy || plan.preparationState === "loading";
       downloadStatus.toggleAttribute("aria-busy", processing);
       downloadSpinner.hidden = !processing;
-      downloadSummary.textContent = `${FILE_FORMAT_LABELS[fileFormatForOutput(format)]}：${plan.totalSummary.fileCount.toLocaleString("zh-TW")} 個檔案，已勾選 ${plan.totalSummary.selectedRows.toLocaleString("zh-TW")} 列。`;
+      cancelButton.disabled = !busy || cancelling;
+      cancelButton.textContent = cancelling ? "正在取消" : "取消下載";
+      downloadSummary.textContent = `${FILE_FORMAT_LABELS[fileFormatForOutput(format)]}：${plan.totalSummary.fileCount.toLocaleString("zh-TW")} 個輸出檔案，已勾選 ${plan.totalSummary.selectedRows.toLocaleString("zh-TW")} 列${plan.totalSummary.omittedFileCount > 0 ? `；略過 ${plan.totalSummary.omittedFileCount.toLocaleString("zh-TW")} 個未勾選檔案` : ""}。`;
       downloadButton.textContent = plan.totalSummary.fileCount > 1 ? "下載 ZIP" : presentation.buttonLabel;
       if (busy) {
         downloadButton.disabled = true;
-        downloadTitle.textContent = "正在建立下載";
-        downloadDetail.textContent = "完成後會自動下載。";
-        transition.update("creating");
+        downloadTitle.textContent = cancelling ? "正在取消下載" : "正在建立下載";
+        transition.update(cancelling ? "cancelling" : "creating");
         return;
       }
-      if (plan.totalSummary.fileCount === 0) {
+      if (plan.totalSummary.sourceFileCount === 0 || plan.totalSummary.fileCount === 0) {
         downloadButton.disabled = true;
         downloadTitle.textContent = "尚未準備下載";
-        downloadDetail.textContent = "請加入符合第 0 區輸入格式的檔案。";
-        transition.update("empty");
+        transition.update(plan.totalSummary.sourceFileCount === 0 ? "empty" : "no-selection");
         return;
       }
       if (plan.preparationState === "loading") {
         downloadButton.disabled = true;
         downloadTitle.textContent = "正在準備下載";
-        downloadDetail.textContent = "請稍候。";
         transition.update("preparing");
         return;
       }
       if (plan.preparationState === "error") {
         downloadButton.disabled = true;
         downloadTitle.textContent = "無法完成輸出檢查";
-        downloadDetail.textContent = plan.preparationError ?? "請重新選擇輸出格式後再試一次。";
+        downloadSummary.textContent = plan.preparationError ?? "請重新選擇輸出格式後再試一次。";
         transition.update("preparation-error");
         return;
       }
       if (plan.hasProblems) {
         downloadButton.disabled = true;
         downloadTitle.textContent = "請先處理問題";
-        downloadDetail.textContent = "請依下列提示處理後再下載。";
         problemLink.hidden = false;
         renderProblems(plan);
         transition.update("problems");
@@ -108,9 +108,6 @@ export function createOutputView(): OutputView {
       }
       downloadButton.disabled = false;
       downloadTitle.textContent = "可以下載";
-      downloadDetail.textContent = plan.replacementRowCount > 0
-        ? "請查看下列提醒，確認後再下載。"
-        : `按「${downloadButton.textContent}」儲存結果。`;
       if (plan.replacementRowCount > 0) {
         problemLink.hidden = false;
         renderProblems(plan);
@@ -121,13 +118,15 @@ export function createOutputView(): OutputView {
       clearOutputIssues();
       downloadStatus.removeAttribute("aria-busy");
       downloadSpinner.hidden = true;
+      cancelButton.disabled = true;
+      cancelButton.textContent = "取消下載";
       downloadButton.disabled = !canRetry;
       downloadTitle.textContent = "無法建立下載";
-      downloadDetail.textContent = detail;
+      downloadSummary.textContent = detail;
       transition.update("download-error");
     },
     save(output) {
-      downloadBytes(output.bytes, output.mimeType, output.filename);
+      downloadBlob(output.blob, output.filename);
     },
   };
 }

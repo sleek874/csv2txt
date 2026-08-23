@@ -387,8 +387,12 @@ const FIXTURE_MTIME = new Date("1980-01-01T00:00:00.000Z");
 function extremeArchiveEntries(definition, bytes) {
   return Array.from({ length: definition.entryCount }, (_, index) => ({
     path: `batch/synthetic-${String(index + 1).padStart(3, "0")}.txt`,
-    bytes,
+    createBytes: () => bytes,
   }));
+}
+
+async function zipBytes(entries) {
+  return new Uint8Array(await (await serializeZip(entries)).arrayBuffer());
 }
 
 function extremeArchiveText(definition) {
@@ -428,9 +432,9 @@ async function writeArchives() {
   for (const archive of archiveDefinitions) {
     const entries = archive.entries.map(([path, format, dataset]) => ({
       path,
-      bytes: new Uint8Array(readFileSync(join(formatDirectories[format], `${dataset}.${format}`))),
+      createBytes: () => new Uint8Array(readFileSync(join(formatDirectories[format], `${dataset}.${format}`))),
     }));
-    writeFileSync(join(formatDirectories.zip, archive.name), await serializeZip(entries));
+    writeFileSync(join(formatDirectories.zip, archive.name), await zipBytes(entries));
   }
   const accepted = exclusionArchiveDefinition.acceptedEntry;
   writeFileSync(join(formatDirectories.zip, exclusionArchiveDefinition.name), zipSync({
@@ -452,7 +456,7 @@ async function writeArchives() {
 
   writeFileSync(
     join(formatDirectories.zip, EXTREME_ARCHIVE.name),
-    await serializeZip(extremeArchiveEntries(EXTREME_ARCHIVE, extremeArchiveText(EXTREME_ARCHIVE))),
+    await zipBytes(extremeArchiveEntries(EXTREME_ARCHIVE, extremeArchiveText(EXTREME_ARCHIVE))),
   );
 
   const manualExtremeTxt = extremeArchiveText(MANUAL_EXTREME_ARCHIVE);
@@ -460,7 +464,7 @@ async function writeArchives() {
     join(formatDirectories.zip, MANUAL_EXTREME_ARCHIVE.name),
     zipSync(Object.fromEntries(
       extremeArchiveEntries(MANUAL_EXTREME_ARCHIVE, manualExtremeTxt)
-        .map(({ path, bytes }) => [path, [bytes, { mtime: FIXTURE_MTIME }]]),
+        .map(({ path, createBytes }) => [path, [createBytes(), { mtime: FIXTURE_MTIME }]]),
     ), { level: 6 }),
   );
 

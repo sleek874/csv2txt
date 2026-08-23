@@ -1,10 +1,11 @@
 import { outputPath, type OutputFormat } from "../../core/file-formats";
+import { ARCHIVE_LIMITS } from "../../core/archive/policy";
+import { FILE_SIZE_LIMIT_TECHNICAL_LABEL } from "../../core/file-size-policy";
 import type { SerializableRow } from "../../core/formats/types";
 import { describeOutputIssue } from "../../core/output-validation";
-import type { CreatedOutput } from "../adapters/output-adapter";
-import { taipeiMinuteStamp } from "../adapters/output-adapter";
 import type { CodecManager } from "../resources/codec-manager";
 import { compactValue, type CompactFile } from "./compact-workspace";
+import { outputBlob, taipeiMinuteStamp, type CreatedOutput } from "./output-artifact";
 import { compactOutputIssues } from "./workspace-summary";
 
 const MIME_TYPES: Record<OutputFormat, string> = {
@@ -34,15 +35,19 @@ export async function createCompactOutput(
   format: OutputFormat,
   codecs: CodecManager,
   createdAt: Date,
+  options: {
+    isCancelled?: () => boolean;
+    yieldAfterFile?: () => Promise<void>;
+  } = {},
 ): Promise<CreatedOutput> {
-  if (files.length === 0) throw new Error("工作區沒有可輸出的檔案。");
-  const blockingIssue = files.flatMap((file) => compactOutputIssues(file, format))
+  const outputFiles = files.filter((file) => file.summary.includedRows > 0);
+  if (outputFiles.length === 0) throw new Error("工作區沒有已勾選的輸出列。");
+  const blockingIssue = outputFiles.flatMap((file) => compactOutputIssues(file, format))
     .find((issue) => issue.blocking);
   if (blockingIssue) throw new Error(describeOutputIssue(blockingIssue));
 
-  const planned = files.map((file) => {
+  const planned = outputFiles.map((file) => {
     if (file.hasBlockingIssues) throw new Error(`${file.virtualPath} 仍有無法逐列處理的錯誤。`);
-    if (file.summary.includedRows === 0) throw new Error(`${file.virtualPath} 尚未選擇任何輸出列。`);
     return { file, path: outputPath(file.virtualPath, format) };
   });
   const paths = new Set<string>();
@@ -57,18 +62,42 @@ export async function createCompactOutput(
     case "csv": serialize = (await codecs.csv()).serializeCsv; break;
     case "xlsx": serialize = (await codecs.spreadsheet()).serializeSpreadsheet; break;
   }
-  const outputs = planned.map(({ file, path }) => ({
-    path,
-    bytes: serialize(serializableRows(file)),
-  }));
-  if (outputs.length > 1) {
+  const assertActive = () => {
+    if (options.isCancelled?.()) throw new Error("已取消建立下載。");
+  };
+  const createBytes = (file: CompactFile, path: string) => {
+    assertActive();
+    const bytes = serialize(serializableRows(file));
+    if (bytes.byteLength > ARCHIVE_LIMITS.maxOutputEntryBytes) {
+      throw new Error(`輸出單檔超過 ${FILE_SIZE_LIMIT_TECHNICAL_LABEL}：${path}`);
+    }
+    return bytes;
+  };
+
+  if (planned.length > 1) {
+    const zip = await codecs.zip();
     return {
-      bytes: await (await codecs.zip()).serializeZip(outputs),
+      blob: await zip.serializeZip(
+        planned.map(({ file, path }) => ({
+          path,
+          createBytes: () => createBytes(file, path),
+        })),
+        {
+          compression: format === "xlsx" ? "store" : "deflate",
+          isCancelled: options.isCancelled,
+          yieldAfterEntry: options.yieldAfterFile,
+        },
+      ),
       filename: `${format}-${taipeiMinuteStamp(createdAt)}.zip`,
-      mimeType: "application/zip",
     };
   }
-  const output = outputs[0];
+  const output = planned[0];
   if (!output) throw new Error("工作區沒有可輸出的檔案。");
-  return { bytes: output.bytes, filename: basename(output.path), mimeType: MIME_TYPES[format] };
+  const bytes = createBytes(output.file, output.path);
+  await options.yieldAfterFile?.();
+  assertActive();
+  return {
+    blob: outputBlob(bytes, MIME_TYPES[format]),
+    filename: basename(output.path),
+  };
 }

@@ -11,7 +11,7 @@ import type { WorkspaceItem, WorkspaceSource } from "../../state/workspace-types
 import type { FileOperationStatus, UploadFailureGroup } from "./file-operation-status-view";
 import type { InputSectionView } from "./input-section-view";
 
-const PROCESSING_FEEDBACK_DELAY_MS = 300;
+const OPERATION_FEEDBACK_DELAY_MS = 300;
 
 interface InputControllerOptions {
   batchClient: BatchClient;
@@ -31,20 +31,30 @@ interface UploadBatch {
   activeSourceId: string | null;
   cancelSignal: Promise<void>;
   cancelled: boolean;
+  completedCandidateCount: number;
+  currentSourceProgress: ProcessingProgress | null;
   reset: boolean;
   failures: Map<string, { category: FailureCategory; files: Set<string> }>;
   items: WorkspaceItem[];
   latestProgress: ProcessingProgress;
-  revealTimer: ReturnType<typeof setTimeout> | null;
   signalCancel: () => void;
   sources: WorkspaceSource[];
 }
 
+type FeedbackPhase = "quiet" | "visible";
+
+interface RemovingOperation {
+  kind: "removing";
+  phase: FeedbackPhase;
+  previousStatus: FileOperationStatus;
+  subject: string;
+}
+
 type WorkspaceOperation =
   | { kind: "idle"; status: FileOperationStatus }
-  | { kind: "adding"; batch: UploadBatch; phase: "quiet" | "visible" }
+  | { kind: "adding"; batch: UploadBatch; phase: FeedbackPhase }
   | { kind: "cancelling"; batch: UploadBatch }
-  | { kind: "removing" }
+  | RemovingOperation
   | { kind: "restoring" }
   | { kind: "resetting" };
 
@@ -101,9 +111,32 @@ export function createInputController(options: InputControllerOptions) {
   let pendingTask = Promise.resolve();
   let validationDate: string | null = null;
   let previewRequest = 0;
+  let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function cancelFeedback(): void {
+    if (feedbackTimer !== null) clearTimeout(feedbackTimer);
+    feedbackTimer = null;
+  }
+
+  function deferFeedback(reveal: () => void): void {
+    cancelFeedback();
+    feedbackTimer = setTimeout(() => {
+      feedbackTimer = null;
+      reveal();
+    }, OPERATION_FEEDBACK_DELAY_MS);
+  }
 
   function currentBatch(): UploadBatch | null {
     return operation.kind === "adding" || operation.kind === "cancelling" ? operation.batch : null;
+  }
+
+  function updateBatchProgress(batch: UploadBatch, progress: ProcessingProgress): void {
+    batch.currentSourceProgress = progress;
+    batch.latestProgress = {
+      ...progress,
+      current: batch.completedCandidateCount + progress.current,
+      total: batch.completedCandidateCount + progress.total,
+    };
   }
 
   function visibleOperationStatus(): FileOperationStatus | null {
@@ -113,7 +146,9 @@ export function createInputController(options: InputControllerOptions) {
         ? { kind: "processing", progress: operation.batch.latestProgress }
         : null;
       case "cancelling": return { kind: "cancelling" };
-      case "removing": return { kind: "removing" };
+      case "removing": return operation.phase === "visible" || operation.previousStatus.kind === "removed"
+        ? { kind: "removing", phase: operation.phase, subject: operation.subject }
+        : null;
       case "restoring": return { kind: "restoring" };
       case "resetting": return { kind: "resetting" };
     }
@@ -137,6 +172,7 @@ export function createInputController(options: InputControllerOptions) {
   }
 
   function settle(status: FileOperationStatus): void {
+    cancelFeedback();
     operation = { kind: "idle", status };
     render();
   }
@@ -152,15 +188,6 @@ export function createInputController(options: InputControllerOptions) {
     } catch {
       if (currentRequest === previewRequest) options.view.renderPreviewError(fileId);
     }
-  }
-
-  function revealProcessing(batch: UploadBatch): void {
-    batch.revealTimer = setTimeout(() => {
-      batch.revealTimer = null;
-      if (operation.kind !== "adding" || operation.batch !== batch || batch.cancelled) return;
-      operation = { kind: "adding", batch, phase: "visible" };
-      render();
-    }, PROCESSING_FEEDBACK_DELAY_MS);
   }
 
   async function processFile(sourceFile: File, batch: UploadBatch): Promise<void> {
@@ -206,17 +233,18 @@ export function createInputController(options: InputControllerOptions) {
       name: sourceFile.name,
     } satisfies WorkspaceSource;
     batch.activeSourceId = source.id;
-    batch.latestProgress = {
+    updateBatchProgress(batch, {
       current: 0,
       phase: inputType === "zip" ? "extracting" : "processing",
       sourceId: source.id,
       total: inputType === "zip" ? 0 : 1,
       virtualPath: sourceFile.name,
-    };
+    });
     if (operation.kind === "adding" && operation.batch === batch && operation.phase === "visible") {
       renderOperationStatus();
     }
 
+    let sourceCompleted = false;
     try {
       void options.offlineCache.prioritizePreviewFont().catch(() => undefined);
       const processing = options.batchClient.processSource({
@@ -263,6 +291,7 @@ export function createInputController(options: InputControllerOptions) {
       if (result.entries.length === 0 && result.skippedEntries.length === 0) {
         addFailure(batch, { label: "沒有支援的 TXT、CSV、XLS 或 XLSX 檔案", tone: "warning" }, sourceFile.name);
       }
+      sourceCompleted = true;
     } catch (error) {
       if (!batch.cancelled) addFailure(
         batch,
@@ -272,6 +301,9 @@ export function createInputController(options: InputControllerOptions) {
         sourceFile.name,
       );
     } finally {
+      if (sourceCompleted && batch.currentSourceProgress?.sourceId === source.id) {
+        batch.completedCandidateCount += batch.currentSourceProgress.total;
+      }
       if (batch.activeSourceId === source.id) batch.activeSourceId = null;
     }
   }
@@ -314,7 +346,11 @@ export function createInputController(options: InputControllerOptions) {
 
   async function addFiles(batch: UploadBatch, files: readonly File[]): Promise<void> {
     options.status.announce(`正在加入 ${files.length} 個檔案。`);
-    revealProcessing(batch);
+    deferFeedback(() => {
+      if (operation.kind !== "adding" || operation.batch !== batch || batch.cancelled) return;
+      operation.phase = "visible";
+      render();
+    });
     render();
     try {
       for (const file of files) {
@@ -337,7 +373,6 @@ export function createInputController(options: InputControllerOptions) {
         }
       }
     } finally {
-      if (batch.revealTimer !== null) clearTimeout(batch.revealTimer);
       if (operation.kind === "adding" && operation.batch === batch) settle({ kind: "idle" });
       if (batch.cancelled && !batch.reset) options.view.focusFilePicker();
     }
@@ -352,11 +387,12 @@ export function createInputController(options: InputControllerOptions) {
       activeSourceId: null,
       cancelSignal,
       cancelled: false,
+      completedCandidateCount: 0,
+      currentSourceProgress: null,
       reset: false,
       failures: new Map(),
       items: [],
-      latestProgress: { current: 0, phase: "processing", sourceId: "", total: files.length, virtualPath: files[0]?.name ?? "" },
-      revealTimer: null,
+      latestProgress: { current: 0, phase: "processing", sourceId: "", total: 0, virtualPath: files[0]?.name ?? "" },
       signalCancel,
       sources: [],
     };
@@ -374,21 +410,19 @@ export function createInputController(options: InputControllerOptions) {
     if (!batch || batch.cancelled || operation.kind !== "adding") return;
     batch.cancelled = true;
     batch.signalCancel();
-    if (batch.revealTimer !== null) clearTimeout(batch.revealTimer);
-    batch.revealTimer = null;
+    cancelFeedback();
     operation = { kind: "cancelling", batch };
     render();
     if (batch.activeSourceId) void options.batchClient.cancelSource(batch.activeSourceId).catch(() => undefined);
   }
 
   function clear(): void {
+    cancelFeedback();
     const batch = currentBatch();
     if (batch) {
       batch.cancelled = true;
       batch.reset = true;
       batch.signalCancel();
-      if (batch.revealTimer !== null) clearTimeout(batch.revealTimer);
-      batch.revealTimer = null;
     }
     const resetOperation = { kind: "resetting" } as const;
     operation = resetOperation;
@@ -438,8 +472,21 @@ export function createInputController(options: InputControllerOptions) {
     });
   }
 
+  function beginRemoval(subject: string, previousStatus: FileOperationStatus): RemovingOperation {
+    const removing: RemovingOperation = { kind: "removing", phase: "quiet", previousStatus, subject };
+    operation = removing;
+    deferFeedback(() => {
+      if (operation !== removing) return;
+      removing.phase = "visible";
+      render();
+    });
+    render();
+    return removing;
+  }
+
   function startRemoveFile(fileId: string): void {
     if (operation.kind !== "idle") return;
+    const previousStatus = operation.status;
     const snapshot = options.model.snapshot();
     const fileIndex = snapshot.files.findIndex((item) => item.id === fileId);
     const item = snapshot.files[fileIndex];
@@ -448,9 +495,7 @@ export function createInputController(options: InputControllerOptions) {
     const source = snapshot.sources[sourceIndex];
     if (!source) return;
     const wasSelected = snapshot.selectedFileId === fileId;
-    const removing = { kind: "removing" } as const;
-    operation = removing;
-    render();
+    const removing = beginRemoval(item.virtualPath, previousStatus);
     pendingTask = options.batchClient.removeFiles([fileId]).then(async () => {
       if (operation !== removing) return;
       const removed = options.model.remove(fileId);
@@ -461,8 +506,8 @@ export function createInputController(options: InputControllerOptions) {
       }
       settle({
         kind: "removed",
-        detail: `已移除 ${removed.virtualPath}；電腦中的原始檔案沒有變更。`,
         onUndo: () => startRestoreFile(removed, source, fileIndex, sourceIndex, wasSelected),
+        subject: removed.virtualPath,
       });
       options.status.announce(`${removed.virtualPath} 已從清單移除；電腦中的原始檔案沒有變更。`);
     }).catch(() => {
@@ -503,6 +548,7 @@ export function createInputController(options: InputControllerOptions) {
 
   function startRemoveSource(sourceId: string): void {
     if (operation.kind !== "idle") return;
+    const previousStatus = operation.status;
     const snapshot = options.model.snapshot();
     const sourceIndex = snapshot.sources.findIndex((candidate) => candidate.id === sourceId);
     const source = snapshot.sources[sourceIndex];
@@ -510,9 +556,7 @@ export function createInputController(options: InputControllerOptions) {
     const restoreItems = snapshot.files.flatMap((item, index) => item.sourceId === sourceId ? [{ index, item }] : []);
     const fileIds = restoreItems.map(({ item }) => item.id);
     const previousSelectedFileId = snapshot.selectedFileId;
-    const removing = { kind: "removing" } as const;
-    operation = removing;
-    render();
+    const removing = beginRemoval(source.name, previousStatus);
     pendingTask = options.batchClient.removeFiles(fileIds).then(async () => {
       if (operation !== removing) return;
       const removed = options.model.removeSource(sourceId);
@@ -523,8 +567,8 @@ export function createInputController(options: InputControllerOptions) {
       }
       settle({
         kind: "removed",
-        detail: `已移除 ${source.name} 及其中 ${removed.length} 個項目；電腦中的原始檔案沒有變更。`,
         onUndo: () => startRestoreSource(source, restoreItems, sourceIndex, previousSelectedFileId),
+        subject: source.name,
       });
       options.status.announce(`${source.name} 已從清單移除，共 ${removed.length} 個項目；電腦中的原始檔案沒有變更。`);
     }).catch(() => {
@@ -540,7 +584,7 @@ export function createInputController(options: InputControllerOptions) {
       options.batchClient.setProgressListener((progress) => {
         const batch = currentBatch();
         if (!batch || progress.sourceId !== batch.activeSourceId) return;
-        batch.latestProgress = progress;
+        updateBatchProgress(batch, progress);
         if (operation.kind === "adding" && operation.batch === batch && operation.phase === "visible") {
           renderOperationStatus();
         }

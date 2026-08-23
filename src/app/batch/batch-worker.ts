@@ -12,11 +12,7 @@ scope.addEventListener("message", (event: MessageEvent<BatchRequestMessage>) => 
   const { requestId, request } = event.data;
   void engine.handle(request).then((value) => {
     const message = { type: "response", requestId, value } satisfies BatchWorkerMessage;
-    if (value && typeof value === "object" && "bytes" in value && value.bytes instanceof Uint8Array) {
-      scope.postMessage(message, [value.bytes.buffer]);
-    } else {
-      scope.postMessage(message);
-    }
+    scope.postMessage(message);
   }).catch((error: unknown) => {
     scope.postMessage({
       type: "error",

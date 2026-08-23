@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createOutputAdapter } from "../src/app/adapters/output-adapter.ts";
-import { createCodecManager } from "../src/app/resources/codec-manager.ts";
 import {
   createInternalFile,
   createInternalFileWithRecovery,
@@ -12,14 +10,13 @@ import {
   FIXED_RECORD_WIDTH_BYTES,
   FIXED_WIDTHS,
 } from "../src/core/fixed-profile.ts";
-import { parseBig5Txt } from "../src/core/formats/big5-txt.ts";
-import { issueFieldIndices } from "../src/core/internal-model.ts";
+import { parseBig5Txt, serializeBig5Txt } from "../src/core/formats/big5-txt.ts";
+import { serializeCsv } from "../src/core/formats/csv.ts";
+import { cellValue, issueFieldIndices } from "../src/core/internal-model.ts";
 import {
   isValidNewResidentId,
   isValidTaiwanNationalId,
 } from "../src/core/validation.ts";
-
-const outputAdapter = createOutputAdapter(createCodecManager());
 
 function validRow(overrides = {}) {
   const row = [
@@ -41,6 +38,13 @@ function issuesFor(file) {
       ...row.cells.flatMap((cell) => cell.issues),
     ]),
   ];
+}
+
+function selectedRows(file) {
+  return file.rows.filter((row) => row.included).map((row) => ({
+    sourceRow: row.sourceRow,
+    values: row.cells.map(cellValue),
+  }));
 }
 
 test("normalizes one shared row, records the telephone change, and emits 208-byte BIG-5E records", async () => {
@@ -75,7 +79,7 @@ test("normalizes one shared row, records the telephone change, and emits 208-byt
   assert.equal(validFile.rows[0]?.included, true);
   assert.equal(validFile.rows[0]?.cells[9]?.finalValue, "0000000000");
 
-  const bytes = (await outputAdapter.create([validFile], "big5-txt")).bytes;
+  const bytes = serializeBig5Txt(selectedRows(validFile));
   assert.equal(bytes.length, FIXED_RECORD_WIDTH_BYTES + 2);
   assert.deepEqual(bytes.slice(-2), new Uint8Array([0x0d, 0x0a]));
 
@@ -163,9 +167,8 @@ test("recovers an unambiguous CNS character for review before output gating", as
   assert.equal(file.summary.errorRows, 0);
   assert.equal(file.summary.warningRows, 1);
 
-  assert.equal((await outputAdapter.create([file], "csv")).filename, "cns-recovery.csv");
-  const txt = await outputAdapter.create([file], "big5-txt");
-  assert.equal(parseBig5Txt(txt.bytes).rows[0]?.[6], "？");
+  assert.ok(serializeCsv(selectedRows(file)).byteLength > 0);
+  assert.equal(parseBig5Txt(serializeBig5Txt(selectedRows(file))).rows[0]?.[6], "？");
 });
 
 test("keeps U+E088 unresolved instead of guessing the address character", async () => {
@@ -206,9 +209,8 @@ test("keeps unresolved PUA values for review and defers output compatibility", a
   assert.equal(file.summary.warningRows, 0);
   assert.equal(file.rows[0]?.included, true);
 
-  assert.equal((await outputAdapter.create([file], "csv")).filename, "private-use-unresolved.csv");
-  const txt = await outputAdapter.create([file], "big5-txt");
-  assert.equal(parseBig5Txt(txt.bytes).rows[0]?.[6], "王？");
+  assert.ok(serializeCsv(selectedRows(file)).byteLength > 0);
+  assert.equal(parseBig5Txt(serializeBig5Txt(selectedRows(file))).rows[0]?.[6], "王？");
 });
 
 test("records recovered characters and keeps unresolved characters for review", async () => {
@@ -391,10 +393,10 @@ test("defaults every IR row to selected and honors explicit row deselection", as
     issuesFor(file).some((issue) => issue.code === "PATTERN_MISMATCH" && issue.fieldIndex === 9),
     true,
   );
-  assert.equal((await outputAdapter.create([file], "big5-txt")).bytes.length, (FIXED_RECORD_WIDTH_BYTES + 2) * 2);
+  assert.equal(serializeBig5Txt(selectedRows(file)).length, (FIXED_RECORD_WIDTH_BYTES + 2) * 2);
 
   file.rows[1].included = false;
-  assert.equal((await outputAdapter.create([file], "big5-txt")).bytes.length, FIXED_RECORD_WIDTH_BYTES + 2);
+  assert.equal(serializeBig5Txt(selectedRows(file)).length, FIXED_RECORD_WIDTH_BYTES + 2);
 });
 
 test("flags literal question marks for review without deselecting the row", () => {
