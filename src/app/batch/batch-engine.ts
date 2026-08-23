@@ -49,6 +49,7 @@ export function createBatchEngine(
   const files = new Map<string, CompactFile>();
   const removedFiles = new Map<string, CompactFile>();
   const cancelledSources = new Set<string>();
+  let outputGeneration = 0;
   let workspaceEpoch = 0;
   let reference: StoredReference | null = null;
   let referenceIndex: {
@@ -273,6 +274,7 @@ export function createBatchEngine(
           files.clear();
           removedFiles.clear();
           cancelledSources.clear();
+          outputGeneration += 1;
           return null;
         case "process-source": return processSource(request);
         case "preview-page":
@@ -293,14 +295,24 @@ export function createBatchEngine(
         case "refresh-output":
           assertWorkspaceEpoch(request.workspaceEpoch);
           return selectedFiles(request.fileIds).map((file) => compactFileRecord(file, request.outputFormat));
-        case "create-output":
+        case "cancel-output":
           assertWorkspaceEpoch(request.workspaceEpoch);
+          outputGeneration += 1;
+          return null;
+        case "create-output": {
+          assertWorkspaceEpoch(request.workspaceEpoch);
+          const generation = ++outputGeneration;
           return createCompactOutput(
             selectedFiles(request.fileIds),
             request.outputFormat,
             codecs,
             new Date(request.createdAt),
+            {
+              isCancelled: () => generation !== outputGeneration,
+              yieldAfterFile: yieldToWorker,
+            },
           );
+        }
         case "discard-files":
           assertWorkspaceEpoch(request.workspaceEpoch);
           request.fileIds.forEach((id) => {

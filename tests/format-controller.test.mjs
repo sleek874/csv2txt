@@ -141,7 +141,7 @@ test("section 2 re-enables a valid download after input changes during generatio
     batchClient: {
       createOutput() {
         return new Promise((resolve) => {
-          releaseOutput = () => resolve({ bytes: new Uint8Array([1]), filename: "old.txt", mimeType: "text/plain" });
+          releaseOutput = () => resolve({ blob: new Blob([new Uint8Array([1])]), filename: "old.txt" });
         });
       },
       async refreshOutput() { throw new Error("not used"); },
@@ -172,4 +172,41 @@ test("section 2 re-enables a valid download after input changes during generatio
   assert.equal(saved, 0, "the output for the previous input family stays discarded");
   assert.match(error, /工作區已在建立下載期間變更/u);
   assert.equal(disabled, false, "the current valid output can be generated immediately");
+});
+
+test("section 2 cancels generation from the right action slot", async () => {
+  const model = modelWithFile();
+  let callbacks;
+  let rejectOutput;
+  const states = [];
+  const announcements = [];
+  const controller = createOutputController({
+    batchClient: {
+      async cancelOutput() { rejectOutput(new Error("已取消建立下載。")); },
+      createOutput() {
+        return new Promise((_resolve, reject) => { rejectOutput = reject; });
+      },
+      async refreshOutput() { throw new Error("not used"); },
+    },
+    model,
+    status: { announce(message) { announcements.push(message); } },
+    view: {
+      bind(value) { callbacks = value; },
+      render(_plan, _format, busy, cancelling) { states.push({ busy, cancelling }); },
+      renderError() {},
+      save() { throw new Error("cancelled output must not be saved"); },
+    },
+  });
+  controller.bind();
+
+  callbacks.onDownload();
+  callbacks.onCancel();
+  await controller.whenIdle();
+
+  assert.deepEqual(states.slice(-3), [
+    { busy: true, cancelling: false },
+    { busy: true, cancelling: true },
+    { busy: false, cancelling: false },
+  ]);
+  assert.equal(announcements.includes("已取消建立下載。"), true);
 });

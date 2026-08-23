@@ -80,9 +80,8 @@ test("advanced download ignores data issues and expands duplicate reference matc
       async createAdvancedOutput(fileIds, keyColumnIndex, selectedColumnIndices) {
         createdRequest = { fileIds, keyColumnIndex, selectedColumnIndices };
         return {
-          bytes: new Uint8Array([1]),
+          blob: new Blob([new Uint8Array([1])]),
           filename: "advanced.xlsx",
-          mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         };
       },
       async getAdvancedResult() {

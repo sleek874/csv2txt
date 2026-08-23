@@ -42,6 +42,10 @@ const inputSectionViewSource = readFileSync(
   new URL("../src/app/sections/input/input-section-view.ts", import.meta.url),
   "utf8",
 );
+const inputControllerSource = readFileSync(
+  new URL("../src/app/sections/input/input-controller.ts", import.meta.url),
+  "utf8",
+);
 const encodingSource = readFileSync(
   new URL("../src/core/encoding.ts", import.meta.url),
   "utf8",
@@ -62,8 +66,20 @@ const normalizationSource = readFileSync(
   new URL("../src/core/normalization.ts", import.meta.url),
   "utf8",
 );
-const outputAdapterSource = readFileSync(
-  new URL("../src/app/adapters/output-adapter.ts", import.meta.url),
+const standardOutputSource = readFileSync(
+  new URL("../src/app/batch/standard-output.ts", import.meta.url),
+  "utf8",
+);
+const archivePolicySource = readFileSync(
+  new URL("../src/core/archive/policy.ts", import.meta.url),
+  "utf8",
+);
+const archiveSource = readFileSync(
+  new URL("../src/core/archive/zip.ts", import.meta.url),
+  "utf8",
+);
+const downloadSource = readFileSync(
+  new URL("../src/browser/download.ts", import.meta.url),
   "utf8",
 );
 const outputPlanSource = readFileSync(
@@ -72,6 +88,10 @@ const outputPlanSource = readFileSync(
 );
 const outputControllerSource = readFileSync(
   new URL("../src/app/sections/output/output-controller.ts", import.meta.url),
+  "utf8",
+);
+const outputViewSource = readFileSync(
+  new URL("../src/app/sections/output/output-view.ts", import.meta.url),
   "utf8",
 );
 const otherFilesViewSource = readFileSync(
@@ -456,10 +476,23 @@ assert.match(
   "Download eligibility must use only structural problems and blocking output findings.",
 );
 assert.match(
-  outputAdapterSource,
-  /validateOutput\(files, format\)\.find\(\(issue\) => issue\.blocking\)/u,
-  "The output adapter must reject only blocking format findings.",
+  standardOutputSource,
+  /outputFiles\.flatMap\(\(file\) => compactOutputIssues\(file, format\)\)[\s\S]*?find\(\(issue\) => issue\.blocking\)/u,
+  "Standard output must reject only blocking format findings from included files.",
 );
+assert.match(
+  archivePolicySource,
+  /maxOutputEntries:\s*5_000[\s\S]*?maxOutputEntryBytes:\s*FILE_SIZE_LIMIT_BYTES[\s\S]*?maxOutputBytes:\s*OUTPUT_ZIP_SIZE_LIMIT_BYTES/u,
+  "Output ZIPs must keep the 5000-entry, 100 MiB per-entry, and dedicated final-size policy.",
+);
+assert.doesNotMatch(archivePolicySource, /maxOutputSourceBytes/u);
+assert.match(
+  standardOutputSource,
+  /compression:\s*format === "xlsx" \? "store" : "deflate"[\s\S]*?yieldAfterEntry:\s*options\.yieldAfterFile/u,
+  "Section 2 must select compression once and yield after each generated file.",
+);
+assert.match(archiveSource, /createStream = options\.compression === "store"[\s\S]*?new ZipPassThrough\(path\)[\s\S]*?new ZipDeflate\(path, \{ level: 6 \}\)/u);
+assert.doesNotMatch(downloadSource, /slice\(|new Blob/u, "Browser download must reuse the worker-created Blob without another explicit copy.");
 assert.match(
   dataPreviewViewSource,
   /rowIssues\(row, pageFile\)\.map\(issueDetail\)[\s\S]*?row\.changes\.map/u,
@@ -561,6 +594,11 @@ assert.match(
   indexHtml,
   /id="file-operation-status"[\s\S]*?id="mark-all-viewed-button"[^>]*class="secondary-button"[\s\S]*?id="file-operation-details"[^>]*hidden[\s\S]*?id="file-operation-details-summary"[^>]*class="button-control secondary-button issue-disclosure-toggle"/u,
   "Contextual acknowledgement and collapsed failure details must live in the shared banner.",
+);
+assert.match(
+  indexHtml,
+  /id="mark-all-viewed-button"[^>]*data-action-slot="start"[\s\S]*?id="file-operation-details"[^>]*data-action-slot="end"[\s\S]*?id="cancel-file-operation"[^>]*data-action-slot="end"[\s\S]*?id="undo-file-operation"[^>]*data-action-slot="end"/u,
+  "The operation banner must use shared semantic action slots.",
 );
 assert.doesNotMatch(indexHtml, /id="source-file-meta"/u, "The action area must not repeat file counts or total size.");
 assert.match(
@@ -698,13 +736,24 @@ assert.match(
 );
 assert.match(
   indexHtml,
-  /id="output-heading">下載結果[\s\S]*?輸出格式已在第 0 區選定[\s\S]*?id="download-status-summary"[^>]*class="action-summary"[\s\S]*?id="output-problem-link"[^>]*href="#file-tree-table"/u,
-  "Section 2 must keep its concise file and row summary with a link back to Section 1 problems.",
+  /id="output-heading">下載結果[\s\S]*?輸出格式已在第 0 區選定[\s\S]*?id="download-status-summary"[^>]*class="action-description"[\s\S]*?id="output-problem-link"[^>]*href="#file-tree-table"/u,
+  "Section 2 must present its concise file and row summary as description text with a link back to Section 1 problems.",
+);
+assert.doesNotMatch(indexHtml, /id="download-status-detail"/u, "Section 2 must not retain a redundant second description line.");
+assert.doesNotMatch(
+  outputViewSource,
+  /按「.*?」儲存結果|請稍候。|請加入符合第 0 區輸入格式的檔案|請依下列提示處理後再下載/u,
+  "Section 2 must not repeat actions already communicated by its title, disclosure, and buttons.",
 );
 assert.match(
   indexHtml,
   /id="output-download-status"[\s\S]*?id="download-status-title"[\s\S]*?id="download-status-spinner"[^>]*hidden/u,
   "Section 2 must reserve a spinner beside its stable download status title.",
+);
+assert.match(
+  indexHtml,
+  /id="output-download-status"[\s\S]*?class="action-actions"[\s\S]*?id="download-button"[^>]*disabled[\s\S]*?id="cancel-output-button"[^>]*disabled/u,
+  "Section 2 download must occupy the left shared action slot while the always-present cancel control remains on the right.",
 );
 assert.doesNotMatch(indexHtml, /id="(?:processing-info|source-file-message|file-processing-indicator)"/u);
 assert.doesNotMatch(
@@ -955,9 +1004,10 @@ assert.match(
 );
 assert.match(
   componentStyles,
-  /\.action-actions-single\s*>\s*:first-child\s*\{[^}]*grid-column:\s*2;/u,
+  /:where\(\.action-actions\)\s*>\s*:only-child\s*\{[^}]*grid-column:\s*2;/u,
   "Single download actions must occupy the rightmost desktop slot.",
 );
+assert.doesNotMatch(`${indexHtml}\n${componentStyles}`, /action-actions-single/u);
 assert.match(
   componentStyles,
   /\.action-spinner-slot\s*\{[^}]*width:\s*var\(--indicator-size\);[^}]*height:\s*var\(--indicator-size\);/u,
@@ -983,8 +1033,14 @@ assert.match(
   /id="row-filter"[^>]*class="compact-control"[\s\S]*?id="previous-page-button"[^>]*class="secondary-button compact-control"[\s\S]*?id="next-page-button"[^>]*class="secondary-button compact-control"/u,
   "The preview filter and pagination buttons must share the compact control size.",
 );
-assert.match(baseCss, /\.file-operation-details,#cancel-file-operation,#undo-file-operation\{[^}]*grid-column:2/u);
-assert.match(baseCss, /#mark-all-viewed-button\{[^}]*grid-column:1/u);
+assert.match(componentStyles, /:where\(\[data-action-slot="start"\]\)\s*\{[^}]*grid-column:\s*1;/u);
+assert.match(componentStyles, /:where\(\[data-action-slot="end"\]\)\s*\{[^}]*grid-column:\s*2;/u);
+assert.doesNotMatch(componentStyles, /#(?:mark-all-viewed-button|cancel-file-operation|undo-file-operation)[^{]*\{[^}]*grid-column/u);
+assert.match(
+  componentStyles,
+  /@container panel \(max-width:\s*24rem\)[\s\S]*?\.action-actions\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);[^}]*\}[\s\S]*?\.action-actions > \*\s*\{[^}]*grid-column:\s*1;/u,
+  "Narrow action rails must collapse every semantic slot into one full-width column.",
+);
 assert.match(
   fileOperationStatusViewSource,
   /document\.addEventListener\("pointerdown"[\s\S]*?!details\.contains\(event\.target\)[\s\S]*?details\.open = false/u,
@@ -1000,6 +1056,17 @@ assert.match(
   /markAllViewed\.hidden = busy \|\| unreadCount === 0/u,
   "Mark-all-viewed must persist in its own slot while unread files remain.",
 );
+assert.match(
+  fileOperationStatusViewSource,
+  /undo\.hidden = !removal[\s\S]*?undo\.disabled = status\.kind === "removing"[\s\S]*?basename\(status\.subject\)/u,
+  "Removal feedback must retain and disable Undo while showing only the target filename.",
+);
+assert.match(
+  inputControllerSource,
+  /function deferFeedback\(reveal:[\s\S]*?setTimeout[\s\S]*?OPERATION_FEEDBACK_DELAY_MS[\s\S]*?function beginRemoval/u,
+  "Adding and removal must share one delayed-feedback gate.",
+);
+assert.doesNotMatch(inputControllerSource, /revealTimer|PROCESSING_FEEDBACK_DELAY_MS/u);
 assert.match(
   baseCss,
   /\.file-operation-status\{[^}]*min-height:4\.625rem[^}]*overflow:visible/u,

@@ -5,7 +5,6 @@ import { strToU8, zipSync } from "fflate";
 
 import { createInputAdapter } from "../src/app/adapters/input-adapter.ts";
 import { createAdvancedOutputAdapter } from "../src/app/adapters/advanced-output-adapter.ts";
-import { createOutputAdapter } from "../src/app/adapters/output-adapter.ts";
 import { createBatchEngine } from "../src/app/batch/batch-engine.ts";
 import { createCodecManager } from "../src/app/resources/codec-manager.ts";
 import {
@@ -15,6 +14,7 @@ import {
 } from "../src/core/advanced/lookup.ts";
 import { createInternalFileWithRecovery } from "../src/core/conversion-pipeline.ts";
 import { serializeHeaderedSpreadsheet } from "../src/core/formats/spreadsheet.ts";
+import { cellValue } from "../src/core/internal-model.ts";
 
 function syntheticCsv(rowCount) {
   const row = [
@@ -22,6 +22,17 @@ function syntheticCsv(rowCount) {
     "1", "測試地址", "0212345678", "A123456789", "A", "20200101", "", "",
   ].join(",");
   return new TextEncoder().encode(Array.from({ length: rowCount }, () => row).join("\r\n"));
+}
+
+async function outputBytes(output) {
+  return new Uint8Array(await output.blob.arrayBuffer());
+}
+
+function serializableRows(file) {
+  return file.rows.filter((row) => row.included).map((row) => ({
+    sourceRow: row.sourceRow,
+    values: row.cells.map(cellValue),
+  }));
 }
 
 test("worker engine retains rows and returns only summaries plus 100-row pages", async () => {
@@ -84,7 +95,7 @@ test("worker engine retains rows and returns only summaries plus 100-row pages",
     createdAt: "2026-08-12T00:00:00.000Z",
   });
   assert.equal(output.filename, "synthetic.csv");
-  assert.ok(output.bytes.byteLength > 0);
+  assert.ok(output.blob.size > 0);
 });
 
 test("worker engine cancels a source without clearing previously stored files", async () => {
@@ -142,6 +153,30 @@ test("worker engine cancels a source without clearing previously stored files", 
     outputFormat: "csv",
   });
   assert.equal(preview.totalRecords, 1);
+});
+
+test("worker engine cancels standard output cooperatively", async () => {
+  const engine = createBatchEngine(() => undefined);
+  const processed = await engine.handle({
+    type: "process-source",
+    workspaceEpoch: 0,
+    sourceId: "output-cancel",
+    sourceName: "output-cancel.csv",
+    inputType: "csv",
+    bytes: syntheticCsv(2),
+    today: "20260812",
+    existingPaths: [],
+    outputFormat: "csv",
+  });
+  const output = engine.handle({
+    type: "create-output",
+    workspaceEpoch: 0,
+    fileIds: [processed.entries[0].id],
+    outputFormat: "csv",
+    createdAt: "2026-08-12T00:00:00.000Z",
+  });
+  await engine.handle({ type: "cancel-output", workspaceEpoch: 0 });
+  await assert.rejects(output, /已取消建立下載/u);
 });
 
 test("clearing primary files preserves the independent advanced reference", async () => {
@@ -253,8 +288,8 @@ test("compact advanced summaries and downloads preserve duplicate joins and unma
     createdAt: createdAt.toISOString(),
   });
   assert.equal(actual.filename, expected.filename);
-  assert.equal(actual.mimeType, expected.mimeType);
-  assert.deepEqual(actual.bytes, expected.bytes);
+  assert.equal(actual.blob.type, expected.blob.type);
+  assert.deepEqual(await outputBytes(actual), await outputBytes(expected));
 });
 
 test("compact worker output preserves the existing serializer bytes", async () => {
@@ -285,7 +320,6 @@ test("compact worker output preserves the existing serializer bytes", async () =
     parsed,
     "20260812",
   );
-  const legacyOutput = createOutputAdapter(codecs);
   const engine = createBatchEngine(() => undefined);
   const processed = await engine.handle({
     type: "process-source",
@@ -310,7 +344,13 @@ test("compact worker output preserves the existing serializer bytes", async () =
   });
 
   for (const outputFormat of ["big5-txt", "csv", "xlsx"]) {
-    const expected = await legacyOutput.create([legacyFile], outputFormat, createdAt);
+    let serialize;
+    switch (outputFormat) {
+      case "big5-txt": serialize = (await codecs.big5Txt()).serializeBig5Txt; break;
+      case "csv": serialize = (await codecs.csv()).serializeCsv; break;
+      case "xlsx": serialize = (await codecs.spreadsheet()).serializeSpreadsheet; break;
+    }
+    const expected = serialize(serializableRows(legacyFile));
     const actual = await engine.handle({
       type: "create-output",
       workspaceEpoch: 0,
@@ -318,9 +358,8 @@ test("compact worker output preserves the existing serializer bytes", async () =
       outputFormat,
       createdAt: createdAt.toISOString(),
     });
-    assert.equal(actual.filename, expected.filename);
-    assert.equal(actual.mimeType, expected.mimeType);
-    assert.deepEqual(actual.bytes, expected.bytes);
+    assert.equal(actual.filename, `synthetic.${outputFormat === "big5-txt" ? "txt" : outputFormat}`);
+    assert.deepEqual(await outputBytes(actual), expected);
   }
 });
 
@@ -502,5 +541,5 @@ test("multi-file output is canonical regardless of request order", async () => {
   });
 
   assert.equal(uploadOrder.filename, reverseOrder.filename);
-  assert.deepEqual(uploadOrder.bytes, reverseOrder.bytes);
+  assert.deepEqual(await outputBytes(uploadOrder), await outputBytes(reverseOrder));
 });

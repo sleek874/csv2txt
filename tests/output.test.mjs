@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  createOutputAdapter,
-  taipeiMinuteStamp,
-} from "../src/app/adapters/output-adapter.ts";
+import { compactInternalFile } from "../src/app/batch/compact-workspace.ts";
+import { taipeiMinuteStamp } from "../src/app/batch/output-artifact.ts";
+import { createCompactOutput } from "../src/app/batch/standard-output.ts";
 import { createCodecManager } from "../src/app/resources/codec-manager.ts";
 import { createOutputPlan } from "../src/app/sections/output/output-plan.ts";
 import { OUTPUT_PRESENTATIONS } from "../src/app/sections/output/output-presentations.ts";
@@ -77,13 +76,26 @@ function readyItem(file, outputFormat = "csv") {
   };
 }
 
+async function createOutput(files, format, createdAt = new Date()) {
+  return createCompactOutput(
+    files.map(compactInternalFile),
+    format,
+    createCodecManager(),
+    createdAt,
+  );
+}
+
+async function outputBytes(output) {
+  return new Uint8Array(await output.blob.arrayBuffer());
+}
+
 test("uses concise output labels", () => {
   assert.equal(OUTPUT_PRESENTATIONS["big5-txt"].label, "TXT");
   assert.equal(OUTPUT_PRESENTATIONS.csv.label, "CSV");
   assert.equal(OUTPUT_PRESENTATIONS.xlsx.label, "XLSX");
 });
 
-test("summarizes the full workspace and blocks an incomplete batch", () => {
+test("omits files without selected rows from an otherwise ready batch", () => {
   const warning = { severity: "warning", stage: "final", code: "TEST", message: "warning", sourceRow: 1 };
   const omittedError = { severity: "error", stage: "final", code: "OMITTED", message: "omitted", sourceRow: 1 };
   const included = internalFile("one", "one.csv", { modified: true, rowIssue: warning });
@@ -105,11 +117,14 @@ test("summarizes the full workspace and blocks an incomplete batch", () => {
 
   const plan = createOutputPlan(snapshot);
   assert.deepEqual(plan.totalSummary, {
-    fileCount: 2,
+    fileCount: 1,
+    omittedFileCount: 1,
     selectedRows: 1,
+    sourceFileCount: 2,
   });
-  assert.equal(plan.hasProblems, true);
-  assert.equal(plan.canDownload, false);
+  assert.equal(plan.hasProblems, false);
+  assert.equal(plan.canDownload, true);
+  assert.deepEqual(plan.files.map((file) => file.id), ["one"]);
 });
 
 test("excludes unchecked-row issues and changes from the Section 2 summary", () => {
@@ -130,10 +145,13 @@ test("excludes unchecked-row issues and changes from the Section 2 summary", () 
   assert.equal(omitted.summary.errorRows, 1);
   assert.equal(omitted.summary.warningRows, 0, "an error dominates the row warning");
   assert.deepEqual(plan.totalSummary, {
-    fileCount: 1,
+    fileCount: 0,
+    omittedFileCount: 1,
     selectedRows: 0,
+    sourceFileCount: 1,
   });
-  assert.equal(plan.hasProblems, true);
+  assert.equal(plan.hasProblems, false);
+  assert.equal(plan.canDownload, false);
 });
 
 test("accepted files from other families never enter the active output totals", () => {
@@ -209,30 +227,46 @@ test("does not repeat Section 1 row findings when the selected codec can seriali
 });
 
 test("downloads one file directly using its basename", async () => {
-  const output = await createOutputAdapter(createCodecManager()).create([
+  const output = await createOutput([
     internalFile("one", "bundle/folder/one.xlsx"),
   ], "csv");
   assert.equal(output.filename, "one.csv");
-  assert.equal(output.mimeType, "text/csv;charset=utf-8");
+  assert.equal(output.blob.type, "text/csv;charset=utf-8");
 });
 
 test("packages multiple outputs with safe paths and a Taipei timestamp", async () => {
-  const output = await createOutputAdapter(createCodecManager()).create([
+  const output = await createOutput([
     internalFile("one", "one.csv"),
     internalFile("two", "bundle/folder/two.xlsx"),
   ], "csv", new Date("2026-08-04T07:30:00.000Z"));
 
   assert.equal(taipeiMinuteStamp(new Date("2026-08-04T16:05:00.000Z")), "202608050005");
   assert.equal(output.filename, "csv-202608041530.zip");
-  assert.equal(output.mimeType, "application/zip");
-  assert.deepEqual(inspectZip(output.bytes).map((entry) => entry.name), [
+  assert.equal(output.blob.type, "application/zip");
+  assert.deepEqual(inspectZip(await outputBytes(output)).map((entry) => entry.name), [
     "one.csv",
     "bundle/folder/two.csv",
   ]);
+  assert.deepEqual(inspectZip(await outputBytes(output)).map((entry) => entry.compression), [8, 8]);
+});
+
+test("omits zero-selected files and stores XLSX entries without outer recompression", async () => {
+  const omitted = internalFile("omitted", "omitted.xlsx", { included: false });
+  const direct = await createOutput([internalFile("kept", "kept.xlsx"), omitted], "xlsx");
+  assert.equal(direct.filename, "kept.xlsx");
+
+  const batch = await createOutput([
+    internalFile("one", "one.xlsx"),
+    internalFile("two", "two.xlsx"),
+    omitted,
+  ], "xlsx");
+  const metadata = inspectZip(await outputBytes(batch));
+  assert.deepEqual(metadata.map((entry) => entry.name), ["one.xlsx", "two.xlsx"]);
+  assert.deepEqual(metadata.map((entry) => entry.compression), [0, 0]);
 });
 
 test("rejects colliding batch paths instead of renaming them", async () => {
-  await assert.rejects(createOutputAdapter(createCodecManager()).create([
+  await assert.rejects(createOutput([
     internalFile("one", "same.csv"),
     internalFile("two", "same.xlsx"),
   ], "csv"), /輸出路徑碰撞：same\.csv/u);
@@ -259,9 +293,9 @@ test("applies BIG-5E compatibility only to BIG-5E TXT output", async () => {
   const csvPlan = createOutputPlan(snapshot("csv"));
   assert.equal(csvPlan.outputIssues.length, 0);
   assert.equal(csvPlan.canDownload, true);
-  assert.equal((await createOutputAdapter(createCodecManager()).create([file], "csv")).filename, "rare-character.csv");
-  const txtOutput = await createOutputAdapter(createCodecManager()).create([file], "big5-txt");
-  assert.equal(parseBig5Txt(txtOutput.bytes).rows[0]?.[6], "甲？乙");
+  assert.equal((await createOutput([file], "csv")).filename, "rare-character.csv");
+  const txtOutput = await createOutput([file], "big5-txt");
+  assert.equal(parseBig5Txt(await outputBytes(txtOutput)).rows[0]?.[6], "甲？乙");
 });
 
 test("blocks BIG-5E byte overflow only for BIG-5E TXT", () => {
@@ -341,7 +375,7 @@ test("keeps a partially decoded source row selected and downloadable", () => {
   assert.equal(createOutputPlan(base("csv")).canDownload, true);
 });
 
-test("blocks an incomplete batch when a source record has the wrong column count", () => {
+test("omits a file with rejected records when it has no selected output rows", () => {
   const file = internalFile("rejected", "rejected.csv");
   file.rows = [];
   file.rejectedRecords = [{
@@ -360,5 +394,6 @@ test("blocks an incomplete batch when a source record has the wrong column count
 
   assert.equal(plan.canDownload, false);
   assert.equal(plan.totalSummary.selectedRows, 0);
-  assert.match(plan.problems.join("\n"), /有 1 列無法解析/u);
+  assert.equal(plan.totalSummary.omittedFileCount, 1);
+  assert.deepEqual(plan.problems, []);
 });

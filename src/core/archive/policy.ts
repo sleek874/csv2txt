@@ -1,12 +1,14 @@
 import { FILE_SIZE_LIMIT_BYTES } from "../file-size-policy";
 
+export const OUTPUT_ZIP_SIZE_LIMIT_BYTES = 500 * 1024 * 1024;
+export const OUTPUT_ZIP_SIZE_LIMIT_LABEL = "500 MiB";
+
 export const ARCHIVE_LIMITS = {
   maxArchiveDepth: 10,
   maxEntries: 5_000,
-  maxOutputEntries: 500,
+  maxOutputEntries: 5_000,
   maxOutputEntryBytes: FILE_SIZE_LIMIT_BYTES,
-  maxOutputSourceBytes: FILE_SIZE_LIMIT_BYTES,
-  maxOutputBytes: FILE_SIZE_LIMIT_BYTES,
+  maxOutputBytes: OUTPUT_ZIP_SIZE_LIMIT_BYTES,
   maxVirtualFolderDepth: 10,
 } as const;
 

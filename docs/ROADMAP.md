@@ -23,7 +23,7 @@
 
 - CSV、BIG-5E TXT 與 Spreadsheet 各自由同一 codec 擁有 parse／serialize；ZIP 是獨立 container codec。
 - 單檔直接下載；多檔保留安全虛擬路徑並以臺北分鐘時間戳建立 ZIP。
-- 任何 active 檔案含無法解析記錄或檔案層級錯誤、零勾選列、fatal output issue、路徑碰撞，或 output preparation 尚未完成／失敗，都使整批輸出 fail closed；一般列 error／warning 與可安全替代的 encoding issue 不阻止下載。
+- 任何實際輸出的 active 檔案含無法解析記錄或檔案層級錯誤、fatal output issue、路徑碰撞，或 output preparation 尚未完成／失敗，都使整批輸出 fail closed；零勾選檔案明確略過，一般列 error／warning 與可安全替代的 encoding issue 不阻止下載。
 - CSV 輸出固定 UTF-8 BOM、CRLF、無標題列並保存 literal IR 值；需要可靠試算表文字型別時使用 XLSX。
 
 ### BIG-5E 與舊系統字元
@@ -39,6 +39,7 @@
 - Sections 2／3 的操作卡共用狀態、檔案／列摘要、固定 action rail 與預設收合的問題 disclosure；展開內容不重新置中桌面按鈕。
 - 未還原 PUA 與預計替代的位置在預覽以 `■` 顯示，code point 留在展開問題區；原始 PUA 仍由 IR 保存。BIG-5E 輸入的無對照 byte segment 在 IR 以 `？` 代替並在預覽該位置顯示 `■`，其餘可解碼內容保留。技術代碼與 byte 證據只在 disclosure 顯示。
 - 使用者選取的來源與參照 Excel、ZIP 內每個 entry 都採 100 MiB 單檔上限；ZIP reader 另限制巢狀深度與項目數，逐項丟棄並記錄 traversal、加密、symlink 與碰撞，整體拒絕 ZIP64、分割式／不可驗證結構及超額累計項目，不限制累計輸入大小。
+- Section 2 的 ZIP 最多 5,000 個 100 MiB entries、最終 500 MiB；先 preflight，再依所選格式逐檔 level-6 deflate 或 XLSX store、yield 並合作取消。零勾選檔案明確略過，不阻擋其他輸出。
 - Excel、ZIP 與預覽字型維持 manifest-derived lazy resource group；正式 CSP 保持 connect-src 'none'。
 - 靜態 build verifier 持續檢查 semantic shell、ARIA reference、legacy residue、離線資源與 JavaScript budget。
 
@@ -58,18 +59,17 @@
 
 ### 輸出取消與 worker 排程
 
-目前觀察：
+Section 2 已完成：
 
-- 建立下載期間移除檔案時，Section 1 會顯示等待訊息；移除命令已送出但在 worker 佇列等待。
-- 新增檔案預期使用相同佇列邊界，尚未以實際操作確認。
-- 列勾選框在主執行緒立即回應；同步輸出仍執行時，對應 worker 命令只會排隊。已觀察到舊生成完成後先開啟檔案儲存視窗，因此不能把 UI 回應視為 worker 已套用選取變更。
-- Section 0／1 改變 dependency key 時，Section 2／3 必須丟棄舊結果；Section 2 的提示不得永久停用目前已符合下載條件的按鈕。
+- 以格式、canonical active file IDs 與 `selectionRevision` 衍生 request key；資料變更時不儲存過期結果。
+- ZIP 逐檔 materialize、加入、釋放、yield 並檢查 generation token；「取消下載」不保存部分結果。
+- 單一同步 serializer，尤其 SheetJS workbook，仍只能在返回後停止；同一 worker 中排隊的勾選、移除或新增命令也要等目前同步區段結束。
 
-後續依量測選擇最小路線，不新增跨 section 的可變狀態：
+後續只依瀏覽器量測選擇最小路線：
 
-1. 共用由格式、canonical active file IDs、既有 `selectionRevision` 與 Section 3 mapping 衍生的 request key，在儲存前拒絕過期結果。
-2. 將 row materialization 與 advanced join 分段，在 worker event-loop yield 後檢查既有 revision，使排隊的勾選／移除命令可提早使舊工作停止；單次同步 serializer 仍只能在返回後丟棄結果。
-3. 若實測證明 XLSX serializer 的不可中止區段過長，再評估每次輸出的短生命週期 worker；需先量測 IR snapshot 複製、記憶體峰值與離線 chunk 成本，不先建立第二份長期 IR。
+1. 以大型 CSV／TXT／XLSX 與接近 500 MiB 的 ZIP 實測取消延遲、峰值記憶體及下載完成行為，並另記錄低記憶體裝置結果。
+2. 若 row materialization 或 Section 3 join 是主要等待來源，再分段 yield 並檢查既有 revision；Section 3 目前仍只有過期結果拒絕，沒有獨立取消按鈕。
+3. 只有 SheetJS 的不可中止區段實測過長時，才評估每次輸出的短生命週期 worker；需先量測 IR snapshot 複製、峰值記憶體與離線 chunk 成本。
 
 ### Decoder 與來源診斷
 

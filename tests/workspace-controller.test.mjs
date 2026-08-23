@@ -31,7 +31,7 @@ function parsedRow(label) {
   return [label, ...Array(14).fill("x")];
 }
 
-function controllerHarness({ archiveError, archiveExtraction, cancelDoesNotPreempt = false, confirmClear = true, onArchiveExtract, onProcessStart, onProcessingInfo, parsedRows, processError, processGate, restoreGate } = {}) {
+function controllerHarness({ archiveError, archiveExtraction, cancelDoesNotPreempt = false, confirmClear = true, onArchiveExtract, onProcessStart, onProcessingInfo, parsedRows, processError, processGate, processProgress, removeGate, restoreGate } = {}) {
   let callbacks;
   let snapshot = { files: [], inputFormat: "csv", selectedFileId: null, outputFormat: "big5-txt", sources: [] };
   const announcements = [];
@@ -61,7 +61,7 @@ function controllerHarness({ archiveError, archiveExtraction, cancelDoesNotPreem
       if (status.kind === "result" && status.failures.length > 0) {
         messages.push({ groups: status.failures, title: status.activeCount + status.otherCount > 0 ? "新增完成，有些項目未加入" : "這次沒有加入檔案" });
       }
-      if (status.kind === "removed") undos.push({ message: status.detail, onUndo: status.onUndo });
+      if (status.kind === "removed") undos.push({ message: status.subject, onUndo: status.onUndo });
     },
     renderPreviewPage() {},
   };
@@ -103,11 +103,18 @@ function controllerHarness({ archiveError, archiveExtraction, cancelDoesNotPreem
     },
     async getPreviewPage() { throw new Error("not used"); },
     async processSource(request) {
-      progressListener?.({ current: 0, phase: request.inputType === "zip" ? "extracting" : "processing", sourceId: request.sourceId, total: 1, virtualPath: request.sourceName });
+      const progressEvents = processProgress?.(request) ?? [{
+        current: 0,
+        phase: request.inputType === "zip" ? "extracting" : "processing",
+        total: 1,
+        virtualPath: request.sourceName,
+      }];
+      progressEvents.forEach((progress) => progressListener?.({ ...progress, sourceId: request.sourceId }));
       onProcessStart?.(request);
       if (processGate) await (typeof processGate === "function" ? processGate(request) : processGate);
       if (cancelledSources.has(request.sourceId)) throw new Error("本次新增已取消。");
-      if (processError) throw processError;
+      const currentProcessError = typeof processError === "function" ? processError(request) : processError;
+      if (currentProcessError) throw currentProcessError;
       if (request.inputType !== "zip") {
         if (request.existingPaths.includes(request.sourceName)) {
           throw new Error(`清單中已有這個檔案，因此沒有重複加入：${request.sourceName}`);
@@ -127,7 +134,7 @@ function controllerHarness({ archiveError, archiveExtraction, cancelDoesNotPreem
       }
       onArchiveExtract?.();
       if (archiveError) throw archiveError;
-      const extraction = archiveExtraction ?? {
+      const extraction = (typeof archiveExtraction === "function" ? archiveExtraction(request) : archiveExtraction) ?? {
         files: [{
           bytes: new TextEncoder().encode("A,01"),
           relativePath: "folder/from-zip.csv",
@@ -158,6 +165,7 @@ function controllerHarness({ archiveError, archiveExtraction, cancelDoesNotPreem
     },
     async refreshOutput(fileIds, outputFormat) { return fileIds.map((id) => record(workerFiles.get(id), outputFormat)); },
     async removeFiles(fileIds) {
+      if (removeGate) await (typeof removeGate === "function" ? removeGate(fileIds) : removeGate);
       fileIds.forEach((id) => {
         const file = workerFiles.get(id);
         if (file) removedWorkerFiles.set(id, file);
@@ -282,6 +290,87 @@ test("reveals processing information when work takes longer", async () => {
   releaseProcessing();
   await harness.controller.whenIdle();
   assert.equal(harness.operationStatuses.at(-1)?.kind, "result");
+});
+
+test("accumulates eligible progress across top-level ZIPs in one selection and resets the next selection", async () => {
+  let releaseHeldSource;
+  let signalHeldSource;
+  let heldSource = "second.zip";
+  let heldGate = new Promise((resolve) => { releaseHeldSource = resolve; });
+  let heldStarted = new Promise((resolve) => { signalHeldSource = resolve; });
+  const progressEvents = [];
+  const totals = new Map([
+    ["first.zip", 2],
+    ["broken.zip", 7],
+    ["second.zip", 3],
+    ["third.zip", 4],
+  ]);
+  const harness = controllerHarness({
+    archiveExtraction(request) {
+      const root = request.sourceName.replace(/\.zip$/u, "");
+      return {
+        files: Array.from({ length: totals.get(request.sourceName) ?? 0 }, (_, index) => ({
+          bytes: new TextEncoder().encode("A,01"),
+          relativePath: `file-${index + 1}.csv`,
+          size: 4,
+          virtualPath: `${root}/file-${index + 1}.csv`,
+        })),
+        skippedEntries: [],
+      };
+    },
+    onProcessStart(request) {
+      if (request.sourceName === heldSource) signalHeldSource();
+    },
+    onProcessingInfo(progress) { progressEvents.push(progress); },
+    processError(request) {
+      return request.sourceName === "broken.zip" ? new Error("ZIP 檔案不完整。") : null;
+    },
+    processGate(request) {
+      return request.sourceName === heldSource ? heldGate : undefined;
+    },
+    processProgress(request) {
+      const total = totals.get(request.sourceName) ?? 0;
+      return [{
+        current: request.sourceName === "first.zip" ? total : 0,
+        phase: "processing",
+        total,
+        virtualPath: request.sourceName.replace(/\.zip$/u, ""),
+      }];
+    },
+  });
+
+  harness.callbacks().onFilesChosen([
+    sourceFile("first.zip", "zip"),
+    sourceFile("broken.zip", "zip"),
+    sourceFile("second.zip", "zip"),
+  ]);
+  await heldStarted;
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.deepEqual(progressEvents.at(-1), {
+    current: 2,
+    phase: "processing",
+    sourceId: "input-3",
+    total: 5,
+    virtualPath: "second",
+  });
+  releaseHeldSource();
+  await harness.controller.whenIdle();
+
+  heldSource = "third.zip";
+  heldGate = new Promise((resolve) => { releaseHeldSource = resolve; });
+  heldStarted = new Promise((resolve) => { signalHeldSource = resolve; });
+  harness.callbacks().onFilesChosen([sourceFile("third.zip", "zip")]);
+  await heldStarted;
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.deepEqual(progressEvents.at(-1), {
+    current: 0,
+    phase: "processing",
+    sourceId: "input-4",
+    total: 4,
+    virtualPath: "third",
+  });
+  releaseHeldSource();
+  await harness.controller.whenIdle();
 });
 
 test("ignores another file selection while the current selection is processing", async () => {
@@ -423,12 +512,15 @@ test("individual removal and clear all only change the browser workspace", async
   const harness = controllerHarness();
   harness.callbacks().onFilesChosen([sourceFile("first.csv", "A,01"), sourceFile("second.csv", "B,02")]);
   await harness.controller.whenIdle();
+  const statusCount = harness.operationStatuses.length;
   harness.callbacks().onRemoveFile(harness.snapshot().files[0].id);
   assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["first.csv", "second.csv"]);
   await harness.controller.whenIdle();
+  assert.equal(harness.operationStatuses.slice(statusCount).some(({ kind }) => kind === "removing"), false);
   assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["second.csv"]);
   assert.deepEqual(harness.snapshot().sources.map((source) => source.name), ["second.csv"]);
-  assert.match(harness.undos.at(-1)?.message, /原始檔案沒有變更/u);
+  assert.equal(harness.undos.at(-1)?.message, "first.csv");
+  assert.match(harness.announcements.at(-1), /原始檔案沒有變更/u);
   harness.undos.at(-1)?.onUndo();
   await harness.controller.whenIdle();
   assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["first.csv", "second.csv"]);
@@ -438,6 +530,44 @@ test("individual removal and clear all only change the browser workspace", async
   assert.deepEqual(harness.snapshot().files, []);
   assert.deepEqual(harness.snapshot().sources, []);
   assert.match(harness.announcements.at(-1), /原始檔案沒有變更/u);
+});
+
+test("consecutive removal updates its filename immediately and reveals slow feedback after 300 ms", async () => {
+  let releaseRemoval;
+  let removalCount = 0;
+  const gate = new Promise((resolve) => { releaseRemoval = resolve; });
+  const harness = controllerHarness({
+    removeGate() {
+      removalCount += 1;
+      return removalCount === 2 ? gate : undefined;
+    },
+  });
+  harness.callbacks().onFilesChosen([
+    sourceFile("first.csv", "A,01"),
+    sourceFile("second.csv", "B,02"),
+    sourceFile("third.csv", "C,03"),
+  ]);
+  await harness.controller.whenIdle();
+  harness.callbacks().onRemoveFile(harness.snapshot().files[0].id);
+  await harness.controller.whenIdle();
+
+  harness.callbacks().onRemoveFile(harness.snapshot().files[0].id);
+  assert.deepEqual(harness.operationStatuses.at(-1), {
+    kind: "removing",
+    phase: "quiet",
+    subject: "second.csv",
+  });
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.deepEqual(harness.operationStatuses.at(-1), {
+    kind: "removing",
+    phase: "visible",
+    subject: "second.csv",
+  });
+
+  releaseRemoval();
+  await harness.controller.whenIdle();
+  assert.equal(harness.operationStatuses.at(-1)?.kind, "removed");
+  assert.equal(harness.operationStatuses.at(-1)?.subject, "second.csv");
 });
 
 test("undo publishes a restored file only after worker restoration completes", async () => {

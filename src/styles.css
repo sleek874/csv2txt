@@ -305,7 +305,15 @@ details[open] > .issue-disclosure-toggle::after {
   margin-left: 0;
 }
 
-.action-actions-single > :first-child {
+:where(.action-actions) > :only-child {
+  grid-column: 2;
+}
+
+:where([data-action-slot="start"]) {
+  grid-column: 1;
+}
+
+:where([data-action-slot="end"]) {
   grid-column: 2;
 }
 
@@ -348,14 +356,10 @@ details[open] > .issue-disclosure-toggle::after {
   white-space: nowrap;
 }
 
-.file-operation-details,
-#cancel-file-operation,
-#undo-file-operation {
-  grid-column: 2;
-}
-
-#mark-all-viewed-button {
-  grid-column: 1;
+.file-operation-subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .file-operation-details {
@@ -633,7 +637,7 @@ button:disabled {
     width: 100%;
   }
 
-  .action-actions-single > :first-child {
+  :where(.action-actions) > :only-child {
     grid-column: 1 / -1;
   }
 
@@ -679,8 +683,7 @@ button:disabled {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .action-actions > *,
-  .action-actions-single > :first-child {
+  .action-actions > * {
     grid-column: 1;
   }
 }

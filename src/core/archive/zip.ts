@@ -1,14 +1,20 @@
-import { Inflate, Zip, ZipDeflate } from "fflate";
+import { Inflate, Zip, ZipDeflate, ZipPassThrough } from "fflate";
 import * as iconv from "iconv-lite";
 
 import { concatenateBytes } from "../bytes";
 import { exceedsFileSizeLimit, FILE_SIZE_LIMIT_TECHNICAL_LABEL } from "../file-size-policy";
 import { detectSourceFileType } from "../file-formats";
-import { ARCHIVE_LIMITS, archiveRootName, safeArchivePath } from "./policy";
+import {
+  ARCHIVE_LIMITS,
+  archiveRootName,
+  OUTPUT_ZIP_SIZE_LIMIT_LABEL,
+  safeArchivePath,
+} from "./policy";
 import type {
   ArchiveDiscardReason,
   ArchiveExtraction,
   ArchiveOutputEntry,
+  ArchiveOutputOptions,
   ArchiveVisit,
   ExtractedSourceFile,
   SkippedArchiveEntry,
@@ -509,7 +515,10 @@ export async function extractZip(fileName: string, bytes: Uint8Array): Promise<A
   return { files, skippedEntries };
 }
 
-export function serializeZip(entries: readonly ArchiveOutputEntry[]): Promise<Uint8Array> {
+export async function serializeZip(
+  entries: readonly ArchiveOutputEntry[],
+  options: ArchiveOutputOptions = {},
+): Promise<Blob> {
   if (entries.length === 0) {
     throw new Error("ZIP 沒有可輸出的檔案。");
   }
@@ -517,55 +526,81 @@ export function serializeZip(entries: readonly ArchiveOutputEntry[]): Promise<Ui
     throw new Error(`ZIP 輸出項目超過 ${ARCHIVE_LIMITS.maxOutputEntries} 個上限。`);
   }
   const paths = new Set<string>();
-  let sourceBytes = 0;
   const normalized = entries.map((entry) => {
     const path = safeArchivePath(entry.path);
     if (paths.has(path)) {
       throw new Error(`ZIP 輸出路徑碰撞：${path}`);
     }
     paths.add(path);
-    if (entry.bytes.byteLength > ARCHIVE_LIMITS.maxOutputEntryBytes) {
-      throw new Error(`ZIP 輸出單檔超過 ${FILE_SIZE_LIMIT_TECHNICAL_LABEL}：${path}`);
-    }
-    sourceBytes += entry.bytes.byteLength;
-    if (sourceBytes > ARCHIVE_LIMITS.maxOutputSourceBytes) {
-      throw new Error(`ZIP 輸出內容累計超過 ${FILE_SIZE_LIMIT_TECHNICAL_LABEL}。`);
-    }
     return { ...entry, path };
   });
 
-  return new Promise((resolve, reject) => {
-    const chunks: Uint8Array[] = [];
-    let outputBytes = 0;
-    const zip = new Zip((error, chunk, final) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      outputBytes += chunk.byteLength;
-      if (outputBytes > ARCHIVE_LIMITS.maxOutputBytes) {
-        zip.terminate();
-        reject(new Error(`ZIP 輸出檔案超過 ${FILE_SIZE_LIMIT_TECHNICAL_LABEL}。`));
-        return;
-      }
-      if (chunk.byteLength > 0) {
-        chunks.push(chunk.slice());
-      }
-      if (final) {
-        resolve(concatenateBytes(chunks, outputBytes));
-      }
-    });
-    try {
-      for (const entry of normalized) {
-        const stream = new ZipDeflate(entry.path, { level: 6 });
-        stream.mtime = new Date("1980-01-01T00:00:00.000Z");
-        zip.add(stream);
-        stream.push(entry.bytes, true);
-      }
-      zip.end();
-    } catch (error) {
+  const chunks: ArrayBuffer[] = [];
+  let terminalError: Error | null = null;
+  let outputBytes = 0;
+  let resolveZip!: (blob: Blob) => void;
+  let rejectZip!: (error: Error) => void;
+  const completed = new Promise<Blob>((resolve, reject) => {
+    resolveZip = resolve;
+    rejectZip = reject;
+  });
+  const zip = new Zip((error, chunk, final) => {
+    if (error) {
+      terminalError = error;
+      rejectZip(error);
+      return;
+    }
+    outputBytes += chunk.byteLength;
+    if (outputBytes > ARCHIVE_LIMITS.maxOutputBytes) {
+      terminalError = new Error(`ZIP 輸出檔案超過 ${OUTPUT_ZIP_SIZE_LIMIT_LABEL}。`);
       zip.terminate();
-      reject(error instanceof Error ? error : new Error("無法建立 ZIP。"));
+      rejectZip(terminalError);
+      return;
+    }
+    if (chunk.byteLength > 0) {
+      chunks.push(
+        chunk.buffer instanceof ArrayBuffer
+          && chunk.byteOffset === 0
+          && chunk.byteLength === chunk.buffer.byteLength
+          ? chunk.buffer
+          : chunk.slice().buffer as ArrayBuffer,
+      );
+    }
+    if (final) {
+      resolveZip(new Blob(chunks, { type: "application/zip" }));
     }
   });
+
+  const assertActive = () => {
+    if (options.isCancelled?.()) throw new Error("已取消建立下載。");
+    if (terminalError) throw terminalError;
+  };
+  const createStream = options.compression === "store"
+    ? (path: string) => new ZipPassThrough(path)
+    : (path: string) => new ZipDeflate(path, { level: 6 });
+
+  try {
+    for (const entry of normalized) {
+      assertActive();
+      let bytes: Uint8Array | null = await entry.createBytes();
+      assertActive();
+      if (bytes.byteLength > ARCHIVE_LIMITS.maxOutputEntryBytes) {
+        throw new Error(`ZIP 輸出單檔超過 ${FILE_SIZE_LIMIT_TECHNICAL_LABEL}：${entry.path}`);
+      }
+      const stream = createStream(entry.path);
+      stream.mtime = new Date("1980-01-01T00:00:00.000Z");
+      zip.add(stream);
+      stream.push(bytes, true);
+      bytes = null;
+      assertActive();
+      await options.yieldAfterEntry?.();
+      assertActive();
+    }
+    zip.end();
+    return await completed;
+  } catch (error) {
+    zip.terminate();
+    void completed.catch(() => undefined);
+    throw error instanceof Error ? error : new Error("無法建立 ZIP。");
+  }
 }

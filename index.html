@@ -123,13 +123,13 @@
                 <span id="file-operation-detail" class="action-description">可加入 TXT、CSV、XLS、XLSX 或 ZIP；每個檔案上限 100 MB。</span>
               </div>
               <div class="file-operation-actions action-actions">
-                <button id="mark-all-viewed-button" class="secondary-button" type="button" hidden>全部標示為已查看</button>
-                <details id="file-operation-details" class="file-operation-details" hidden>
+                <button id="mark-all-viewed-button" class="secondary-button" type="button" data-action-slot="start" hidden>全部標示為已查看</button>
+                <details id="file-operation-details" class="file-operation-details" data-action-slot="end" hidden>
                   <summary id="file-operation-details-summary" class="button-control secondary-button issue-disclosure-toggle">查看未加入的項目</summary>
                   <div id="file-operation-failures" class="upload-failure-groups"></div>
                 </details>
-                <button id="cancel-file-operation" class="secondary-button" type="button" hidden>取消本次新增</button>
-                <button id="undo-file-operation" class="secondary-button" type="button" hidden>復原</button>
+                <button id="cancel-file-operation" class="secondary-button" type="button" data-action-slot="end" hidden>取消本次新增</button>
+                <button id="undo-file-operation" class="secondary-button" type="button" data-action-slot="end" hidden>復原</button>
               </div>
             </div>
           </div>
@@ -246,8 +246,7 @@
                   <span id="download-status-spinner" class="busy-spinner" hidden></span>
                 </span>
               </div>
-              <span id="download-status-summary" class="action-summary">TXT：0 個檔案，已勾選 0 列。</span>
-              <span id="download-status-detail" class="action-description">請先在第 1 區加入檔案。</span>
+              <span id="download-status-summary" class="action-description">TXT：0 個輸出檔案，已勾選 0 列。</span>
               <details id="output-issue-disclosure" class="action-issue-disclosure" hidden>
                 <summary id="output-issue-summary" class="issue-disclosure-toggle action-issue-toggle">查看問題</summary>
                 <div class="issue-detail-block" data-tone="error">
@@ -256,8 +255,9 @@
                 </div>
               </details>
             </div>
-            <div class="action-actions action-actions-single">
+            <div class="action-actions">
               <button id="download-button" class="primary-button" type="button" disabled>下載 TXT</button>
+              <button id="cancel-output-button" class="secondary-button" type="button" disabled>取消下載</button>
             </div>
           </div>
         </section>
@@ -327,7 +327,7 @@
                     </div>
                   </details>
                 </div>
-                <div class="action-actions action-actions-single">
+                <div class="action-actions">
                   <button id="advanced-download-button" class="primary-button" type="button" disabled>下載進階 XLSX</button>
                 </div>
               </div>

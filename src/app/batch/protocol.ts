@@ -1,4 +1,4 @@
-import type { CreatedOutput } from "../adapters/output-adapter";
+import type { CreatedOutput } from "./output-artifact";
 import type { WorkspaceFileRecord } from "../state/workspace-types";
 import type { SourceFileType, OutputFormat } from "../../core/file-formats";
 import type {
@@ -88,6 +88,7 @@ export type BatchRequest =
   | { type: "set-row-included"; fileId: string; sourceRow: number; included: boolean; outputFormat: OutputFormat; workspaceEpoch: number }
   | { type: "set-rows-included"; fileId: string; sourceRows: readonly number[]; included: boolean; outputFormat: OutputFormat; workspaceEpoch: number }
   | { type: "refresh-output"; fileIds: readonly string[]; outputFormat: OutputFormat; workspaceEpoch: number }
+  | { type: "cancel-output"; workspaceEpoch: number }
   | { type: "create-output"; fileIds: readonly string[]; outputFormat: OutputFormat; createdAt: string; workspaceEpoch: number }
   | { type: "discard-files"; fileIds: readonly string[]; workspaceEpoch: number }
   | { type: "remove-files"; fileIds: readonly string[]; workspaceEpoch: number }

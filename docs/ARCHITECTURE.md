@@ -44,7 +44,7 @@ File / ZIP
   -> final validation
   -> independently selected output format
   -> selected-format output validation
-  -> selected output adapter
+  -> worker-owned output projection and selected serializer
   -> safe output paths
   -> ZIP writer
 
@@ -122,7 +122,7 @@ interface InternalCell {
 | Validation | 欄位、日期、checksum、跨欄、severity | 直接修改值 |
 | Transformations | 明確列篩選、有效證號推導性別、TEL 補值、舊系統字元還原與 change log | 無紀錄地修正值、猜測未對照字元 |
 | Output validation | 所選格式的替代位置、替代後 byte 寬度與 blocking output issues | 改寫 primary IR、把 codec 限制當來源錯誤 |
-| Output adapters | BIG-5E TXT bytes、UTF-8 CSV、XLSX workbook | Parser fallback、UI state |
+| Output serialization | Worker-owned row projection、BIG-5E TXT bytes、UTF-8 CSV、XLSX workbook | Parser fallback、UI state |
 | Advanced lookup | 勾選列投影、參照 workbook、逐列 left join、整理後 workbook model | 改寫 primary IR、因資料 issue／重複／未命中阻擋下載 |
 | File-size policy | 使用者選取檔案與 ZIP entry 共用的 100 MiB 單檔邊界 | 工作區累計大小、格式解析 |
 | Archive | ZIP inventory、quota、安全路徑、ZIP output | 欄位規則 |
@@ -172,6 +172,7 @@ src/
       workspace-summary.ts
       preview-query.ts
       standard-output.ts
+      output-artifact.ts
       advanced-data.ts
       scheduler.ts
     state/
@@ -197,7 +198,6 @@ src/
       advanced/advanced-view.ts
     adapters/
       input-adapter.ts
-      output-adapter.ts
       advanced-output-adapter.ts
     resources/
       codec-manager.ts
@@ -218,7 +218,7 @@ src/
 
 CSV、BIG-5E TXT 與 Spreadsheet 是三個 tabular codec，各自擁有 parse 與 serialize。ZIP 是 container codec，交換 archive entries 而非 logical rows，因此放在 `core/archive/`，也不成為格式選項。格式分類與 active／other 投影集中在 `file-formats.ts` 及 `workspace-selectors.ts`，controller 與 view 不各自重寫副檔名規則。
 
-`src/main.ts` 只建立共享 model、resource manager、controllers 與 views，並連接頂層生命週期。每個 view 只查詢自己 section root 內的元素；跨 section 的 `workspace-model.ts` 只保存輸入 family、列納入決策、整批輸出格式與已公開的檔案摘要。Section 1 controller 擁有 `adding／cancelling／removing／restoring／resetting／idle` 操作狀態；Section 2 controller 擁有 output assessment 與 download generation 狀態；Section 3 controller 擁有 reference、join 與 generation 狀態。各 section 只從共用摘要與自己的 dependency key 推導畫面，不把 loading／error 寫回共享 model。Section 1 的互斥 row outcome 與 Section 2 的 download problem 都由 active snapshot 即時計算，不建立第二套 summary state；頁碼、篩選、tabs 與 disclosure 等純呈現狀態留在各 view。`file-picker-view.ts` 只呈現新增鎖與獨立的清空可用狀態，`file-operation-status-view.ts` 擁有固定資訊區的狀態與情境操作，`file-table-view.ts` 只提供 selected-format 與 other 清單共用的 spacer／empty row 及 footer 更新。selected-format／other tabpanel 只擁有對應的固定高度 file table；共享 preview 是 tabpanel 的 sibling，由 `input-section-view.ts` 保留內容，並在 other tab 啟用時以 `visibility`、`inert` 與 `aria-hidden` 隱藏但保留 layout geometry。`state-transition.ts` 只依 view 提供的 semantic state key 重播共用的 commit 後 opacity settle，不擁有流程狀態或 layout timing。
+`src/main.ts` 只建立共享 model、resource manager、controllers 與 views，並連接頂層生命週期。每個 view 只查詢自己 section root 內的元素；跨 section 的 `workspace-model.ts` 只保存輸入 family、列納入決策、整批輸出格式與已公開的檔案摘要。Section 1 controller 擁有 `adding／cancelling／removing／restoring／resetting／idle` 操作狀態，並以同一個 300ms feedback gate 控制新增與移除的 `quiet／visible` 呈現；Section 2 controller 擁有 output assessment 與 `idle／generating／cancelling／error` generation 狀態；Section 3 controller 擁有 reference、join 與 generation 狀態。各 section 只從共用摘要與自己的 dependency key 推導畫面，不把 loading／error 寫回共享 model。Section 1 的互斥 row outcome 與 Section 2 的 download problem 都由 active snapshot 即時計算，不建立第二套 summary state；頁碼、篩選、tabs 與 disclosure 等純呈現狀態留在各 view。`file-picker-view.ts` 只呈現新增鎖與獨立的清空可用狀態，`file-operation-status-view.ts` 擁有固定資訊區的狀態與情境操作，`file-table-view.ts` 只提供 selected-format 與 other 清單共用的 spacer／empty row 及 footer 更新。selected-format／other tabpanel 只擁有對應的固定高度 file table；共享 preview 是 tabpanel 的 sibling，由 `input-section-view.ts` 保留內容，並在 other tab 啟用時以 `visibility`、`inert` 與 `aria-hidden` 隱藏但保留 layout geometry。`state-transition.ts` 只依 view 提供的 semantic state key 重播共用的 commit 後 opacity settle，不擁有流程狀態或延遲計時。
 
 Section 3 是沒有 error、warning 或 validation gate 的 minimal working model。`core/advanced/lookup.ts` 只負責勾選列投影（包括欄位8的 `1 → 男`、`2 → 女` mapping）與純資料 join；controller 保存 reference workbook、worksheet、key 與欄位選擇，view 只處理獨立 picker、mapping controls、摘要、預設收合的提醒 disclosure 與下載。`browser/advanced-preferences.ts` 只保存本機 salt 與 header 的 SHA-256 fingerprints，controller 在 reference sheet 解析後還原為目前 indices；不保存 header、檔名或 sheet name。Reference duplicate 以 one-to-many 結果展開，未命中以空白參照值保留原列，兩者都不是 blocking issue。
 
@@ -252,7 +252,7 @@ ZIP、Excel、CSV、BIG-5E TXT、驗證、標準／進階輸出與 ZIP 輸出由
 - Batch output format。
 - Concise application status。
 
-`protocol.ts` 定義 request ID、輸入／預覽／選取／輸出／進階流程命令與進度事件；`batch-client.ts` 是唯一 worker 生命週期 owner，負責 transferable bytes、stale response 隔離、目前頁與相鄰頁 cache。Worker error、message decode error 或同步 postMessage 失敗都會拒絕相關 request；不可用的 worker 會終止，下一次操作才建立乾淨 instance。`batch-worker.ts` 只接收訊息並轉交 `batch-engine.ts`；engine 編排 active files 與參照 workbook，並把重複 header、空白 header 與未儲存公式結果依類型整理為有界的 reference 提醒摘要，不把整份 issue graph 傳回主執行緒。`compact-workspace.ts` 保存 column-oriented values、selection bitset 與 sparse diagnostics，`workspace-summary.ts` 建立清單／輸出問題摘要，`preview-query.ts` 只建立最多 100 rows 的 page DTO，`standard-output.ts` 與 `advanced-data.ts` 分別投影標準輸出與進階查詢資料；進階摘要重用參照 key index 與主要資料 key counts，不建立完整 join rows，下載時才逐列投影。`scheduler.ts` 負責節流進度及逐檔讓出 worker event loop。
+`protocol.ts` 定義 request ID、輸入／預覽／選取／輸出／取消輸出／進階流程命令與進度事件；`batch-client.ts` 是唯一 worker 生命週期 owner，負責 transferable input bytes、stale response 隔離、目前頁與相鄰頁 cache。Worker error、message decode error 或同步 postMessage 失敗都會拒絕相關 request；不可用的 worker 會終止，下一次操作才建立乾淨 instance。`batch-worker.ts` 只接收訊息並轉交 `batch-engine.ts`；engine 編排 active files、output generation token 與參照 workbook，並把重複 header、空白 header 與未儲存公式結果依類型整理為有界的 reference 提醒摘要，不把整份 issue graph 傳回主執行緒。`compact-workspace.ts` 保存 column-oriented values、selection bitset 與 sparse diagnostics，`workspace-summary.ts` 建立清單／輸出問題摘要，`preview-query.ts` 只建立最多 100 rows 的 page DTO，`standard-output.ts` 與 `advanced-data.ts` 分別投影標準輸出與進階查詢資料；`output-artifact.ts` 建立跨 worker 傳遞的 immutable `Blob`。進階摘要重用參照 key index 與主要資料 key counts，不建立完整 join rows，下載時才逐列投影。`scheduler.ts` 負責節流進度及逐檔讓出 worker event loop。
 
 Section 2／3 以目前格式、canonical active file IDs、各檔案既有 `selectionRevision` 與 Section 3 mapping 組成衍生 dependency key；不另存跨 section 的 output-intent state。建立結果返回主執行緒後若 key 已改變，只丟棄舊結果並顯示可重試提示。提示是否停用下載必須重新取自目前 output plan，不得沿用舊 generation 的 disabled 狀態。
 
@@ -260,13 +260,13 @@ Section 2／3 以目前格式、canonical active file IDs、各檔案既有 `sel
 
 Compact state 是儲存方式，不是新的資料規則：重新 materialize 的 worker-facing row（不含後續流程不使用的原始 `sourceValue`）必須與既有 IR 相同；選取後的 TXT／CSV／XLSX serializer bytes 與進階 XLSX join bytes 也必須和 object-row 路徑相同。測試需涵蓋正規化、預設值、自動修正、無法 packed 的值、dictionary fallback、取消選取、重複 join 與未配對列。XLSX 改用 dense worksheet 只改記憶體表示，不改儲存格內容、順序或輸出契約。
 
-清空主要工作區由 `batch-client.ts` 先推進 workspace epoch、拒絕舊 epoch 的 pending request，再以 worker command 清除 active／removed files 與 preview cache；獨立的 Section 3 reference workbook 不帶 workspace epoch，因此保留。取消新增可先讓 UI 結束等待；若不可中止的讀檔或 parser 稍後才完成，controller 會接續丟棄其 worker 結果，避免留下畫面上看不到的檔案。移除／復原使用 worker 內的暫存區維持既有 undo。大型 ZIP 採單一 worker，以中央目錄定位 payload，深度優先走訪 nested ZIP；每次只展開一個 regular file，立刻沿用既有 parser 建立 compact state，再釋放該 entry bytes，並在檔案邊界 cooperative yield。處理進度以「已完成（接受或 parser 失敗）的支援 leaf candidate／目前已發現的支援 leaf candidate」表示；進入 nested ZIP 時只增加新發現的 TXT／CSV／XLS／XLSX leaf。資料夾、ZIP container、不支援副檔名與 archive-policy 排除項目另行回報，不進入分子或分母。Main thread 不提供同步 fallback；本階段也不改成 per-filetype byte stream，Excel 仍讀取完整 workbook bytes。
+清空主要工作區由 `batch-client.ts` 先推進 workspace epoch、拒絕舊 epoch 的 pending request，再以 worker command 清除 active／removed files 與 preview cache；獨立的 Section 3 reference workbook 不帶 workspace epoch，因此保留。取消新增可先讓 UI 結束等待；若不可中止的讀檔或 parser 稍後才完成，controller 會接續丟棄其 worker 結果，避免留下畫面上看不到的檔案。移除／復原使用 worker 內的暫存區維持既有 undo。大型 ZIP 採單一 worker，以中央目錄定位 payload，深度優先走訪 nested ZIP；每次只展開一個 regular file，立刻沿用既有 parser 建立 compact state，再釋放該 entry bytes，並在檔案邊界 cooperative yield。Worker 對每個頂層來源回報「已完成（接受或 parser 失敗）的支援 leaf candidate／目前已發現的支援 leaf candidate」；Section 1 controller 再加上同一次新增中先前已完成來源的 candidate 數，使分子與分母跨頂層檔案／ZIP 累計，下一次新增才歸零。進入 nested ZIP 時只增加新發現的 TXT／CSV／XLS／XLSX leaf；整個來源失敗並 rollback 時不累加該來源。資料夾、ZIP container、不支援副檔名與 archive-policy 排除項目另行回報，不進入分子或分母。Main thread 不提供同步 fallback；本階段也不改成 per-filetype byte stream，Excel 仍讀取完整 workbook bytes。
 
 所有標準輸出與進階 join 在 worker 取檔時，都依 NFC 正規化後的安全 `virtualPath` 以 code-unit 順序排序；controller 也以相同 canonical order 建立 dependency key 與 file ID request。清單樹仍保留使用者可理解的加入順序，輸出內容則不受 picker、移除或復原順序影響。
 
 Worker 採有界、近似序列的重型工作以控制記憶體與結果順序；只有 profiling 證明有益時才提高 concurrency。
 
-資源取捨：packed／dictionary column 會增加建立時的 value-domain 判斷與輸出時的 decode，但一般低基數欄位由每列一個字串 reference 降為一個 byte；高基數欄位在第 10 個 distinct value 時回退為原字串 column，避免維護無效的大 dictionary。ZIP walker 不再同時保留所有 sibling 的展開 bytes，但仍保留使用者選取的 ZIP bytes、目前 member、parser 暫存與 compact workspace；CSV／TXT parser、Excel workbook 與各檔輸出目前仍是整檔 materialization。進階摘要以 cached reference index 與每檔 selection-revision key counts 換取額外 cache 記憶體，避免每次 UI 摘要都建立完整 primary rows 和 join result；真正下載仍須配置完整結果 rows 與 XLSX bytes。
+資源取捨：packed／dictionary column 會增加建立時的 value-domain 判斷與輸出時的 decode，但一般低基數欄位由每列一個字串 reference 降為一個 byte；高基數欄位在第 10 個 distinct value 時回退為原字串 column，避免維護無效的大 dictionary。ZIP walker 不再同時保留所有 sibling 的展開 bytes，但仍保留使用者選取的 ZIP bytes、目前 member、parser 暫存與 compact workspace；CSV／TXT parser 與 Excel workbook 仍採整檔 materialization。Section 2 先 preflight 全部輸出路徑與資格，再逐檔 materialize、加入 ZIP、釋放並 yield；CSV／TXT 的 ZIP entry 使用 level 6，XLSX 以 pass-through 保存。ZIP chunks 直接成為最終 `Blob` parts，不再合併為完整 `Uint8Array` 或在下載前複製。這仍會保留最終 Blob，並非直接寫入磁碟；單一 SheetJS workbook 也只能在 `write()` 返回後合作取消。進階摘要以 cached reference index 與每檔 selection-revision key counts 換取額外 cache 記憶體，避免每次 UI 摘要都建立完整 primary rows 和 join result；真正下載仍須配置完整結果 rows 與 XLSX bytes。
 
 ## 8. Resource reuse
 
@@ -296,7 +296,8 @@ ZIP library 採獨立 lazy chunk，由 `codec-manager` 載入 `core/archive/zip.
 - 解壓時先讀輕量中央目錄，再以 local-header offset 選擇單一 payload；DEFLATE 以有界 input chunks 展開，不使用無界 `unzipSync` 或先累積所有 sibling。每個 entry 都檢查宣告與實際展開大小，輸入不累計 bytes。
 - Walker 對 nested ZIP 採深度優先並逐項 yield。entry-specific 安全或解析失敗只回傳最小 path／reason 並繼續 sibling；只有頂層結構不可驗證、ZIP64／分割式容器或累計 entry quota 破壞全域可信度時中止來源 transaction。
 - `zip.ts` 同時提供安全 extract 與 serialize；path、depth、quota、symlink 與 collision 規則放在相鄰 policy 模組。
-- Standard output 只有一個檔案時直接回傳 tabular codec artifact；兩個以上才載入 ZIP writer，保留 virtual path，並以 output codec 與台北分鐘時間戳命名 archive。
+- Standard output 先略過完全沒有勾選列的檔案；只有一個輸出檔案時直接回傳 tabular codec Blob，兩個以上才載入 ZIP writer，保留 virtual path，並以 output codec 與台北分鐘時間戳命名 archive。
+- Output ZIP 最多 5,000 entries、每個 entry 100 MiB、最終 Blob 500 MiB；不限制 entries 的未壓縮累計 bytes。writer 逐檔建立 entry 並在檔案邊界合作取消，不保留舊的 eager output array 或 final byte concatenation path。
 
 ### CSV 與 BIG-5E
 
