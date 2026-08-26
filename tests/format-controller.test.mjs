@@ -1,9 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { ActionInterruptedError } from "../src/app/batch/batch-client.ts";
 import { createFormatController } from "../src/app/sections/format/format-controller.ts";
 import { createOutputController } from "../src/app/sections/output/output-controller.ts";
 import { createWorkspaceModel } from "../src/app/state/workspace-model.ts";
+
+const runtimeClient = {
+  invalidateOutput() {},
+  runtime() { return { state: "ready", error: null }; },
+  subscribeRecovered() { return () => undefined; },
+  subscribeOutputInvalidation() { return () => undefined; },
+};
 
 function record(outputFormat = "big5-txt") {
   return {
@@ -58,6 +66,7 @@ test("format choices only publish synchronous workspace selections", () => {
   const model = modelWithFile();
   let callbacks;
   const controller = createFormatController({
+    batchClient: runtimeClient,
     model,
     view: {
       bind(value) { callbacks = value; },
@@ -79,6 +88,7 @@ test("section 2 owns output assessment and publishes refreshed summaries", async
   let releaseRefresh;
   const controller = createOutputController({
     batchClient: {
+      ...runtimeClient,
       async createOutput() { throw new Error("not used"); },
       async refreshOutput() {
         return new Promise((resolve) => { releaseRefresh = () => resolve([record("csv")]); });
@@ -108,6 +118,7 @@ test("section 2 exposes an assessment error without storing it in shared state",
   let lastPlan;
   const controller = createOutputController({
     batchClient: {
+      ...runtimeClient,
       async createOutput() { throw new Error("not used"); },
       async refreshOutput() { throw new Error("synthetic failure"); },
     },
@@ -137,17 +148,26 @@ test("section 2 re-enables a valid download after input changes during generatio
   let error = null;
   let releaseOutput;
   let saved = 0;
-  const controller = createOutputController({
-    batchClient: {
-      createOutput() {
-        return new Promise((resolve) => {
-          releaseOutput = () => resolve({ blob: new Blob([new Uint8Array([1])]), filename: "old.txt" });
-        });
-      },
-      async refreshOutput() { throw new Error("not used"); },
+  let invalidateOutput;
+  const announcements = [];
+  const batchClient = {
+    ...runtimeClient,
+    invalidateOutput() { invalidateOutput?.(); },
+    subscribeOutputInvalidation(listener) {
+      invalidateOutput = listener;
+      return () => undefined;
     },
+    createOutput() {
+      return new Promise((resolve) => {
+        releaseOutput = () => resolve({ blob: new Blob([new Uint8Array([1])]), filename: "old.txt" });
+      });
+    },
+    async refreshOutput() { throw new Error("not used"); },
+  };
+  const controller = createOutputController({
+    batchClient,
     model,
-    status: { announce() {} },
+    status: { announce(message) { announcements.push(message); } },
     view: {
       bind(value) { callbacks = value; },
       render(plan, _format, busy) {
@@ -165,7 +185,9 @@ test("section 2 re-enables a valid download after input changes during generatio
 
   callbacks.onDownload();
   assert.equal(disabled, true);
+  batchClient.invalidateOutput();
   model.setInputFormat("xlsx");
+  assert.equal(announcements.includes("工作區已變更，正在停止建立下載。"), true);
   releaseOutput();
   await controller.whenIdle();
 
@@ -182,6 +204,7 @@ test("section 2 cancels generation from the right action slot", async () => {
   const announcements = [];
   const controller = createOutputController({
     batchClient: {
+      ...runtimeClient,
       async cancelOutput() { rejectOutput(new Error("已取消建立下載。")); },
       createOutput() {
         return new Promise((_resolve, reject) => { rejectOutput = reject; });
@@ -209,4 +232,64 @@ test("section 2 cancels generation from the right action slot", async () => {
     { busy: false, cancelling: false },
   ]);
   assert.equal(announcements.includes("已取消建立下載。"), true);
+});
+
+test("section 2 forwards request progress only while generating", async () => {
+  const model = modelWithFile();
+  let callbacks;
+  let displayedProgress = null;
+  const controller = createOutputController({
+    batchClient: {
+      ...runtimeClient,
+      async createOutput(_fileIds, _format, onProgress) {
+        onProgress({ current: 1, phase: "finalizing", total: 1, virtualPath: "primary.csv" });
+        return { blob: new Blob([new Uint8Array([1])]), filename: "primary.txt" };
+      },
+      async refreshOutput() { throw new Error("not used"); },
+    },
+    model,
+    status: { announce() {} },
+    view: {
+      bind(value) { callbacks = value; },
+      render(_plan, _format, _busy, _cancelling, progress) {
+        if (progress) displayedProgress = progress;
+      },
+      renderError() {},
+      save() {},
+    },
+  });
+  controller.bind();
+
+  callbacks.onDownload();
+  await controller.whenIdle();
+  assert.deepEqual(displayedProgress, {
+    current: 1, phase: "finalizing", total: 1, virtualPath: "primary.csv",
+  });
+});
+
+test("section 2 preserves the concise retry-exhaustion detail", async () => {
+  const model = modelWithFile();
+  let callbacks;
+  let error;
+  const controller = createOutputController({
+    batchClient: {
+      ...runtimeClient,
+      async createOutput() {
+        throw new ActionInterruptedError("這項操作在自動重試後再次中斷。");
+      },
+      async refreshOutput() { throw new Error("not used"); },
+    },
+    model,
+    status: { announce() {} },
+    view: {
+      bind(value) { callbacks = value; },
+      render() {},
+      renderError(detail) { error = detail; },
+      save() {},
+    },
+  });
+  controller.bind();
+  callbacks.onDownload();
+  await controller.whenIdle();
+  assert.equal(error, "這項操作在自動重試後再次中斷。");
 });

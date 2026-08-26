@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { ActionInterruptedError } from "../src/app/batch/batch-client.ts";
 import { createInputController } from "../src/app/sections/input/input-controller.ts";
 import { createWorkspaceModel } from "../src/app/state/workspace-model.ts";
 import { createInternalFile } from "../src/core/conversion-pipeline.ts";
@@ -64,6 +65,7 @@ function controllerHarness({ archiveError, archiveExtraction, cancelDoesNotPreem
       if (status.kind === "removed") undos.push({ message: status.subject, onUndo: status.onUndo });
     },
     renderPreviewPage() {},
+    refreshPreview() {},
   };
   const workerFiles = new Map();
   const removedWorkerFiles = new Map();
@@ -88,6 +90,10 @@ function controllerHarness({ archiveError, archiveExtraction, cancelDoesNotPreem
   }
 
   const batchClient = {
+    invalidateOutput() {},
+    runtime() { return { state: "ready", error: null }; },
+    subscribeOutputInvalidation() { return () => undefined; },
+    subscribeRecovered() { return () => undefined; },
     async cancelSource(sourceId) {
       if (!cancelDoesNotPreempt) cancelledSources.add(sourceId);
     },
@@ -514,7 +520,7 @@ test("individual removal and clear all only change the browser workspace", async
   await harness.controller.whenIdle();
   const statusCount = harness.operationStatuses.length;
   harness.callbacks().onRemoveFile(harness.snapshot().files[0].id);
-  assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["first.csv", "second.csv"]);
+  assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["second.csv"]);
   await harness.controller.whenIdle();
   assert.equal(harness.operationStatuses.slice(statusCount).some(({ kind }) => kind === "removing"), false);
   assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["second.csv"]);
@@ -532,7 +538,7 @@ test("individual removal and clear all only change the browser workspace", async
   assert.match(harness.announcements.at(-1), /原始檔案沒有變更/u);
 });
 
-test("consecutive removal updates its filename immediately and reveals slow feedback after 300 ms", async () => {
+test("removal updates the UI immediately without a removing state", async () => {
   let releaseRemoval;
   let removalCount = 0;
   const gate = new Promise((resolve) => { releaseRemoval = resolve; });
@@ -552,17 +558,9 @@ test("consecutive removal updates its filename immediately and reveals slow feed
   await harness.controller.whenIdle();
 
   harness.callbacks().onRemoveFile(harness.snapshot().files[0].id);
-  assert.deepEqual(harness.operationStatuses.at(-1), {
-    kind: "removing",
-    phase: "quiet",
-    subject: "second.csv",
-  });
-  await new Promise((resolve) => setTimeout(resolve, 350));
-  assert.deepEqual(harness.operationStatuses.at(-1), {
-    kind: "removing",
-    phase: "visible",
-    subject: "second.csv",
-  });
+  assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["third.csv"]);
+  assert.equal(harness.operationStatuses.at(-1)?.kind, "removed");
+  assert.equal(harness.operationStatuses.some(({ kind }) => kind === "removing"), false);
 
   releaseRemoval();
   await harness.controller.whenIdle();
@@ -570,7 +568,7 @@ test("consecutive removal updates its filename immediately and reveals slow feed
   assert.equal(harness.operationStatuses.at(-1)?.subject, "second.csv");
 });
 
-test("undo publishes a restored file only after worker restoration completes", async () => {
+test("undo restores the UI immediately while worker restoration settles", async () => {
   let releaseRestore;
   const restoreGate = new Promise((resolve) => { releaseRestore = resolve; });
   const harness = controllerHarness({ restoreGate });
@@ -580,8 +578,8 @@ test("undo publishes a restored file only after worker restoration completes", a
   await harness.controller.whenIdle();
 
   harness.undos.at(-1)?.onUndo();
-  assert.equal(harness.operationStatuses.at(-1)?.kind, "restoring");
-  assert.deepEqual(harness.snapshot().files, []);
+  assert.equal(harness.operationStatuses.at(-1)?.kind, "restored");
+  assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["first.csv"]);
   releaseRestore();
   await harness.controller.whenIdle();
   assert.deepEqual(harness.snapshot().files.map((file) => file.virtualPath), ["first.csv"]);
@@ -625,10 +623,12 @@ test("a row output decision updates the shared model summary", async () => {
   assert.equal(file.rows[0].included, true);
   assert.equal(file.summary.includedRows, 1);
   harness.callbacks().onRowIncludedChange(1, false);
+  await harness.controller.whenIdle();
   assert.equal(file.rows[0].included, false);
   assert.equal(file.summary.includedRows, 0);
   assert.match(harness.announcements.at(-1), /第 1 列已排除輸出/u);
   harness.callbacks().onRowIncludedChange(1, true);
+  await harness.controller.whenIdle();
   assert.equal(file.rows[0].included, true);
   assert.equal(file.summary.includedRows, 1);
   assert.match(harness.announcements.at(-1), /第 1 列已納入輸出/u);
@@ -643,11 +643,13 @@ test("bulk row actions update only the current filtered page", async () => {
   const file = harness.model.selectedItem().file;
 
   harness.callbacks().onVisibleRowsIncludedChange([1, 3], false);
+  await harness.controller.whenIdle();
   assert.deepEqual(file.rows.map((row) => row.included), [false, true, false]);
   assert.equal(file.summary.includedRows, 1);
   assert.match(harness.announcements.at(-1), /已取消選取本頁/u);
 
   harness.callbacks().onVisibleRowsIncludedChange([3], true);
+  await harness.controller.whenIdle();
   assert.deepEqual(file.rows.map((row) => row.included), [false, true, true]);
   assert.equal(file.summary.includedRows, 2);
   assert.match(harness.announcements.at(-1), /已選取本頁/u);
@@ -830,6 +832,23 @@ test("corrupted supported files are categorized without leaving failed workspace
     label: "無法開啟或內容格式不符",
     tone: "error",
   }]);
+});
+
+test("retry exhaustion is an action error instead of a corrupted-file error", async () => {
+  const harness = controllerHarness({
+    processError: new ActionInterruptedError("這項操作在自動重試後再次中斷。"),
+  });
+  harness.callbacks().onFilesChosen([sourceFile("large.zip", "zip")]);
+  await harness.controller.whenIdle();
+
+  assert.deepEqual(harness.snapshot().files, []);
+  assert.deepEqual(harness.messages, []);
+  assert.deepEqual(harness.operationStatuses.at(-1), {
+    kind: "error",
+    title: "無法完成本次新增",
+    detail: "請再試一次。",
+    diagnostic: "這項操作在自動重試後再次中斷。",
+  });
 });
 
 test("an empty archive keeps an actionable not-added message", async () => {

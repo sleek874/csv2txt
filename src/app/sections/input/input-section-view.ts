@@ -27,6 +27,7 @@ export interface InputSectionView {
   confirmClear(): boolean;
   fileInput(): HTMLInputElement;
   focusFilePicker(): void;
+  refreshPreview(): void;
   clearPreview(): void;
   render(snapshot: WorkspaceSnapshot, options?: { clearEnabled?: boolean; operationLocked?: boolean; processingVisible?: boolean }): void;
   renderPreviewPage(page: PreviewPage): void;
@@ -158,6 +159,7 @@ export function createInputSectionView(): InputSectionView {
     confirmClear: picker.confirmClear,
     fileInput: picker.fileInput,
     focusFilePicker: picker.focusChoose,
+    refreshPreview: preview.refresh,
     render(snapshot, options = {}) {
       const files = snapshot.files;
       const operationLocked = options.operationLocked ?? false;

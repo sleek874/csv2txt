@@ -61,6 +61,7 @@ function selectedKeyCounts(file: CompactFile): ReadonlyMap<string, number> {
 function* compactAdvancedRows(
   files: readonly CompactFile[],
   currentYear: number,
+  onFileComplete?: (file: CompactFile) => void,
 ): Iterable<AdvancedPrimaryRow> {
   for (const file of files) {
     const keys = dictionaryKeys(file.columns[KEY_COLUMN_INDEX]!);
@@ -87,6 +88,7 @@ function* compactAdvancedRows(
         ],
       };
     }
+    onFileComplete?.(file);
   }
 }
 
@@ -113,9 +115,10 @@ export function createCompactAdvancedResult(
   reference: AdvancedReferenceIndex,
   selectedColumnIndices: readonly number[],
   currentYear: number,
+  onFileComplete?: (file: CompactFile) => void,
 ): AdvancedLookupResult {
   return joinAdvancedRowsWithIndex(
-    compactAdvancedRows(files, currentYear),
+    compactAdvancedRows(files, currentYear, onFileComplete),
     reference,
     selectedColumnIndices,
   );

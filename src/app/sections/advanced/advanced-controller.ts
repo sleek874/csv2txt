@@ -4,8 +4,8 @@ import {
   type AdvancedColumnPreferences,
 } from "../../../browser/advanced-preferences";
 import { exceedsFileSizeLimit, FILE_SIZE_LIMIT_LABEL } from "../../../core/file-size-policy";
-import type { BatchClient } from "../../batch/batch-client";
-import type { AdvancedReferenceSummary, AdvancedResultSummary } from "../../batch/protocol";
+import { isWorkerFailure, type BatchClient } from "../../batch/batch-client";
+import type { AdvancedReferenceSummary, AdvancedResultSummary, OutputProgress } from "../../batch/protocol";
 import type { AppStatus } from "../../shell/app-status";
 import type { WorkspaceModel } from "../../state/workspace-model";
 import { canonicalActiveWorkspaceItems } from "../../state/workspace-selectors";
@@ -38,7 +38,9 @@ export function createAdvancedController(options: AdvancedControllerOptions) {
   let selectedColumnIndices = new Set<number>();
   let busy: AdvancedViewState["busy"] = null;
   let resultBusy = false;
-  let error: string | null = null;
+  let referenceError: string | null = null;
+  let downloadError: string | null = null;
+  let outputProgress: OutputProgress | null = null;
   let generation = 0;
   let pendingTask = Promise.resolve();
   let primaryDependencyKey = "";
@@ -74,14 +76,16 @@ export function createAdvancedController(options: AdvancedControllerOptions) {
   function render(): void {
     options.view.render({
       busy,
-      canDownload: reference !== null && (result?.selectedRowCount ?? 0) > 0
+      canDownload: reference !== null && referenceError === null && (result?.selectedRowCount ?? 0) > 0
         && busy === null && !resultBusy,
-      error,
+      downloadError,
       fileCount: activeFileIds().length,
       headers: reference?.headers ?? [],
       issues: reference?.issues ?? [],
       keyColumnIndex,
+      outputProgress,
       referenceFileName: reference?.fileName ?? null,
+      referenceError,
       resultBusy,
       resultRowCount: result?.resultRowCount ?? 0,
       selectedColumnIndices: [...selectedColumnIndices].sort((left, right) => left - right),
@@ -102,6 +106,8 @@ export function createAdvancedController(options: AdvancedControllerOptions) {
     }
     const currentGeneration = generation;
     const currentKey = requestKey();
+    result = null;
+    downloadError = null;
     resultBusy = true;
     render();
     try {
@@ -115,8 +121,9 @@ export function createAdvancedController(options: AdvancedControllerOptions) {
         render();
       }
     } catch (caught) {
+      if (isWorkerFailure(caught)) return;
       if (generation === currentGeneration && requestKey() === currentKey) {
-        error = caught instanceof Error ? caught.message : "無法整理參照資料。";
+        downloadError = caught instanceof Error ? caught.message : "無法整理參照資料。";
         render();
       }
     } finally {
@@ -151,7 +158,8 @@ export function createAdvancedController(options: AdvancedControllerOptions) {
 
   async function chooseReference(file: File): Promise<void> {
     const currentGeneration = ++generation;
-    error = null;
+    referenceError = null;
+    downloadError = null;
     busy = "reference";
     resultBusy = false;
     render();
@@ -160,7 +168,7 @@ export function createAdvancedController(options: AdvancedControllerOptions) {
       if (file.size === 0 || exceedsFileSizeLimit(file.size)) {
         throw new Error(file.size === 0 ? "參照 Excel 是空的。" : `參照 Excel 超過 ${FILE_SIZE_LIMIT_LABEL}，請選擇較小的檔案。`);
       }
-      const summary = await options.batchClient.inspectReference(new Uint8Array(await file.arrayBuffer()));
+      const summary = await options.batchClient.inspectReference(file);
       if (generation !== currentGeneration) return;
       if (!await applyReference(file.name, summary, currentGeneration)) return;
       busy = null;
@@ -168,11 +176,12 @@ export function createAdvancedController(options: AdvancedControllerOptions) {
       await refreshResult();
     } catch (caught) {
       if (generation !== currentGeneration) return;
+      if (isWorkerFailure(caught)) return;
       reference = null;
       result = null;
       selectedColumnIndices.clear();
       void options.batchClient.clearReference().catch(() => undefined);
-      error = caught instanceof Error ? caught.message : "無法讀取參照 Excel。";
+      referenceError = caught instanceof Error ? caught.message : "無法讀取參照 Excel。";
       options.status.announce("無法讀取參照 Excel。");
     } finally {
       if (generation === currentGeneration) {
@@ -188,7 +197,8 @@ export function createAdvancedController(options: AdvancedControllerOptions) {
     const fileName = reference.fileName;
     busy = "reference";
     resultBusy = false;
-    error = null;
+    referenceError = null;
+    downloadError = null;
     render();
     try {
       const summary = await options.batchClient.selectReferenceSheet(sheetName);
@@ -199,7 +209,8 @@ export function createAdvancedController(options: AdvancedControllerOptions) {
       await refreshResult();
     } catch (caught) {
       if (generation !== currentGeneration) return;
-      error = caught instanceof Error ? caught.message : "無法讀取這個工作表。";
+      if (isWorkerFailure(caught)) return;
+      referenceError = caught instanceof Error ? caught.message : "無法讀取這個工作表。";
       options.status.announce("無法讀取這個工作表。");
     } finally {
       if (generation === currentGeneration) {
@@ -214,7 +225,8 @@ export function createAdvancedController(options: AdvancedControllerOptions) {
     reference = null;
     result = null;
     selectedColumnIndices.clear();
-    error = null;
+    referenceError = null;
+    downloadError = null;
     busy = null;
     resultBusy = false;
     void options.batchClient.clearReference().catch(() => undefined);
@@ -226,36 +238,50 @@ export function createAdvancedController(options: AdvancedControllerOptions) {
     if (!reference || !result || result.selectedRowCount === 0 || busy !== null || resultBusy) return;
     const requestedState = requestKey();
     busy = "download";
-    error = null;
+    downloadError = null;
+    outputProgress = null;
     render();
     options.status.announce("正在建立進階 XLSX。");
     try {
       const output = await options.batchClient.createAdvancedOutput(
         activeFileIds(), keyColumnIndex, [...selectedColumnIndices].sort((left, right) => left - right),
+        (progress) => {
+          if (busy !== "download" || requestKey() !== requestedState) return;
+          outputProgress = progress;
+          render();
+        },
       );
       if (requestKey() !== requestedState) {
-        error = "資料已在建立下載期間變更，請重新下載。";
+        downloadError = "資料已在建立下載期間變更，請重新下載。";
         options.status.announce("資料已變更，進階下載已取消。");
         return;
       }
       options.view.save(output);
       options.status.announce(`已建立進階 XLSX，共 ${result.resultRowCount} 列。`);
     } catch (caught) {
+      if (isWorkerFailure(caught)) return;
       if (requestKey() !== requestedState) {
-        error = "資料已在建立下載期間變更，請重新下載。";
+        downloadError = "資料已在建立下載期間變更，請重新下載。";
         options.status.announce("資料已變更，進階下載已取消。");
       } else {
-        error = caught instanceof Error ? caught.message : "無法建立進階 XLSX。";
+        downloadError = caught instanceof Error ? caught.message : "無法建立進階 XLSX。";
         options.status.announce("無法建立進階 XLSX。");
       }
     } finally {
       busy = null;
+      outputProgress = null;
       render();
     }
   }
 
   return {
     bind() {
+      options.batchClient.subscribeRecovered(() => {
+        if (reference) {
+          pendingTask = refreshResult();
+          void pendingTask;
+        }
+      });
       options.view.bind({
         onChooseReference: () => options.view.fileInput().click(),
         onClearReference: clearReference,
@@ -264,7 +290,7 @@ export function createAdvancedController(options: AdvancedControllerOptions) {
           if (busy !== null || resultBusy) return;
           keyColumnIndex = index;
           savePreferences();
-          error = null;
+          downloadError = null;
           pendingTask = refreshResult();
         },
         onReferenceChosen(file) { pendingTask = chooseReference(file); void pendingTask; },
@@ -273,7 +299,7 @@ export function createAdvancedController(options: AdvancedControllerOptions) {
           if (selected) selectedColumnIndices.add(index);
           else selectedColumnIndices.delete(index);
           savePreferences();
-          error = null;
+          downloadError = null;
           pendingTask = refreshResult();
         },
         onSheetChange(sheetName) {
@@ -286,7 +312,7 @@ export function createAdvancedController(options: AdvancedControllerOptions) {
         const nextDependencyKey = currentPrimaryDependencyKey();
         if (nextDependencyKey === primaryDependencyKey) return;
         primaryDependencyKey = nextDependencyKey;
-        error = null;
+        downloadError = null;
         if (reference) {
           pendingTask = refreshResult();
           void pendingTask;

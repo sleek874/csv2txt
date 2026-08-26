@@ -14,6 +14,7 @@ import type {
   AdvancedResultSummary,
   BatchRequest,
   BatchResponseValue,
+  OutputProgress,
   ProcessSourceResult,
   ProcessingProgress,
   SkippedEntry,
@@ -262,8 +263,12 @@ export function createBatchEngine(
   }
 
   return {
-    async handle(request: BatchRequest): Promise<BatchResponseValue> {
+    async handle(
+      request: BatchRequest,
+      onOutputProgress: (progress: OutputProgress) => void = () => undefined,
+    ): Promise<BatchResponseValue> {
       switch (request.type) {
+        case "ping": return null;
         case "cancel-source":
           assertWorkspaceEpoch(request.workspaceEpoch);
           cancelledSources.add(request.sourceId);
@@ -309,6 +314,7 @@ export function createBatchEngine(
             new Date(request.createdAt),
             {
               isCancelled: () => generation !== outputGeneration,
+              onProgress: onOutputProgress,
               yieldAfterFile: yieldToWorker,
             },
           );
@@ -364,12 +370,34 @@ export function createBatchEngine(
         }
         case "create-advanced-output": {
           assertWorkspaceEpoch(request.workspaceEpoch);
+          const selected = selectedFiles(request.fileIds);
+          const total = selected.length;
+          let completed = 0;
+          if (selected[0]) {
+            onOutputProgress({
+              current: 0,
+              phase: "processing",
+              total,
+              virtualPath: selected[0].virtualPath,
+            });
+          }
           const result = createCompactAdvancedResult(
-            selectedFiles(request.fileIds),
+            selected,
             indexedReference(request.keyColumnIndex),
             request.selectedColumnIndices,
             taipeiCurrentYear(),
+            (file) => {
+              completed += 1;
+              const next = selected[completed];
+              onOutputProgress({
+                current: completed,
+                phase: next ? "processing" : "finalizing",
+                total,
+                virtualPath: next?.virtualPath ?? file.virtualPath,
+              });
+            },
           );
+          await yieldToWorker();
           return advancedAdapter.create(result, new Date(request.createdAt));
         }
       }

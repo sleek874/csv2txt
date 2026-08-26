@@ -6,6 +6,7 @@ import { describeOutputIssue } from "../../core/output-validation";
 import type { CodecManager } from "../resources/codec-manager";
 import { compactValue, type CompactFile } from "./compact-workspace";
 import { outputBlob, taipeiMinuteStamp, type CreatedOutput } from "./output-artifact";
+import type { OutputProgress } from "./protocol";
 import { compactOutputIssues } from "./workspace-summary";
 
 const MIME_TYPES: Record<OutputFormat, string> = {
@@ -37,6 +38,7 @@ export async function createCompactOutput(
   createdAt: Date,
   options: {
     isCancelled?: () => boolean;
+    onProgress?: (progress: OutputProgress) => void;
     yieldAfterFile?: () => Promise<void>;
   } = {},
 ): Promise<CreatedOutput> {
@@ -55,6 +57,13 @@ export async function createCompactOutput(
     if (paths.has(path)) throw new Error(`輸出路徑碰撞：${path}`);
     paths.add(path);
   }
+  const total = planned.length;
+  options.onProgress?.({
+    current: 0,
+    phase: "processing",
+    total,
+    virtualPath: planned[0]!.file.virtualPath,
+  });
 
   let serialize: (rows: SerializableRow[]) => Uint8Array;
   switch (format) {
@@ -76,6 +85,7 @@ export async function createCompactOutput(
 
   if (planned.length > 1) {
     const zip = await codecs.zip();
+    let completed = 0;
     return {
       blob: await zip.serializeZip(
         planned.map(({ file, path }) => ({
@@ -85,7 +95,17 @@ export async function createCompactOutput(
         {
           compression: format === "xlsx" ? "store" : "deflate",
           isCancelled: options.isCancelled,
-          yieldAfterEntry: options.yieldAfterFile,
+          yieldAfterEntry: async () => {
+            completed += 1;
+            const next = planned[completed];
+            options.onProgress?.({
+              current: completed,
+              phase: next ? "processing" : "finalizing",
+              total,
+              virtualPath: next?.file.virtualPath ?? planned[completed - 1]!.file.virtualPath,
+            });
+            await options.yieldAfterFile?.();
+          },
         },
       ),
       filename: `${format}-${taipeiMinuteStamp(createdAt)}.zip`,
@@ -94,6 +114,12 @@ export async function createCompactOutput(
   const output = planned[0];
   if (!output) throw new Error("工作區沒有可輸出的檔案。");
   const bytes = createBytes(output.file, output.path);
+  options.onProgress?.({
+    current: 1,
+    phase: "finalizing",
+    total,
+    virtualPath: output.file.virtualPath,
+  });
   await options.yieldAfterFile?.();
   assertActive();
   return {

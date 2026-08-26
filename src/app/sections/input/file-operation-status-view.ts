@@ -2,6 +2,8 @@ import { requireDescendant } from "../../../browser/dom";
 import { FILE_SIZE_LIMIT_LABEL } from "../../../core/file-size-policy";
 import { FILE_FORMAT_LABELS, type FileFormat } from "../../../core/file-formats";
 import type { ProcessingProgress } from "../../batch/protocol";
+import { createActionDetails } from "../../shell/action-details";
+import { fileProgressDetail } from "../../shell/file-progress";
 import { createStateTransition } from "../../shell/state-transition";
 
 export type FileOperationTone = "error" | "neutral" | "success" | "warning";
@@ -19,10 +21,8 @@ export type FileOperationStatus =
   | { kind: "result"; activeCount: number; activeFormat: FileFormat; failures: readonly UploadFailureGroup[]; otherCount: number }
   | { kind: "cancelled" }
   | { kind: "cleared" }
-  | { kind: "removing"; phase: "quiet" | "visible"; subject: string }
-  | { kind: "restoring" }
   | { kind: "resetting" }
-  | { kind: "error"; detail: string }
+  | { kind: "error"; detail: string; diagnostic?: string; title?: string }
   | { kind: "removed"; onUndo: () => void; subject: string }
   | { kind: "restored"; detail: string };
 
@@ -38,10 +38,10 @@ function basename(path: string): string {
 
 function processingDetail(progress: ProcessingProgress): string {
   if (progress.phase === "extracting") return `正在整理 ${basename(progress.virtualPath)}。`;
-  if (progress.phase === "finalizing") return "正在整理本次新增結果。";
-  return progress.total > 0
-    ? `正在檢查 ${basename(progress.virtualPath)}，已完成 ${progress.current} / ${progress.total} 個檔案。`
-    : `正在檢查 ${basename(progress.virtualPath)}。`;
+  return fileProgressDetail(progress, {
+    processingVerb: "檢查",
+    finalizing: "正在整理本次新增結果",
+  });
 }
 
 export function createFileOperationStatusView(root: HTMLElement): FileOperationStatusView {
@@ -53,8 +53,7 @@ export function createFileOperationStatusView(root: HTMLElement): FileOperationS
   const undo = requireDescendant<HTMLButtonElement>(box, "#undo-file-operation");
   const markAllViewed = requireDescendant<HTMLButtonElement>(box, "#mark-all-viewed-button");
   const details = requireDescendant<HTMLDetailsElement>(box, "#file-operation-details");
-  const detailsSummary = requireDescendant<HTMLElement>(box, "#file-operation-details-summary");
-  const failures = requireDescendant<HTMLElement>(box, "#file-operation-failures");
+  const actionDetails = createActionDetails(details);
   const copy = requireDescendant<HTMLElement>(box, ".file-operation-copy");
   const transition = createStateTransition(copy);
   let unreadCount = 0;
@@ -76,51 +75,36 @@ export function createFileOperationStatusView(root: HTMLElement): FileOperationS
       cancel.addEventListener("click", options.onCancel);
       undo.addEventListener("click", () => undoAction?.());
       markAllViewed.addEventListener("click", options.onMarkAllViewed);
-      document.addEventListener("pointerdown", (event) => {
-        if (details.open && event.target instanceof Node && !details.contains(event.target)) {
-          details.open = false;
-        }
-      });
-      document.addEventListener("keydown", (event) => {
-        if (details.open && event.key === "Escape") {
-          details.open = false;
-          detailsSummary.focus({ preventScroll: true });
-        }
-      });
     },
     render(status) {
-      const removal = status.kind === "removing" || status.kind === "removed";
+      const removal = status.kind === "removed";
       busy = status.kind === "processing"
         || status.kind === "cancelling"
-        || status.kind === "removing"
-        || status.kind === "restoring"
         || status.kind === "resetting";
-      spinner.hidden = !busy || (status.kind === "removing" && status.phase === "quiet");
+      spinner.hidden = !busy;
       cancel.hidden = status.kind !== "processing";
       undo.hidden = !removal;
-      undo.disabled = status.kind === "removing";
-      details.hidden = true;
-      details.open = false;
-      failures.replaceChildren();
+      undo.disabled = false;
+      actionDetails.hide();
       undoAction = status.kind === "removed" ? status.onUndo : null;
       detail.classList.toggle("file-operation-subject", removal);
-      undo.setAttribute("aria-label", removal
-        ? `${status.kind === "removed" ? "復原" : "正在移除"} ${status.subject}`
-        : "復原");
+      undo.setAttribute("aria-label", removal ? `復原 ${status.subject}` : "復原");
 
       if (status.kind === "idle") setCopy("請加入檔案", `可加入 TXT、CSV、XLS、XLSX 或 ZIP；每個檔案上限 ${FILE_SIZE_LIMIT_LABEL}。`, "neutral");
       if (status.kind === "processing") setCopy("正在處理本次新增", processingDetail(status.progress), "neutral");
       if (status.kind === "cancelling") setCopy("正在取消本次新增", "正在停止處理並捨棄這次選取的結果。", "neutral");
       if (status.kind === "cancelled") setCopy("已取消本次新增", "這次選取的檔案都沒有加入；先前的檔案仍保留。", "neutral");
       if (status.kind === "cleared") setCopy("清單已清空", "電腦中的原始檔案沒有變更。", "neutral");
-      if (status.kind === "removing") {
-        detail.textContent = basename(status.subject);
-        box.dataset.tone = "neutral";
-        if (status.phase === "visible") title.textContent = "正在從清單移除";
-      }
-      if (status.kind === "restoring") setCopy("正在復原到清單", "完成後會重新顯示檔案與預覽。", "neutral");
       if (status.kind === "resetting") setCopy("正在清空清單", "正在停止目前工作並清除主要工作區。", "neutral");
-      if (status.kind === "error") setCopy("無法完成檔案操作", status.detail, "error");
+      if (status.kind === "error") {
+        setCopy(status.title ?? "無法完成檔案操作", status.detail, "error");
+        if (status.diagnostic) {
+          const message = document.createElement("p");
+          message.className = "action-details-text";
+          message.textContent = status.diagnostic;
+          actionDetails.show("查看詳細資料", "error", message);
+        }
+      }
       if (status.kind === "removed") setCopy("已從清單移除", basename(status.subject), "neutral");
       if (status.kind === "restored") setCopy("已復原到清單", status.detail, "success");
       if (status.kind === "result") {
@@ -136,11 +120,9 @@ export function createFileOperationStatusView(root: HTMLElement): FileOperationS
           tone,
         );
         if (failureCount > 0) {
-          detailsSummary.textContent = `查看 ${failureCount} 個未加入項目`;
-          status.failures.forEach((group) => {
+          const groups = status.failures.map((group) => {
             const section = document.createElement("section");
             section.className = "upload-failure-group";
-            section.dataset.tone = group.tone;
             const label = document.createElement("strong");
             label.textContent = group.label;
             const list = document.createElement("ul");
@@ -150,17 +132,19 @@ export function createFileOperationStatusView(root: HTMLElement): FileOperationS
               list.append(item);
             });
             section.append(label, list);
-            failures.append(section);
+            return section;
           });
-          details.hidden = false;
+          actionDetails.show(
+            `查看 ${failureCount} 個未加入項目`,
+            tone === "error" ? "error" : "warning",
+            ...groups,
+          );
         }
       }
       updateMarkAllViewed();
-      if (status.kind !== "removing" || status.phase === "visible") {
-        transition.update(status.kind === "processing"
-          ? `processing:${status.progress.sourceId}:${status.progress.virtualPath}`
-          : status.kind);
-      }
+      transition.update(status.kind === "processing"
+        ? `processing:${status.progress.sourceId}:${status.progress.virtualPath}`
+        : status.kind);
     },
     setUnreadCount(count) {
       unreadCount = count;

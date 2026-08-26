@@ -222,8 +222,22 @@ h3 {
 }
 
 .action-card {
+  position: relative;
   padding: 1rem;
+  overflow: visible;
   background: var(--color-surface-soft);
+}
+
+.action-card[data-tone="error"] {
+  border-color: var(--color-error-border);
+}
+
+.action-card[data-tone="error"] .action-title {
+  color: var(--color-error-text);
+}
+
+.action-card:has(.action-details[data-display="floating"][open]) {
+  z-index: 10;
 }
 
 .action-copy {
@@ -300,9 +314,97 @@ details[open] > .issue-disclosure-toggle::after {
   content: "−";
 }
 
+.action-details {
+  margin-top: 0.4rem;
+}
+
+.action-details-toggle {
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  padding-block: 0.2rem;
+  padding-left: 0;
+  border: 0;
+  color: var(--color-accent-text);
+  background: transparent;
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.action-details-toggle:hover,
+.action-details[open] > .action-details-toggle {
+  text-decoration: underline;
+}
+
+.action-details-panel {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+  padding: 0.7rem 0.8rem;
+  border: var(--border-ui-strong);
+  border-left: 0.25rem solid var(--color-neutral);
+  border-radius: var(--radius-ui);
+  color: var(--color-text);
+  background: var(--color-surface);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.action-details-panel[data-tone="warning"] {
+  border-left-color: var(--color-warning);
+  color: var(--color-warning-text);
+}
+
+.action-details-panel[data-tone="error"] {
+  border-left-color: var(--color-error);
+  color: var(--color-error-text);
+}
+
+.action-details[data-display="floating"] {
+  position: relative;
+}
+
+.action-details[data-display="floating"] > .action-details-panel {
+  position: absolute;
+  z-index: 1;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  width: min(32rem, calc(100vw - 3rem));
+  max-height: 14rem;
+  overflow: auto;
+  overscroll-behavior: contain;
+  box-shadow: var(--shadow-dialog);
+}
+
+.action-details-text {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.action-details-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
 .action-actions > * {
   width: 100%;
   margin-left: 0;
+}
+
+.worker-runtime-dialog[data-tone="error"] {
+  border-color: var(--color-error-border);
+}
+
+.worker-runtime-dialog[data-tone="error"] .action-title {
+  color: var(--color-error-text);
+}
+
+.worker-runtime-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1.25rem;
 }
 
 :where(.action-actions) > :only-child {
@@ -331,10 +433,6 @@ details[open] > .issue-disclosure-toggle::after {
   color: var(--color-text);
 }
 
-.file-operation-status:has(.file-operation-details[open]) {
-  z-index: 10;
-}
-
 .file-operation-status[data-tone="success"] {
   border-color: var(--color-success-border);
   border-left-color: var(--color-success);
@@ -360,37 +458,6 @@ details[open] > .issue-disclosure-toggle::after {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.file-operation-details {
-  position: relative;
-}
-
-.file-operation-details > summary {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  list-style: none;
-}
-
-.file-operation-details > summary::-webkit-details-marker {
-  display: none;
-}
-
-.file-operation-details .upload-failure-groups {
-  position: absolute;
-  top: calc(100% + 0.35rem);
-  right: 0;
-  width: min(30rem, calc(100vw - 3rem));
-  max-height: 14rem;
-  padding: 0.75rem;
-  border: var(--border-ui-strong);
-  border-radius: var(--radius-ui);
-  overflow: auto;
-  overscroll-behavior: contain;
-  color: var(--color-text);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-dialog);
 }
 
 .upload-failure-groups {
@@ -643,10 +710,6 @@ button:disabled {
 
   .file-operation-status {
     min-height: 8.375rem;
-  }
-
-  .file-operation-details > summary {
-    width: 100%;
   }
 
   .schema-summary {

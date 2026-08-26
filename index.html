@@ -121,13 +121,13 @@
                   </span>
                 </strong>
                 <span id="file-operation-detail" class="action-description">可加入 TXT、CSV、XLS、XLSX 或 ZIP；每個檔案上限 100 MB。</span>
+                <details id="file-operation-details" class="action-details" data-display="floating" hidden>
+                  <summary class="action-details-toggle issue-disclosure-toggle">查看未加入的項目</summary>
+                  <div class="action-details-panel upload-failure-groups" tabindex="0" aria-label="檔案新增詳細資料"></div>
+                </details>
               </div>
               <div class="file-operation-actions action-actions">
                 <button id="mark-all-viewed-button" class="secondary-button" type="button" data-action-slot="start" hidden>全部標示為已查看</button>
-                <details id="file-operation-details" class="file-operation-details" data-action-slot="end" hidden>
-                  <summary id="file-operation-details-summary" class="button-control secondary-button issue-disclosure-toggle">查看未加入的項目</summary>
-                  <div id="file-operation-failures" class="upload-failure-groups"></div>
-                </details>
                 <button id="cancel-file-operation" class="secondary-button" type="button" data-action-slot="end" hidden>取消本次新增</button>
                 <button id="undo-file-operation" class="secondary-button" type="button" data-action-slot="end" hidden>復原</button>
               </div>
@@ -247,11 +247,11 @@
                 </span>
               </div>
               <span id="download-status-summary" class="action-description">TXT：0 個輸出檔案，已勾選 0 列。</span>
-              <details id="output-issue-disclosure" class="action-issue-disclosure" hidden>
-                <summary id="output-issue-summary" class="issue-disclosure-toggle action-issue-toggle">查看問題</summary>
-                <div class="issue-detail-block" data-tone="error">
+              <details id="output-issue-disclosure" class="action-details" data-display="floating" hidden>
+                <summary class="action-details-toggle issue-disclosure-toggle">查看問題</summary>
+                <div class="action-details-panel" tabindex="0" aria-label="下載問題與提醒">
                   <a id="output-problem-link" class="inline-action-link" href="#file-tree-table" hidden>回到第 1 區查看問題</a>
-                  <ul id="output-issue-list" class="action-issue-list" tabindex="0" aria-label="下載問題與提醒"></ul>
+                  <ul id="output-issue-list" class="action-details-list"></ul>
                 </div>
               </details>
             </div>
@@ -280,7 +280,13 @@
                     <span id="reference-status-spinner" class="busy-spinner" hidden></span>
                   </span>
                 </div>
-                <p class="help-text action-description">選擇要用來補充資料的 Excel；檔案上限 100 MB。</p>
+                <p id="reference-status-detail" class="help-text action-description">選擇要用來補充資料的 Excel；檔案上限 100 MB。</p>
+                <details id="reference-error-disclosure" class="action-details" data-display="floating" hidden>
+                  <summary class="action-details-toggle issue-disclosure-toggle">查看詳細資料</summary>
+                  <div class="action-details-panel" tabindex="0" aria-label="參照 Excel 錯誤詳細資料">
+                    <p id="reference-error-detail" class="action-details-text"></p>
+                  </div>
+                </details>
               </div>
               <div class="file-picker-actions action-actions">
                 <button id="select-reference-button" class="primary-button" type="button">選擇 Excel</button>
@@ -288,8 +294,6 @@
               </div>
               <input id="reference-file" type="file" accept=".xls,.xlsx" hidden />
             </div>
-
-            <div id="reference-message" class="notice error-notice state-reveal" hidden></div>
 
             <div id="advanced-controls" class="state-reveal" hidden>
               <div class="advanced-config responsive-grid">
@@ -320,10 +324,10 @@
                   </div>
                   <span id="advanced-summary" class="action-summary">XLSX：0 個檔案，已勾選 0 列。</span>
                   <span id="advanced-download-detail" class="action-description">請先選擇參照 Excel。</span>
-                  <details id="advanced-issue-disclosure" class="action-issue-disclosure" hidden>
-                    <summary id="advanced-issue-summary" class="issue-disclosure-toggle action-issue-toggle">查看提醒</summary>
-                    <div class="issue-detail-block" data-tone="warning">
-                      <ul id="advanced-issue-list" class="action-issue-list" tabindex="0" aria-label="進階輸出提醒"></ul>
+                  <details id="advanced-issue-disclosure" class="action-details" data-display="floating" hidden>
+                    <summary class="action-details-toggle issue-disclosure-toggle">查看提醒</summary>
+                    <div class="action-details-panel" tabindex="0" aria-label="進階輸出問題與提醒">
+                      <ul id="advanced-issue-list" class="action-details-list"></ul>
                     </div>
                   </details>
                 </div>
@@ -358,6 +362,24 @@
 
         <p id="app-status" class="visually-hidden" role="status" aria-live="polite"></p>
       </main>
+
+      <dialog id="worker-runtime-dialog" class="worker-runtime-dialog" aria-labelledby="worker-runtime-title">
+        <div class="action-title-line">
+          <strong id="worker-runtime-title" class="action-title">正在處理背景資料</strong>
+          <span class="action-spinner-slot" aria-hidden="true">
+            <span id="worker-runtime-spinner" class="busy-spinner"></span>
+          </span>
+        </div>
+        <details id="worker-runtime-details" class="action-details">
+          <summary class="action-details-toggle issue-disclosure-toggle">查看詳細資料</summary>
+          <div class="action-details-panel">
+            <p id="worker-runtime-error" class="action-details-text"></p>
+          </div>
+        </details>
+        <div class="worker-runtime-actions">
+          <button id="worker-runtime-reload" class="primary-button" type="button">重新載入</button>
+        </div>
+      </dialog>
     </div>
     <script type="module" src="/src/bootstrap.ts"></script>
   </body>

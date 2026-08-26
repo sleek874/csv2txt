@@ -1,17 +1,22 @@
 import { downloadBlob } from "../../../browser/download";
 import { requireDescendant, requireElement } from "../../../browser/dom";
 import type { CreatedOutput } from "../../batch/output-artifact";
+import type { OutputProgress } from "../../batch/protocol";
+import { createActionDetails } from "../../shell/action-details";
+import { fileProgressDetail } from "../../shell/file-progress";
 import { createStateTransition } from "../../shell/state-transition";
 
 export interface AdvancedViewState {
   busy: "download" | "reference" | null;
   canDownload: boolean;
-  error: string | null;
+  downloadError: string | null;
   fileCount: number;
   headers: readonly string[];
   issues: readonly string[];
   keyColumnIndex: number;
+  outputProgress: OutputProgress | null;
   referenceFileName: string | null;
+  referenceError: string | null;
   resultBusy: boolean;
   resultRowCount: number;
   selectedColumnIndices: readonly number[];
@@ -49,6 +54,10 @@ export function createAdvancedView(): AdvancedView {
   const fileInput = requireDescendant<HTMLInputElement>(root, "#reference-file");
   const fileName = requireDescendant<HTMLElement>(root, "#reference-file-name");
   const referenceSpinner = requireDescendant<HTMLElement>(root, "#reference-status-spinner");
+  const referenceDetail = requireDescendant<HTMLElement>(root, "#reference-status-detail");
+  const referenceErrorDisclosure = requireDescendant<HTMLDetailsElement>(root, "#reference-error-disclosure");
+  const referenceDetails = createActionDetails(referenceErrorDisclosure);
+  const referenceErrorDetail = requireDescendant<HTMLElement>(root, "#reference-error-detail");
   const chooseButton = requireDescendant<HTMLButtonElement>(root, "#select-reference-button");
   const clearButton = requireDescendant<HTMLButtonElement>(root, "#clear-reference-button");
   const controls = requireDescendant<HTMLElement>(root, "#advanced-controls");
@@ -56,7 +65,6 @@ export function createAdvancedView(): AdvancedView {
   const sheetSelect = requireDescendant<HTMLSelectElement>(root, "#reference-sheet");
   const keySelect = requireDescendant<HTMLSelectElement>(root, "#reference-key-column");
   const columnOptions = requireDescendant<HTMLElement>(root, "#reference-column-options");
-  const referenceMessage = requireDescendant<HTMLElement>(root, "#reference-message");
   const summary = requireDescendant<HTMLElement>(root, "#advanced-summary");
   const downloadTitle = requireDescendant<HTMLElement>(root, "#advanced-download-title");
   const downloadDetail = requireDescendant<HTMLElement>(root, "#advanced-download-detail");
@@ -64,7 +72,7 @@ export function createAdvancedView(): AdvancedView {
   const downloadSpinner = requireDescendant<HTMLElement>(root, "#advanced-download-spinner");
   const downloadButton = requireDescendant<HTMLButtonElement>(root, "#advanced-download-button");
   const issueDisclosure = requireDescendant<HTMLDetailsElement>(root, "#advanced-issue-disclosure");
-  const issueSummary = requireDescendant<HTMLElement>(root, "#advanced-issue-summary");
+  const downloadDetails = createActionDetails(issueDisclosure);
   const issueList = requireDescendant<HTMLUListElement>(root, "#advanced-issue-list");
   const referenceCopy = requireDescendant<HTMLElement>(picker, ".action-copy");
   const downloadCopy = requireDescendant<HTMLElement>(downloadStatus, ".action-copy");
@@ -73,14 +81,22 @@ export function createAdvancedView(): AdvancedView {
   let renderedHeaderKey = "";
 
   function renderIssues(details: readonly string[]): void {
-    issueDisclosure.open = false;
-    issueDisclosure.hidden = details.length === 0;
-    issueSummary.textContent = `查看 ${details.length.toLocaleString("zh-TW")} 個提醒`;
+    downloadDetails.hide();
     issueList.replaceChildren(...details.map((detail) => {
       const item = document.createElement("li");
       item.textContent = detail;
       return item;
     }));
+    if (details.length > 0) downloadDetails.show(
+      `查看 ${details.length.toLocaleString("zh-TW")} 個提醒`,
+      "warning",
+      issueList,
+    );
+  }
+
+  function renderDownloadError(detail: string): void {
+    issueList.replaceChildren(Object.assign(document.createElement("li"), { textContent: detail }));
+    downloadDetails.show("查看詳細資料", "error", issueList);
   }
 
   function renderSelectOptions(
@@ -148,14 +164,22 @@ export function createAdvancedView(): AdvancedView {
       const countSummary = `XLSX：${state.fileCount.toLocaleString("zh-TW")} 個檔案，已勾選 ${state.selectedRowCount.toLocaleString("zh-TW")} 列`;
       summary.textContent = `${countSummary}${hasReference && !state.resultBusy ? `，將輸出 ${state.resultRowCount.toLocaleString("zh-TW")} 列` : ""}。`;
       renderIssues([]);
+      referenceDetails.hide();
+      referenceErrorDetail.textContent = state.referenceError ?? "";
+      if (state.referenceError) referenceDetails.show("查看詳細資料", "error", referenceErrorDetail);
       referenceSpinner.hidden = state.busy !== "reference";
       downloadStatus.toggleAttribute("aria-busy", downloadBusy);
       downloadSpinner.hidden = !downloadBusy;
-      fileName.textContent = state.busy === "reference"
+      fileName.textContent = state.referenceError
+        ? "無法讀取參照 Excel"
+        : state.busy === "reference"
         ? "正在讀取參照 Excel"
         : state.referenceFileName ?? "尚未選擇參照 Excel";
+      referenceDetail.textContent = state.referenceError
+        ? "請再試一次。"
+        : "選擇要用來補充資料的 Excel；檔案上限 100 MB。";
       fileName.title = state.referenceFileName ?? "";
-      picker.dataset.tone = state.error
+      picker.dataset.tone = state.referenceError
         ? "error"
         : hasReference
           ? "success"
@@ -166,16 +190,13 @@ export function createAdvancedView(): AdvancedView {
       chooseButton.disabled = state.busy !== null;
       chooseButton.textContent = hasReference ? "更換 Excel" : "選擇 Excel";
       clearButton.disabled = !hasReference || state.busy !== null;
-      referenceTransition.update(state.error
+      referenceTransition.update(state.referenceError
         ? "error"
         : state.busy === "reference" ? "loading" : hasReference ? "ready" : "empty");
 
-      referenceMessage.hidden = !state.error;
-      referenceMessage.textContent = state.error ?? "";
-      if (state.error) referenceMessage.setAttribute("role", "alert");
-      else referenceMessage.removeAttribute("role");
       controls.hidden = !hasReference;
       if (!hasReference) {
+        downloadStatus.dataset.tone = "neutral";
         downloadButton.disabled = true;
         downloadTitle.textContent = state.busy === "reference" ? "正在準備下載" : "尚未準備下載";
         downloadDetail.textContent = state.busy === "reference"
@@ -217,13 +238,20 @@ export function createAdvancedView(): AdvancedView {
       ];
       renderIssues(issues);
       if (state.busy === "download") {
+        downloadStatus.dataset.tone = "neutral";
         downloadButton.disabled = true;
         downloadTitle.textContent = "正在建立下載";
-        downloadDetail.textContent = "完成後會自動下載。";
+        downloadDetail.textContent = state.outputProgress
+          ? fileProgressDetail(state.outputProgress, {
+            processingVerb: "處理",
+            finalizing: "正在整理下載",
+          })
+          : "完成後會自動下載。";
         downloadTransition.update("creating");
         return;
       }
       if (state.busy === "reference") {
+        downloadStatus.dataset.tone = "neutral";
         downloadButton.disabled = true;
         downloadTitle.textContent = "正在準備下載";
         downloadDetail.textContent = "請稍候。";
@@ -231,12 +259,23 @@ export function createAdvancedView(): AdvancedView {
         return;
       }
       if (state.resultBusy) {
+        downloadStatus.dataset.tone = "neutral";
         downloadButton.disabled = true;
         downloadTitle.textContent = "正在準備下載";
         downloadDetail.textContent = "請稍候。";
         downloadTransition.update("result-loading");
         return;
       }
+      if (state.downloadError) {
+        downloadStatus.dataset.tone = "error";
+        downloadButton.disabled = !state.canDownload;
+        downloadTitle.textContent = "無法建立進階下載";
+        downloadDetail.textContent = "請再試一次。";
+        renderDownloadError(state.downloadError);
+        downloadTransition.update("error");
+        return;
+      }
+      downloadStatus.dataset.tone = "neutral";
       downloadButton.disabled = !state.canDownload;
       downloadTitle.textContent = state.selectedRowCount > 0 ? "可以下載" : "尚未準備下載";
       downloadDetail.textContent = state.selectedRowCount > 0

@@ -282,14 +282,19 @@ test("compact advanced summaries and downloads preserve duplicate joins and unma
     selectedRowCount: 2,
     unmatchedRowCount: 1,
   });
+  const outputProgress = [];
   const actual = await engine.handle({
     type: "create-advanced-output",
     ...request,
     createdAt: createdAt.toISOString(),
-  });
+  }, (progress) => outputProgress.push(progress));
   assert.equal(actual.filename, expected.filename);
   assert.equal(actual.blob.type, expected.blob.type);
   assert.deepEqual(await outputBytes(actual), await outputBytes(expected));
+  assert.deepEqual(outputProgress, [
+    { current: 0, phase: "processing", total: 1, virtualPath: "primary.csv" },
+    { current: 1, phase: "finalizing", total: 1, virtualPath: "primary.csv" },
+  ]);
 });
 
 test("compact worker output preserves the existing serializer bytes", async () => {
