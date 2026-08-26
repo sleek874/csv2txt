@@ -10,6 +10,7 @@ import { createOutputView } from "./app/sections/output/output-view";
 import { bindRulesView } from "./app/sections/rules/rules-view";
 import { createAppStatus } from "./app/shell/app-status";
 import { createReadinessView } from "./app/shell/readiness-view";
+import { bindWorkerRuntimeDialog } from "./app/shell/worker-runtime-dialog";
 import { createWorkspaceModel } from "./app/state/workspace-model";
 import { createOfflineCache } from "./browser/offline-cache";
 import { createUnloadGuard } from "./browser/unload-guard";
@@ -25,6 +26,22 @@ const model = createWorkspaceModel();
 const status = createAppStatus();
 const unloadGuard = createUnloadGuard();
 
+if (import.meta.env.DEV) {
+  const faults = new Set(["error", "fatal", "msgerr"] as const);
+  Object.defineProperty(globalThis, "csv2txtTest", {
+    configurable: true,
+    value: Object.freeze({
+      help: () => 'await csv2txtTest.worker("msgerr" | "error" | "fatal"); csv2txtTest.state()',
+      state: () => batchClient.runtime(),
+      worker(fault: "error" | "fatal" | "msgerr" = "msgerr") {
+        if (!faults.has(fault)) throw new Error(`Unknown worker fault: ${String(fault)}`);
+        return batchClient.simulateWorkerFault(fault);
+      },
+    }),
+  });
+  console.info('Worker recovery test console: csv2txtTest.help()');
+}
+
 bindRulesView();
 
 const inputController = createInputController({
@@ -35,7 +52,7 @@ const inputController = createInputController({
   unloadGuard,
   view: createInputSectionView(),
 });
-const formatController = createFormatController({ model, view: createFormatView() });
+const formatController = createFormatController({ batchClient, model, view: createFormatView() });
 const outputController = createOutputController({
   batchClient,
   model,
@@ -50,6 +67,7 @@ const advancedController = createAdvancedController({
   view: createAdvancedView(),
 });
 
+bindWorkerRuntimeDialog(batchClient);
 inputController.bind();
 formatController.bind();
 outputController.bind();

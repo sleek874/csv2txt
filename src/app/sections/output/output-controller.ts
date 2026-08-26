@@ -1,6 +1,7 @@
 import type { AppStatus } from "../../shell/app-status";
-import type { BatchClient } from "../../batch/batch-client";
+import { isWorkerFailure, type BatchClient } from "../../batch/batch-client";
 import type { WorkspaceModel } from "../../state/workspace-model";
+import type { OutputProgress } from "../../batch/protocol";
 import { canonicalActiveWorkspaceItems } from "../../state/workspace-selectors";
 import { OUTPUT_PRESENTATIONS } from "./output-presentations";
 import { createOutputPlan, type OutputPreparationState } from "./output-plan";
@@ -20,16 +21,28 @@ export function createOutputController(options: OutputControllerOptions) {
     | { kind: "error"; key: string; message: string };
   type Generation =
     | { kind: "idle" }
-    | { kind: "generating" }
-    | { kind: "cancelling" }
+    | { kind: "generating"; progress: OutputProgress | null }
+    | { kind: "cancelling"; reason: "mutation" | "user" }
     | { kind: "error"; message: string };
 
   let assessment: Assessment = { kind: "idle" };
   let generation: Generation = { kind: "idle" };
   let pendingTask = Promise.resolve();
 
-  function isCancelling(): boolean {
-    return generation.kind === "cancelling";
+  function cancellationReason(): "mutation" | "user" | null {
+    const current: Generation = generation;
+    return current.kind === "cancelling" ? current.reason : null;
+  }
+
+  function finishCancellation(): boolean {
+    const reason = cancellationReason();
+    if (!reason) return false;
+    const mutation = reason === "mutation";
+    generation = mutation
+      ? { kind: "error", message: "工作區已在建立下載期間變更，請重新下載。" }
+      : { kind: "idle" };
+    options.status.announce(mutation ? "工作區已變更，下載已取消。" : "已取消建立下載。");
+    return true;
   }
 
   function requestKey(): string {
@@ -64,7 +77,13 @@ export function createOutputController(options: OutputControllerOptions) {
     const currentPreparation = preparation();
     const plan = createOutputPlan(snapshot, currentPreparation.state, currentPreparation.error);
     const busy = generation.kind === "generating" || generation.kind === "cancelling";
-    options.view.render(plan, snapshot.outputFormat, busy, generation.kind === "cancelling");
+    options.view.render(
+      plan,
+      snapshot.outputFormat,
+      busy,
+      generation.kind === "cancelling",
+      generation.kind === "generating" ? generation.progress : null,
+    );
     if (generation.kind === "error") options.view.renderError(generation.message, plan.canDownload);
   }
 
@@ -96,8 +115,9 @@ export function createOutputController(options: OutputControllerOptions) {
       if (assessmentKey() !== key) return;
       assessment = { kind: "idle" };
       options.model.updateFileRecords(refreshed);
-    } catch {
+    } catch (error) {
       if (assessmentKey() !== key) return;
+      if (isWorkerFailure(error)) return;
       assessment = {
         kind: "error",
         key,
@@ -112,19 +132,20 @@ export function createOutputController(options: OutputControllerOptions) {
     const plan = createOutputPlan(snapshot);
     if (!plan.canDownload) return;
     const requestedState = requestKey();
-    generation = { kind: "generating" };
+    generation = { kind: "generating", progress: null };
     render();
     options.status.announce("正在建立下載。");
     try {
       const output = await options.batchClient.createOutput(
         plan.files.map((file) => file.id),
         snapshot.outputFormat,
+        (progress) => {
+          if (generation.kind !== "generating") return;
+          generation = { kind: "generating", progress };
+          render();
+        },
       );
-      if (isCancelling()) {
-        generation = { kind: "idle" };
-        options.status.announce("已取消建立下載。");
-        return;
-      }
+      if (finishCancellation()) return;
       if (requestKey() !== requestedState) {
         generation = {
           kind: "error",
@@ -138,11 +159,8 @@ export function createOutputController(options: OutputControllerOptions) {
         ? `已建立 ${OUTPUT_PRESENTATIONS[snapshot.outputFormat].label} ZIP 下載。`
         : `已建立 ${OUTPUT_PRESENTATIONS[snapshot.outputFormat].label} 下載。`);
     } catch (error) {
-      if (isCancelling()) {
-        generation = { kind: "idle" };
-        options.status.announce("已取消建立下載。");
-        return;
-      }
+      if (finishCancellation()) return;
+      if (isWorkerFailure(error)) return;
       generation = {
         kind: "error",
         message: requestKey() !== requestedState
@@ -160,7 +178,7 @@ export function createOutputController(options: OutputControllerOptions) {
 
   function cancelDownload(): void {
     if (generation.kind !== "generating") return;
-    generation = { kind: "cancelling" };
+    generation = { kind: "cancelling", reason: "user" };
     render();
     options.status.announce("正在取消建立下載。");
     void options.batchClient.cancelOutput().catch(() => undefined);
@@ -168,6 +186,17 @@ export function createOutputController(options: OutputControllerOptions) {
 
   return {
     bind() {
+      options.batchClient.subscribeOutputInvalidation(() => {
+        if (generation.kind !== "generating") return;
+        generation = { kind: "cancelling", reason: "mutation" };
+        render();
+        options.status.announce("工作區已變更，正在停止建立下載。");
+      });
+      options.batchClient.subscribeRecovered(() => {
+        assessment = { kind: "idle" };
+        pendingTask = checkOutput();
+        void pendingTask;
+      });
       options.view.bind({
         onCancel: cancelDownload,
         onDownload: () => { pendingTask = download(); void pendingTask; },

@@ -6,7 +6,14 @@ import { gzipSync } from "node:zlib";
 const distUrl = new URL("../dist/", import.meta.url);
 const serviceWorker = readFileSync(new URL("sw.js", distUrl), "utf8");
 const indexHtml = readFileSync(new URL("index.html", distUrl), "utf8");
-const bootSource = readFileSync(new URL("boot.js", distUrl), "utf8");
+const release = JSON.parse(readFileSync(new URL("release.json", distUrl), "utf8"));
+const bootPathMatch = indexHtml.match(/<script[^>]*src="(\.\/assets\/boot-([a-f0-9]{16})\.js)"[^>]*><\/script>/u);
+assert.ok(bootPathMatch?.[1], "Generated HTML must load a hashed boot script synchronously.");
+const bootPath = bootPathMatch[1];
+const bootSource = readFileSync(
+  new URL(bootPath.replace(/^\.\//u, ""), distUrl),
+  "utf8",
+);
 const llmsTxt = readFileSync(new URL("llms.txt", distUrl), "utf8");
 const robotsTxt = readFileSync(new URL("robots.txt", distUrl), "utf8");
 const sitemapXml = readFileSync(new URL("sitemap.xml", distUrl), "utf8");
@@ -44,6 +51,34 @@ const inputSectionViewSource = readFileSync(
 );
 const inputControllerSource = readFileSync(
   new URL("../src/app/sections/input/input-controller.ts", import.meta.url),
+  "utf8",
+);
+const advancedControllerSource = readFileSync(
+  new URL("../src/app/sections/advanced/advanced-controller.ts", import.meta.url),
+  "utf8",
+);
+const advancedViewSource = readFileSync(
+  new URL("../src/app/sections/advanced/advanced-view.ts", import.meta.url),
+  "utf8",
+);
+const batchClientSource = readFileSync(
+  new URL("../src/app/batch/batch-client.ts", import.meta.url),
+  "utf8",
+);
+const workerChannelSource = readFileSync(
+  new URL("../src/app/batch/worker-channel.ts", import.meta.url),
+  "utf8",
+);
+const deferredFeedbackSource = readFileSync(
+  new URL("../src/app/shell/deferred-feedback.ts", import.meta.url),
+  "utf8",
+);
+const actionDetailsSource = readFileSync(
+  new URL("../src/app/shell/action-details.ts", import.meta.url),
+  "utf8",
+);
+const workerRuntimeDialogSource = readFileSync(
+  new URL("../src/app/shell/worker-runtime-dialog.ts", import.meta.url),
   "utf8",
 );
 const encodingSource = readFileSync(
@@ -110,12 +145,21 @@ const fileOperationStatusViewSource = readFileSync(
   new URL("../src/app/sections/input/file-operation-status-view.ts", import.meta.url),
   "utf8",
 );
+const fileProgressSource = readFileSync(
+  new URL("../src/app/shell/file-progress.ts", import.meta.url),
+  "utf8",
+);
 const fileSizePolicySource = readFileSync(
   new URL("../src/core/file-size-policy.ts", import.meta.url),
   "utf8",
 );
 const formatControllerSource = readFileSync(
   new URL("../src/app/sections/format/format-controller.ts", import.meta.url),
+  "utf8",
+);
+const mainSource = readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
+const offlineCacheSource = readFileSync(
+  new URL("../src/browser/offline-cache.ts", import.meta.url),
   "utf8",
 );
 const workspaceTypesSource = readFileSync(
@@ -159,12 +203,6 @@ function relativePaths(files) {
   return Array.from(files, (fileName) => `./${fileName}`).sort();
 }
 
-function readPathGroup(name) {
-  const match = serviceWorker.match(new RegExp(`const ${name} = (\\[[^;]*\\]);`, "u"));
-  assert.ok(match?.[1], `Missing ${name} in the generated service worker.`);
-  return JSON.parse(match[1]);
-}
-
 function verifyHtmlReferences(html) {
   const ids = Array.from(html.matchAll(/\sid="([^"]+)"/gu), (match) => match[1]);
   assert.equal(
@@ -203,11 +241,6 @@ function verifyHtmlReferences(html) {
   });
 }
 
-const precachePaths = readPathGroup("PRECACHE_PATHS");
-const excelPaths = readPathGroup("EXCEL_PATHS");
-const archivePaths = readPathGroup("ARCHIVE_PATHS");
-const workerPaths = readPathGroup("WORKER_PATHS");
-const fontPaths = readPathGroup("FONT_PATHS");
 const expectedBaseFiles = collectManifestGroup(["index.html", "src/main.ts"]);
 const emittedAssets = readdirSync(new URL("assets/", distUrl)).map((file) => `assets/${file}`);
 const expectedExcelFiles = new Set(emittedAssets.filter((file) => /\/(?:spreadsheet|worker-excel)-.*\.js$/u.test(file)));
@@ -229,52 +262,56 @@ expectedBaseFiles.forEach((file) => {
 });
 expectedExcelFiles.forEach((file) => expectedArchiveFiles.delete(file));
 
+const precachePaths = ["./", bootPath, ...relativePaths(expectedBaseFiles)];
+const excelPaths = relativePaths(expectedExcelFiles);
+const archivePaths = relativePaths(expectedArchiveFiles);
+const workerPaths = relativePaths(expectedWorkerFiles);
+const fontPaths = relativePaths(expectedFontFiles);
+const expectedReleaseAssets = [
+  bootPath,
+  ...relativePaths(new Set([
+    ...expectedBaseFiles,
+    ...expectedExcelFiles,
+    ...expectedArchiveFiles,
+    ...expectedWorkerFiles,
+    ...expectedFontFiles,
+  ])),
+].filter((path, index, paths) => paths.indexOf(path) === index).sort();
+
 assert.deepEqual(
-  precachePaths,
-  ["./", "./boot.js", ...relativePaths(expectedBaseFiles)],
-  "Base resources must match the Vite manifest graph.",
+  Object.keys(release).sort(),
+  ["assets", "id", "minSw", "schema", "shell"],
+  "release.json must contain only the release protocol, identity, shell, and assets.",
 );
-assert.deepEqual(
-  excelPaths,
-  relativePaths(expectedExcelFiles),
-  "Excel resources must match the Vite manifest graph.",
+assert.deepEqual(release.assets, expectedReleaseAssets, "Release assets must match the complete Vite graph.");
+assert.equal(release.schema, 1, "Release manifest schema must remain explicit.");
+assert.equal(release.minSw, 1, "Release manifest must declare its minimum worker protocol.");
+assert.deepEqual(Object.keys(release.shell).sort(), ["sha256", "url"]);
+assert.equal(release.shell.url, "./");
+assert.equal(
+  release.shell.sha256,
+  createHash("sha256").update(indexHtml).digest("hex"),
+  "The release shell digest must cover the exact emitted HTML.",
 );
-assert.deepEqual(
-  archivePaths,
-  relativePaths(expectedArchiveFiles),
-  "Archive resources must match the Vite manifest graph.",
+assert.equal(
+  release.id,
+  createHash("sha256")
+    .update(`${indexHtml}\n${JSON.stringify(release.assets)}`)
+    .digest("hex"),
+  "Release identity must derive from the final shell and immutable asset graph.",
 );
-assert.deepEqual(
-  workerPaths,
-  relativePaths(expectedWorkerFiles),
-  "Worker resources must match the emitted worker graph.",
+assert.equal(
+  createHash("sha256").update(bootSource).digest("hex").slice(0, 16),
+  bootPathMatch[2],
+  "The boot filename must derive from its bytes.",
 );
-assert.deepEqual(
-  fontPaths,
-  relativePaths(expectedFontFiles),
-  "Font resources must match the Vite manifest graph.",
+assert.equal(
+  existsSync(new URL("boot.js", distUrl)),
+  false,
+  "Production output must not retain an unhashed boot alias.",
 );
 
-const expectedBuildId = createHash("sha256")
-  .update(manifestSource)
-  .update("\n")
-  .update(JSON.stringify({ archivePaths, excelPaths, workerPaths }))
-  .update("\n")
-  .update(indexHtml)
-  .update("\n")
-  .update(bootSource)
-  .digest("hex")
-  .slice(0, 16);
-assert.match(
-  serviceWorker,
-  new RegExp(
-    `const APP_CACHE_NAME = "csv2txt-app-${expectedBuildId}";`,
-    "u",
-  ),
-  "Application cache version must derive from the Vite manifest and final HTML.",
-);
-
-for (const path of [...precachePaths, ...excelPaths, ...archivePaths, ...workerPaths, ...fontPaths]) {
+for (const path of release.assets) {
   if (path === "./") {
     continue;
   }
@@ -288,25 +325,47 @@ assert.ok(excelPaths.length >= 2, "Excel module and dependency chunks must be gr
 assert.ok(archivePaths.length >= 1, "Archive dependency chunk must be grouped.");
 assert.ok(fontPaths.some((path) => path.endsWith(".woff2")), "Preview font must be grouped.");
 assert.ok(
-  excelPaths.every((path) => !precachePaths.includes(path)),
-  "Excel resources must not be part of the base precache.",
+  expectedReleaseAssets.every((path) => path === bootPath || path.startsWith("./assets/")),
+  "Every release resource must use an immutable asset URL.",
 );
-assert.ok(
-  archivePaths.every((path) => !precachePaths.includes(path)),
-  "Archive resources must not be part of the base precache.",
+assert.match(serviceWorker, /const WORKER_PROTOCOL = 1;/u);
+assert.match(serviceWorker, /const RELEASE_URL = "\.\/release\.json";/u);
+assert.match(serviceWorker, /installLatestRelease\(\)\.then\(\(\) => self\.skipWaiting\(\)\)/u);
+assert.match(serviceWorker, /await writeMetadata\(ACTIVE_RELEASE_KEY, release\.id\)/u);
+assert.match(serviceWorker, /self\.registration\.update\(\)/u);
+assert.match(serviceWorker, /const workerCandidate = self\.registration\.installing \?\? self\.registration\.waiting;[\s\S]*?await waitForWorkerInstall\(workerCandidate\)/u);
+assert.match(serviceWorker, /const ASSET_CACHE_NAME = "csv2txt-assets-v1";/u);
+assert.doesNotMatch(
+  serviceWorker,
+  /LEGACY_|csv2txt-app-|csv2txt-fonts|caches\.keys\(\)/u,
+  "The current release worker must not retain pre-release-model cache routing.",
 );
-assert.ok(
-  fontPaths.every((path) => !precachePaths.includes(path)),
-  "Font resources must not be part of the base precache.",
+assert.match(
+  serviceWorker,
+  /async function findSharedAsset\(request\)[\s\S]*?caches\.open\(ASSET_CACHE_NAME\)[\s\S]*?assetCache\.match\(request, \{ ignoreVary: true \}\)/u,
+  "Hashed resources must resolve only through the current shared asset pool.",
 );
-assert.match(serviceWorker, /prepareExcel\(\)[\s\S]*?prepareArchive\(\)[\s\S]*?prepareFonts/u);
+assert.match(serviceWorker, /requestUrl\.href === scopedUrl\(RELEASE_URL\)\.href[\s\S]*?cache: "no-store"/u);
+assert.match(serviceWorker, /self\.addEventListener\("activate", \(event\) => \{\s*event\.waitUntil\(self\.clients\.claim\(\)\);\s*\}\);/u);
+assert.doesNotMatch(serviceWorker, new RegExp(release.id, "u"));
+assert.doesNotMatch(serviceWorker, /assets\/(?:boot|main|index)-[A-Za-z0-9_-]+/u);
 assert.match(serviceWorker, /event\.data\?\.type !== "PREPARE_RESOURCES"/u);
 assert.doesNotMatch(serviceWorker, /PREPARE_(?:FONT|OPTIONAL_RESOURCES)|fonts-v1/u);
+assert.match(
+  offlineCacheSource,
+  /if \(!existingRegistration\) \{[\s\S]*?serviceWorker\.register/u,
+  "The main app must register the worker only for a fresh browser.",
+);
+assert.doesNotMatch(
+  offlineCacheSource,
+  /registration\.update\(/u,
+  "The main app must leave subsequent worker update checks to the active worker.",
+);
 
 verifyHtmlReferences(indexHtml);
 assert.match(indexHtml, /<h1>離線資料轉換<\/h1>/u);
 assert.match(indexHtml, /id="noscript-heading"/u);
-assert.match(indexHtml, /<script[^>]*src="\.\/boot\.js"[^>]*><\/script>/u);
+assert.doesNotMatch(indexHtml, /<script[^>]*src="\.\/boot\.js"[^>]*><\/script>/u);
 assert.match(indexHtml, /id="source-file"[^>]*\shidden(?:\s|>)/u);
 assert.match(indexHtml, /id="source-file"[^>]*accept="\.csv,\.xls,\.xlsx,\.txt,\.zip"/u);
 assert.match(indexHtml, /id="source-file"[^>]*\smultiple(?:\s|>)/u);
@@ -488,7 +547,7 @@ assert.match(
 assert.doesNotMatch(archivePolicySource, /maxOutputSourceBytes/u);
 assert.match(
   standardOutputSource,
-  /compression:\s*format === "xlsx" \? "store" : "deflate"[\s\S]*?yieldAfterEntry:\s*options\.yieldAfterFile/u,
+  /compression:\s*format === "xlsx" \? "store" : "deflate"[\s\S]*?yieldAfterEntry:\s*async \(\) =>[\s\S]*?await options\.yieldAfterFile\?\.\(\)/u,
   "Section 2 must select compression once and yield after each generated file.",
 );
 assert.match(archiveSource, /createStream = options\.compression === "store"[\s\S]*?new ZipPassThrough\(path\)[\s\S]*?new ZipDeflate\(path, \{ level: 6 \}\)/u);
@@ -499,16 +558,27 @@ assert.match(
   "An error-dominant row must retain every warning and correction in its detail box.",
 );
 assert.doesNotMatch(dataPreviewViewSource, /PRIVATE_USE_RECOVERED[\s\S]*?filter/u);
-assert.match(
-  indexHtml,
-  /<details id="output-issue-disclosure"[^>]*class="action-issue-disclosure"[^>]*hidden>[\s\S]*?<summary id="output-issue-summary"[^>]*class="issue-disclosure-toggle action-issue-toggle">[\s\S]*?<ul id="output-issue-list"[^>]*class="action-issue-list"/u,
-  "Section 2 must keep detailed download problems in the shared collapsed disclosure.",
+assert.equal(
+  indexHtml.match(/class="action-details"/gu)?.length,
+  5,
+  "Sections 1 through 3 and the worker dialog must use the same detail structure.",
+);
+assert.equal(
+  indexHtml.match(/class="action-details" data-display="floating"/gu)?.length,
+  4,
+  "Only the four section action details must enable shared floating mode.",
 );
 assert.match(
   indexHtml,
-  /<details id="advanced-issue-disclosure"[^>]*class="action-issue-disclosure"[^>]*hidden>[\s\S]*?<summary id="advanced-issue-summary"[^>]*class="issue-disclosure-toggle action-issue-toggle">[\s\S]*?<ul id="advanced-issue-list"[^>]*class="action-issue-list"/u,
-  "Section 3 must keep detailed reminders in the shared collapsed disclosure.",
+  /<details id="output-issue-disclosure" class="action-details" data-display="floating" hidden>[\s\S]*?class="action-details-toggle issue-disclosure-toggle"[\s\S]*?class="action-details-panel"[^>]*aria-label="下載問題與提醒"[\s\S]*?<ul id="output-issue-list" class="action-details-list"/u,
+  "Section 2 must keep download problems and errors in the shared floating disclosure.",
 );
+assert.match(
+  indexHtml,
+  /id="reference-file-picker"[\s\S]*?id="reference-error-disclosure" class="action-details" data-display="floating" hidden>[\s\S]*?class="action-details-panel"[^>]*aria-label="參照 Excel 錯誤詳細資料"[\s\S]*?id="reference-error-detail"[\s\S]*?id="advanced-download-status"[\s\S]*?<details id="advanced-issue-disclosure" class="action-details" data-display="floating" hidden>[\s\S]*?class="action-details-panel"[^>]*aria-label="進階輸出問題與提醒"[\s\S]*?<ul id="advanced-issue-list" class="action-details-list"/u,
+  "Section 3 must keep reference and download detail inside their respective action cards.",
+);
+assert.doesNotMatch(indexHtml, /id="reference-message"/u, "Section 3 must not retain a detached shared error block.");
 assert.doesNotMatch(indexHtml, /settings-file|settings-status|source-encoding|workflow-tab/u);
 assert.doesNotMatch(indexHtml, /正向轉換|反向轉換|全域設定|欄位設定/u);
 assert.doesNotMatch(indexHtml, /內部資料|adapter|pipeline|正規化/u);
@@ -592,12 +662,12 @@ assert.match(
 );
 assert.match(
   indexHtml,
-  /id="file-operation-status"[\s\S]*?id="mark-all-viewed-button"[^>]*class="secondary-button"[\s\S]*?id="file-operation-details"[^>]*hidden[\s\S]*?id="file-operation-details-summary"[^>]*class="button-control secondary-button issue-disclosure-toggle"/u,
-  "Contextual acknowledgement and collapsed failure details must live in the shared banner.",
+  /id="file-operation-status"[\s\S]*?id="file-operation-detail"[\s\S]*?id="file-operation-details" class="action-details" data-display="floating" hidden>[\s\S]*?class="action-details-toggle issue-disclosure-toggle"[\s\S]*?class="action-details-panel upload-failure-groups"[\s\S]*?<\/div>[\s\S]*?<div class="file-operation-actions action-actions">[\s\S]*?id="mark-all-viewed-button"/u,
+  "Section 1 details must use the same text disclosure inside the action copy.",
 );
 assert.match(
   indexHtml,
-  /id="mark-all-viewed-button"[^>]*data-action-slot="start"[\s\S]*?id="file-operation-details"[^>]*data-action-slot="end"[\s\S]*?id="cancel-file-operation"[^>]*data-action-slot="end"[\s\S]*?id="undo-file-operation"[^>]*data-action-slot="end"/u,
+  /id="mark-all-viewed-button"[^>]*data-action-slot="start"[\s\S]*?id="cancel-file-operation"[^>]*data-action-slot="end"[\s\S]*?id="undo-file-operation"[^>]*data-action-slot="end"/u,
   "The operation banner must use shared semantic action slots.",
 );
 assert.doesNotMatch(indexHtml, /id="source-file-meta"/u, "The action area must not repeat file counts or total size.");
@@ -756,6 +826,51 @@ assert.match(
   "Section 2 download must occupy the left shared action slot while the always-present cancel control remains on the right.",
 );
 assert.doesNotMatch(indexHtml, /id="(?:processing-info|source-file-message|file-processing-indicator)"/u);
+assert.match(
+  indexHtml,
+  /<dialog id="worker-runtime-dialog"[\s\S]*?id="worker-runtime-title"[^>]*>正在處理背景資料<[\s\S]*?id="worker-runtime-details"[\s\S]*?>查看詳細資料<[\s\S]*?id="worker-runtime-error"[\s\S]*?id="worker-runtime-reload"[^>]*>重新載入<[\s\S]*?<\/dialog>/u,
+  "Worker recovery must use one concise site-wide modal with collapsed detail and reload.",
+);
+assert.match(
+  workerRuntimeDialogSource,
+  /runtime\.state === "failed" \? "無法處理背景資料" : "正在處理背景資料"[\s\S]*?dialog\.dataset\.tone = runtime\.state === "failed" \? "error" : "neutral"[\s\S]*?error\.textContent = runtime\.error[\s\S]*?window\.location\.reload\(\)/u,
+  "The shared dialog must own friendly recovery and fatal copy while preserving exact captured detail.",
+);
+assert.match(
+  batchClientSource,
+  /type BatchRuntime =[\s\S]*?state: "ready"; error: null[\s\S]*?state: "recovering"; error: string; notice: "dialog" \| "silent"[\s\S]*?state: "failed"; error: string/u,
+  "Worker runtime state and captured error must travel through one shared contract.",
+);
+assert.match(
+  batchClientSource,
+  /class ActionInterruptedError extends Error[\s\S]*?constructor\(message = "這項操作在自動重試後再次中斷。"\)[\s\S]*?throw new ActionInterruptedError\(\)/u,
+  "Retry exhaustion must use one concise action-level error instead of a file-content error.",
+);
+assert.match(
+  batchClientSource,
+  /createWorkerChannel[\s\S]*?function replay\([\s\S]*?function beginRecovery\([\s\S]*?function journaled</u,
+  "BatchClient must own recovery state, journal replay, and action policy.",
+);
+assert.match(
+  workerChannelSource,
+  /new Worker\([\s\S]*?pending = new Map[\s\S]*?worker\.postMessage[\s\S]*?worker\.terminate/u,
+  "The private worker channel must own only mechanical messaging and pending requests.",
+);
+assert.match(
+  workerChannelSource,
+  /response\.type === "output-progress"[\s\S]*?pending\.get\(requestId\)\?\.onOutputProgress/u,
+  "Output progress must stay scoped to its pending worker request.",
+);
+assert.doesNotMatch(
+  workerChannelSource,
+  /BatchRuntime|recovering|replay|journal|WorkspaceFileRecord/u,
+  "The worker channel must not own application recovery or workspace state.",
+);
+assert.doesNotMatch(
+  `${inputControllerSource}\n${fileOperationStatusViewSource}\n${outputControllerSource}\n${outputViewSource}\n${advancedControllerSource}\n${advancedViewSource}`,
+  /正在復原背景處理|背景處理無法復原|正在處理背景資料|無法處理背景資料|worker-error|runtimeState/u,
+  "Individual sections must not retain worker-specific state or UI copy.",
+);
 assert.doesNotMatch(
   `${workspaceTypesSource}\n${fileTreeViewSource}\n${outputPlanSource}`,
   /WorkspaceFileState|item\.state|state === "processing"|normalizeFile\(/u,
@@ -783,8 +898,23 @@ assert.match(
 );
 assert.doesNotMatch(
   formatControllerSource,
-  /refreshOutput|setOutputPreparation|BatchClient/u,
-  "Section 0 must only publish synchronous format selections.",
+  /refreshOutput|setOutputPreparation/u,
+  "Section 0 must not own output preparation.",
+);
+assert.match(
+  formatControllerSource,
+  /invalidateOutput\(\)[\s\S]*?setInputFormat[\s\S]*?invalidateOutput\(\)[\s\S]*?setOutputFormat/u,
+  "Section 0 must invalidate active output before synchronously publishing format selections.",
+);
+assert.doesNotMatch(
+  `${inputControllerSource}\n${formatControllerSource}\n${outputControllerSource}\n${advancedControllerSource}`,
+  /workerLocked|subscribeRuntime/u,
+  "Sections must not keep a second copy of global worker state.",
+);
+assert.match(
+  advancedControllerSource,
+  /let referenceError: string \| null = null;[\s\S]*?let downloadError: string \| null = null;[\s\S]*?referenceError,[\s\S]*?downloadError/u,
+  "Section 3 reference and download actions must own separate error state.",
 );
 assert.match(
   indexHtml,
@@ -842,6 +972,16 @@ assert.match(
   fileOperationStatusViewSource,
   /status\.kind === "processing"[\s\S]*?`processing:\$\{status\.progress\.sourceId\}:\$\{status\.progress\.virtualPath\}`[\s\S]*?: status\.kind/u,
   "Processing copy must settle for a new filename without replaying for counter-only progress.",
+);
+assert.match(
+  fileProgressSource,
+  /已完成 \$\{progress\.current\} \/ \$\{progress\.total\} 個檔案/u,
+  "File progress must use one concise current / total sentence.",
+);
+assert.match(
+  `${fileOperationStatusViewSource}\n${outputViewSource}\n${advancedViewSource}`,
+  /fileProgressDetail[\s\S]*fileProgressDetail[\s\S]*fileProgressDetail/u,
+  "Upload, standard download, and advanced download must share the same progress-copy component.",
 );
 assert.doesNotMatch(
   `${componentStyles}\n${reusableComponentStyles}\n${bootstrapStyles}\n${resultStyles}`,
@@ -1042,14 +1182,29 @@ assert.match(
   "Narrow action rails must collapse every semantic slot into one full-width column.",
 );
 assert.match(
-  fileOperationStatusViewSource,
-  /document\.addEventListener\("pointerdown"[\s\S]*?!details\.contains\(event\.target\)[\s\S]*?details\.open = false/u,
-  "Clicking outside the floating failure details must close them.",
+  actionDetailsSource,
+  /export function createActionDetails[\s\S]*?hide\(\)[\s\S]*?details\.hidden = true[\s\S]*?show\(label, tone, \.\.\.content\)[\s\S]*?panel\.dataset\.tone = tone[\s\S]*?panel\.replaceChildren\(\.\.\.content\)/u,
+  "The shared detail API must own visibility, labels, tones, and content.",
 );
 assert.match(
-  fileOperationStatusViewSource,
-  /document\.addEventListener\("keydown"[\s\S]*?event\.key === "Escape"[\s\S]*?details\.open = false/u,
-  "Escape must close the floating failure details.",
+  actionDetailsSource,
+  /document\.addEventListener\("pointerdown"[\s\S]*?!item\.contains\(event\.target[\s\S]*?close\(item\)/u,
+  "Clicking outside any floating action details must close them.",
+);
+assert.match(
+  actionDetailsSource,
+  /document\.addEventListener\("keydown"[\s\S]*?event\.key === "Escape"[\s\S]*?close\(item, true\)/u,
+  "Escape must close shared floating details and restore summary focus.",
+);
+assert.match(
+  `${fileOperationStatusViewSource}\n${outputViewSource}\n${advancedViewSource}\n${workerRuntimeDialogSource}`,
+  /createActionDetails/u,
+  "Sections 1 through 3 and the worker dialog must reuse the shared detail API.",
+);
+assert.doesNotMatch(
+  `${fileOperationStatusViewSource}\n${outputViewSource}\n${advancedViewSource}\n${workerRuntimeDialogSource}`,
+  /(?:issueDisclosure|referenceErrorDisclosure|details)\.(?:hidden|open)/u,
+  "Section views must not reimplement shared detail visibility behavior.",
 );
 assert.match(
   fileOperationStatusViewSource,
@@ -1058,15 +1213,30 @@ assert.match(
 );
 assert.match(
   fileOperationStatusViewSource,
-  /undo\.hidden = !removal[\s\S]*?undo\.disabled = status\.kind === "removing"[\s\S]*?basename\(status\.subject\)/u,
-  "Removal feedback must retain and disable Undo while showing only the target filename.",
+  /undo\.hidden = !removal[\s\S]*?undo\.disabled = false[\s\S]*?basename\(status\.subject\)/u,
+  "Optimistic removal feedback must expose Undo immediately and show only the target filename.",
+);
+assert.doesNotMatch(
+  `${inputControllerSource}\n${fileOperationStatusViewSource}`,
+  /RemovingOperation|kind: "removing"|kind: "restoring"|beginRemoval/u,
+  "Section 1 must not retain obsolete removal or restoration waiting states.",
 );
 assert.match(
   inputControllerSource,
-  /function deferFeedback\(reveal:[\s\S]*?setTimeout[\s\S]*?OPERATION_FEEDBACK_DELAY_MS[\s\S]*?function beginRemoval/u,
-  "Adding and removal must share one delayed-feedback gate.",
+  /createDeferredFeedback\(\)[\s\S]*?feedback\.show/u,
+  "Adding must use the shared delayed-feedback gate.",
 );
-assert.doesNotMatch(inputControllerSource, /revealTimer|PROCESSING_FEEDBACK_DELAY_MS/u);
+assert.match(
+  deferredFeedbackSource,
+  /FEEDBACK_DELAY_MS = 300[\s\S]*?setTimeout/u,
+  "Delayed operation and recovery feedback must share the 300 ms threshold.",
+);
+assert.match(
+  workerRuntimeDialogSource,
+  /createDeferredFeedback\(\)[\s\S]*?showModal\(\)[\s\S]*?feedback\.show/u,
+  "The shared worker dialog must reuse delayed feedback before opening modally.",
+);
+assert.doesNotMatch(inputControllerSource, /revealTimer|PROCESSING_FEEDBACK_DELAY_MS|setTimeout/u);
 assert.match(
   baseCss,
   /\.file-operation-status\{[^}]*min-height:4\.625rem[^}]*overflow:visible/u,
@@ -1083,9 +1253,24 @@ assert.doesNotMatch(
   "The operation card must not use a fixed height that can overlap enlarged content.",
 );
 assert.match(
-  baseCss,
-  /\.file-operation-details \.upload-failure-groups\{(?=[^}]*position:absolute)(?=[^}]*max-height:14rem)(?=[^}]*overflow:auto)[^}]*\}/u,
-  "Expanded upload failures must float and scroll without moving banner actions.",
+  componentStyles,
+  /\.action-details\[data-display="floating"\] > \.action-details-panel\s*\{(?=[^}]*position:\s*absolute)(?=[^}]*max-height:\s*14rem)(?=[^}]*overflow:\s*auto)[^}]*\}/u,
+  "Every action detail panel must float and scroll without changing page height.",
+);
+assert.match(
+  componentStyles,
+  /\.action-details-panel\s*\{(?=[^}]*background:\s*var\(--color-surface\))(?=[^}]*border-left:\s*0\.25rem solid var\(--color-neutral\))[^}]*\}[\s\S]*?\.action-details-panel\[data-tone="warning"\][\s\S]*?\.action-details-panel\[data-tone="error"\]/u,
+  "Every action detail panel must share one opaque base and configured tone accents.",
+);
+assert.doesNotMatch(
+  `${componentStyles}\n${resultStyles}`,
+  /\.action-details-list\s*\{[^}]*overflow/u,
+  "Action detail lists must not add a nested scroll container.",
+);
+assert.doesNotMatch(
+  `${indexHtml}\n${componentStyles}\n${resultStyles}`,
+  /floating-details|action-issue-(?:disclosure|toggle|list)|file-operation-details > summary/u,
+  "Legacy per-section detail styles must not return.",
 );
 assert.match(
   componentStyles,
@@ -1353,6 +1538,19 @@ assert.match(
 );
 
 const baseJavaScript = precachePaths.filter((path) => path.endsWith(".js"));
+assert.match(
+  mainSource,
+  /if \(import\.meta\.env\.DEV\)[\s\S]*?csv2txtTest[\s\S]*?simulateWorkerFault/u,
+  "The worker fault console must be explicitly development-only.",
+);
+assert.doesNotMatch(
+  baseJavaScript.map((path) => readFileSync(
+    new URL(path.replace(/^\.\//u, ""), distUrl),
+    "utf8",
+  )).join("\n"),
+  /csv2txtTest/u,
+  "The worker fault console must not enter production JavaScript.",
+);
 const baseGzipBytes = baseJavaScript.reduce((total, path) => {
   const assetUrl = new URL(path.replace(/^\.\//u, ""), distUrl);
   return total + gzipSync(readFileSync(assetUrl)).byteLength;
@@ -1441,5 +1639,5 @@ for (const path of precachePaths.filter((item) => item.endsWith(".js"))) {
 }
 
 console.log(
-  `Verified static shell, accessibility references, agent discovery, and optional resource groups; base JavaScript is ${(baseGzipBytes / 1024).toFixed(1)} KiB gzip.`,
+  `Verified static shell, accessibility references, release graph, and multi-release worker; base JavaScript is ${(baseGzipBytes / 1024).toFixed(1)} KiB gzip.`,
 );

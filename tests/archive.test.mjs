@@ -274,6 +274,19 @@ test("creates and yields output entries sequentially", async () => {
   assert.deepEqual(inspectZip(await blobBytes(blob)).map((entry) => entry.name), ["one.csv", "two.csv"]);
 });
 
+test("stops a ZIP between entries after the workspace changes", async () => {
+  const entries = [];
+  let cancelled = false;
+  await assert.rejects(serializeZip([
+    { path: "one.csv", createBytes: () => { entries.push("one"); return strToU8("one"); } },
+    { path: "two.csv", createBytes: () => { entries.push("two"); return strToU8("two"); } },
+  ], {
+    isCancelled: () => cancelled,
+    yieldAfterEntry: async () => { cancelled = true; },
+  }), /已取消建立下載/u);
+  assert.deepEqual(entries, ["one"]);
+});
+
 test("records an encrypted member without extracting it", async () => {
   const bytes = zipSync({ "data.csv": strToU8("A,01") }).slice();
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

@@ -71,6 +71,7 @@ export interface AdvancedResultSummary {
 }
 
 export type BatchRequest =
+  | { type: "ping" }
   | {
       type: "process-source";
       workspaceEpoch: number;
@@ -117,12 +118,21 @@ export interface BatchRequestMessage {
 export type BatchWorkerMessage =
   | { type: "response"; requestId: number; value: BatchResponseValue }
   | { type: "error"; requestId: number; message: string }
+  | { type: "fatal"; message: string }
+  | ({ type: "output-progress"; requestId: number } & OutputProgress)
   | { type: "progress"; sourceId: string; current: number; total: number; virtualPath: string; phase: "extracting" | "processing" | "finalizing" };
 
 export interface ProcessingProgress {
   current: number;
   phase: "extracting" | "processing" | "finalizing";
   sourceId: string;
+  total: number;
+  virtualPath: string;
+}
+
+export interface OutputProgress {
+  current: number;
+  phase: "processing" | "finalizing";
   total: number;
   virtualPath: string;
 }

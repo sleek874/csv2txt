@@ -76,12 +76,13 @@ function readyItem(file, outputFormat = "csv") {
   };
 }
 
-async function createOutput(files, format, createdAt = new Date()) {
+async function createOutput(files, format, createdAt = new Date(), options = {}) {
   return createCompactOutput(
     files.map(compactInternalFile),
     format,
     createCodecManager(),
     createdAt,
+    options,
   );
 }
 
@@ -232,6 +233,33 @@ test("downloads one file directly using its basename", async () => {
   ], "csv");
   assert.equal(output.filename, "one.csv");
   assert.equal(output.blob.type, "text/csv;charset=utf-8");
+});
+
+test("reports direct and ZIP output progress in file order", async () => {
+  const directProgress = [];
+  await createOutput(
+    [internalFile("one", "folder/one.csv")],
+    "csv",
+    new Date(),
+    { onProgress: (progress) => directProgress.push(progress) },
+  );
+  assert.deepEqual(directProgress, [
+    { current: 0, phase: "processing", total: 1, virtualPath: "folder/one.csv" },
+    { current: 1, phase: "finalizing", total: 1, virtualPath: "folder/one.csv" },
+  ]);
+
+  const zipProgress = [];
+  await createOutput(
+    [internalFile("one", "one.csv"), internalFile("two", "folder/two.csv")],
+    "csv",
+    new Date(),
+    { onProgress: (progress) => zipProgress.push(progress) },
+  );
+  assert.deepEqual(zipProgress, [
+    { current: 0, phase: "processing", total: 2, virtualPath: "one.csv" },
+    { current: 1, phase: "processing", total: 2, virtualPath: "folder/two.csv" },
+    { current: 2, phase: "finalizing", total: 2, virtualPath: "folder/two.csv" },
+  ]);
 });
 
 test("packages multiple outputs with safe paths and a Taipei timestamp", async () => {

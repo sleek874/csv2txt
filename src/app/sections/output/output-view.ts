@@ -3,6 +3,9 @@ import { requireDescendant, requireElement } from "../../../browser/dom";
 import { FILE_FORMAT_LABELS, fileFormatForOutput, type OutputFormat } from "../../../core/file-formats";
 import { describeOutputIssue } from "../../../core/output-validation";
 import type { CreatedOutput } from "../../batch/output-artifact";
+import type { OutputProgress } from "../../batch/protocol";
+import { createActionDetails } from "../../shell/action-details";
+import { fileProgressDetail } from "../../shell/file-progress";
 import { OUTPUT_PRESENTATIONS } from "./output-presentations";
 import type { OutputPlan } from "./output-plan";
 import { createStateTransition } from "../../shell/state-transition";
@@ -12,7 +15,7 @@ export interface OutputView {
     onCancel: () => void;
     onDownload: () => void;
   }): void;
-  render(plan: OutputPlan, format: OutputFormat, busy: boolean, cancelling: boolean): void;
+  render(plan: OutputPlan, format: OutputFormat, busy: boolean, cancelling: boolean, progress: OutputProgress | null): void;
   renderError(detail: string, canRetry: boolean): void;
   save(output: CreatedOutput): void;
 }
@@ -26,8 +29,7 @@ export function createOutputView(): OutputView {
   const downloadSpinner = requireDescendant<HTMLElement>(root, "#download-status-spinner");
   const downloadSummary = requireDescendant<HTMLElement>(root, "#download-status-summary");
   const issueDisclosure = requireDescendant<HTMLDetailsElement>(root, "#output-issue-disclosure");
-  const issueSummary = requireDescendant<HTMLElement>(root, "#output-issue-summary");
-  const issueBlock = requireDescendant<HTMLElement>(issueDisclosure, ".issue-detail-block");
+  const actionDetails = createActionDetails(issueDisclosure);
   const problemLink = requireDescendant<HTMLAnchorElement>(root, "#output-problem-link");
   const outputIssueList = requireDescendant<HTMLUListElement>(root, "#output-issue-list");
   const downloadCopy = requireDescendant<HTMLElement>(downloadStatus, ".action-copy");
@@ -35,8 +37,7 @@ export function createOutputView(): OutputView {
 
   function clearOutputIssues(): void {
     outputIssueList.replaceChildren();
-    issueDisclosure.open = false;
-    issueDisclosure.hidden = true;
+    actionDetails.hide();
     problemLink.hidden = true;
   }
 
@@ -53,9 +54,27 @@ export function createOutputView(): OutputView {
       item.textContent = detail;
       return item;
     }));
-    issueSummary.textContent = `查看 ${details.length.toLocaleString("zh-TW")} 個${plan.hasProblems ? "問題" : "提醒"}`;
-    issueBlock.dataset.tone = plan.hasProblems ? "error" : "warning";
-    issueDisclosure.hidden = details.length === 0;
+    if (details.length > 0) actionDetails.show(
+      `查看 ${details.length.toLocaleString("zh-TW")} 個${plan.hasProblems ? "問題" : "提醒"}`,
+      plan.hasProblems ? "error" : "warning",
+      problemLink,
+      outputIssueList,
+    );
+  }
+
+  function renderActionError(title: string, detail: string, canRetry: boolean, key: string): void {
+    clearOutputIssues();
+    downloadStatus.removeAttribute("aria-busy");
+    downloadSpinner.hidden = true;
+    cancelButton.disabled = true;
+    cancelButton.textContent = "取消下載";
+    downloadButton.disabled = !canRetry;
+    downloadStatus.dataset.tone = "error";
+    downloadTitle.textContent = title;
+    downloadSummary.textContent = "請再試一次。";
+    outputIssueList.append(Object.assign(document.createElement("li"), { textContent: detail }));
+    actionDetails.show("查看詳細資料", "error", outputIssueList);
+    transition.update(key);
   }
 
   return {
@@ -63,15 +82,21 @@ export function createOutputView(): OutputView {
       cancelButton.addEventListener("click", options.onCancel);
       downloadButton.addEventListener("click", options.onDownload);
     },
-    render(plan, format, busy, cancelling) {
+    render(plan, format, busy, cancelling, progress) {
       clearOutputIssues();
+      downloadStatus.dataset.tone = "neutral";
       const presentation = OUTPUT_PRESENTATIONS[format];
       const processing = busy || plan.preparationState === "loading";
       downloadStatus.toggleAttribute("aria-busy", processing);
       downloadSpinner.hidden = !processing;
       cancelButton.disabled = !busy || cancelling;
       cancelButton.textContent = cancelling ? "正在取消" : "取消下載";
-      downloadSummary.textContent = `${FILE_FORMAT_LABELS[fileFormatForOutput(format)]}：${plan.totalSummary.fileCount.toLocaleString("zh-TW")} 個輸出檔案，已勾選 ${plan.totalSummary.selectedRows.toLocaleString("zh-TW")} 列${plan.totalSummary.omittedFileCount > 0 ? `；略過 ${plan.totalSummary.omittedFileCount.toLocaleString("zh-TW")} 個未勾選檔案` : ""}。`;
+      downloadSummary.textContent = busy && !cancelling && progress
+        ? fileProgressDetail(progress, {
+          processingVerb: "處理",
+          finalizing: "正在整理下載",
+        })
+        : `${FILE_FORMAT_LABELS[fileFormatForOutput(format)]}：${plan.totalSummary.fileCount.toLocaleString("zh-TW")} 個輸出檔案，已勾選 ${plan.totalSummary.selectedRows.toLocaleString("zh-TW")} 列${plan.totalSummary.omittedFileCount > 0 ? `；略過 ${plan.totalSummary.omittedFileCount.toLocaleString("zh-TW")} 個未勾選檔案` : ""}。`;
       downloadButton.textContent = plan.totalSummary.fileCount > 1 ? "下載 ZIP" : presentation.buttonLabel;
       if (busy) {
         downloadButton.disabled = true;
@@ -92,10 +117,12 @@ export function createOutputView(): OutputView {
         return;
       }
       if (plan.preparationState === "error") {
-        downloadButton.disabled = true;
-        downloadTitle.textContent = "無法完成輸出檢查";
-        downloadSummary.textContent = plan.preparationError ?? "請重新選擇輸出格式後再試一次。";
-        transition.update("preparation-error");
+        renderActionError(
+          "無法完成輸出檢查",
+          plan.preparationError ?? "請重新選擇輸出格式後再試一次。",
+          false,
+          "preparation-error",
+        );
         return;
       }
       if (plan.hasProblems) {
@@ -115,15 +142,7 @@ export function createOutputView(): OutputView {
       transition.update(plan.replacementRowCount > 0 ? "ready-with-notices" : "ready");
     },
     renderError(detail, canRetry) {
-      clearOutputIssues();
-      downloadStatus.removeAttribute("aria-busy");
-      downloadSpinner.hidden = true;
-      cancelButton.disabled = true;
-      cancelButton.textContent = "取消下載";
-      downloadButton.disabled = !canRetry;
-      downloadTitle.textContent = "無法建立下載";
-      downloadSummary.textContent = detail;
-      transition.update("download-error");
+      renderActionError("無法建立下載", detail, canRetry, "download-error");
     },
     save(output) {
       downloadBlob(output.blob, output.filename);

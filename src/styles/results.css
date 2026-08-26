@@ -686,41 +686,6 @@
   margin-top: 1rem;
 }
 
-.action-issue-disclosure {
-  margin-top: 0.4rem;
-}
-
-.action-issue-toggle {
-  display: inline-flex;
-  min-height: 2rem;
-  align-items: center;
-  padding-block: 0.2rem;
-  padding-left: 0;
-  border: 0;
-  color: var(--color-accent-text);
-  background: transparent;
-  font-size: 0.88rem;
-  font-weight: 800;
-}
-
-.action-issue-toggle:hover,
-.action-issue-disclosure[open] > .action-issue-toggle {
-  text-decoration: underline;
-}
-
-.action-issue-disclosure .issue-detail-block {
-  margin-top: 0.35rem;
-}
-
-.action-issue-list {
-  max-height: 12rem;
-  margin: 0;
-  padding-left: 1.25rem;
-  overflow-y: auto;
-  font-size: 0.82rem;
-  line-height: 1.55;
-}
-
 @container panel (max-width: 36rem) {
   .inventory-table {
     --inventory-file-column-width: 17rem;

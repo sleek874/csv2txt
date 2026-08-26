@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { ActionInterruptedError } from "../src/app/batch/batch-client.ts";
 import { createAdvancedController } from "../src/app/sections/advanced/advanced-controller.ts";
 import { createWorkspaceModel } from "../src/app/state/workspace-model.ts";
 import { FILE_SIZE_LIMIT_BYTES } from "../src/core/file-size-policy.ts";
+
+const runtimeClient = {
+  runtime() { return { state: "ready", error: null }; },
+  subscribeRecovered() { return () => undefined; },
+};
 
 function selectedFileWithIssues() {
   const values = Array(15).fill("");
@@ -67,6 +73,7 @@ test("advanced download ignores data issues and expands duplicate reference matc
 
   let callbacks;
   let state;
+  let displayedProgress = null;
   let createdRequest;
   let deferResult = false;
   let releaseResult;
@@ -76,9 +83,11 @@ test("advanced download ignores data issues and expands duplicate reference matc
   let sheetRequestCount = 0;
   const controller = createAdvancedController({
     batchClient: {
+      ...runtimeClient,
       async clearReference() {},
-      async createAdvancedOutput(fileIds, keyColumnIndex, selectedColumnIndices) {
+      async createAdvancedOutput(fileIds, keyColumnIndex, selectedColumnIndices, onProgress) {
         createdRequest = { fileIds, keyColumnIndex, selectedColumnIndices };
+        onProgress({ current: 1, phase: "finalizing", total: 1, virtualPath: "primary.csv" });
         return {
           blob: new Blob([new Uint8Array([1])]),
           filename: "advanced.xlsx",
@@ -120,7 +129,10 @@ test("advanced download ignores data issues and expands duplicate reference matc
     view: {
       bind(value) { callbacks = value; },
       fileInput() { return { click() {} }; },
-      render(value) { state = value; },
+      render(value) {
+        state = value;
+        if (value.outputProgress) displayedProgress = value.outputProgress;
+      },
       save(output) { savedOutput = output; },
     },
   });
@@ -164,6 +176,9 @@ test("advanced download ignores data issues and expands duplicate reference matc
   await controller.whenIdle();
   assert.deepEqual(createdRequest.fileIds, ["primary"]);
   assert.equal(savedOutput.filename, "advanced.xlsx");
+  assert.deepEqual(displayedProgress, {
+    current: 1, phase: "finalizing", total: 1, virtualPath: "primary.csv",
+  });
 
   deferResult = false;
   callbacks.onSheetChange("Other");
@@ -181,6 +196,7 @@ test("reference Excel uses the shared 100 MiB input limit", async () => {
   let state;
   const controller = createAdvancedController({
     batchClient: {
+      ...runtimeClient,
       async clearReference() {},
       async getAdvancedResult() {
         return { resultRowCount: 0, selectedRowCount: 0, unmatchedRowCount: 0 };
@@ -209,7 +225,7 @@ test("reference Excel uses the shared 100 MiB input limit", async () => {
   });
   await controller.whenIdle();
   assert.equal(inspectCount, 1);
-  assert.equal(state.error, null);
+  assert.equal(state.referenceError, null);
 
   callbacks.onReferenceChosen({
     async arrayBuffer() { throw new Error("oversized files must be rejected before reading"); },
@@ -218,5 +234,58 @@ test("reference Excel uses the shared 100 MiB input limit", async () => {
   });
   await controller.whenIdle();
   assert.equal(inspectCount, 1);
-  assert.equal(state.error, "參照 Excel 超過 100 MB，請選擇較小的檔案。");
+  assert.equal(state.referenceError, "參照 Excel 超過 100 MB，請選擇較小的檔案。");
+  assert.equal(state.downloadError, null);
+});
+
+test("reference and advanced-download errors stay in their owning cards", async () => {
+  const model = createWorkspaceModel();
+  model.setInputFormat("csv");
+  model.addBatch([{ id: "input", kind: "file", name: "primary.csv" }], [{
+    file: selectedFileWithIssues(), id: "primary", relativePath: "primary.csv", size: 1,
+    sourceFormat: "csv", sourceId: "input", virtualPath: "primary.csv",
+  }]);
+  let callbacks;
+  let state;
+  let failReference = true;
+  const interrupted = () => new ActionInterruptedError("這項操作在自動重試後再次中斷。");
+  const controller = createAdvancedController({
+    batchClient: {
+      ...runtimeClient,
+      async clearReference() {},
+      async createAdvancedOutput() { throw interrupted(); },
+      async getAdvancedResult() {
+        return { resultRowCount: 1, selectedRowCount: 1, unmatchedRowCount: 0 };
+      },
+      async inspectReference() {
+        if (failReference) throw interrupted();
+        return { headers: ["ID"], issues: [], sheetName: "Reference", sheetNames: ["Reference"] };
+      },
+    },
+    model,
+    status: { announce() {} },
+    unloadGuard: { setPendingFile() {} },
+    view: {
+      bind(value) { callbacks = value; },
+      fileInput() { return { click() {} }; },
+      render(value) { state = value; },
+      save() {},
+    },
+  });
+  controller.bind();
+  const file = { async arrayBuffer() { return new ArrayBuffer(1); }, name: "reference.xlsx", size: 1 };
+
+  callbacks.onReferenceChosen(file);
+  await controller.whenIdle();
+  assert.equal(state.referenceError, "這項操作在自動重試後再次中斷。");
+  assert.equal(state.downloadError, null);
+
+  failReference = false;
+  callbacks.onReferenceChosen(file);
+  await controller.whenIdle();
+  assert.equal(state.referenceError, null);
+  callbacks.onDownload();
+  await controller.whenIdle();
+  assert.equal(state.referenceError, null);
+  assert.equal(state.downloadError, "這項操作在自動重試後再次中斷。");
 });

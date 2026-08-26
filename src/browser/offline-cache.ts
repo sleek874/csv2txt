@@ -97,18 +97,13 @@ export function createOfflineCache(options: OfflineCacheOptions) {
 
       const scope = new URL(options.baseUrl, window.location.href).href;
       const existingRegistration = await navigator.serviceWorker.getRegistration(scope);
-      const registration = existingRegistration
-        ?? await navigator.serviceWorker.register(`${options.baseUrl}sw.js`, {
+      if (!existingRegistration) {
+        await navigator.serviceWorker.register(`${options.baseUrl}sw.js`, {
           scope: options.baseUrl,
           updateViaCache: "none",
         });
-      const readyRegistration = await navigator.serviceWorker.ready;
-
-      if (existingRegistration) {
-        void registration.update().catch(() => {
-          // Keep the current offline version when an update check cannot reach the network.
-        });
       }
+      const readyRegistration = await navigator.serviceWorker.ready;
 
       return readyRegistration.active;
     })().catch((error: unknown) => {

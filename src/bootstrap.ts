@@ -2,10 +2,11 @@ import { installTheme } from "./browser/theme";
 
 function revealApplication(): void {
   const app = document.querySelector<HTMLElement>("#app");
-  if (app) {
-    app.removeAttribute("aria-busy");
+  const content = document.querySelector<HTMLElement>("#app-content");
+  if (!content?.dataset.runtimeLocked) {
+    app?.removeAttribute("aria-busy");
+    content?.removeAttribute("inert");
   }
-  document.querySelector<HTMLElement>("#app-content")?.removeAttribute("inert");
   document.documentElement.classList.remove("js-booting");
 }
 
