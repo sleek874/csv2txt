@@ -92,6 +92,20 @@ npm run build
 npm run preview
 ```
 
+開發伺服器另提供不進正式建置的 worker 復原測試介面。先加入合成測試檔，再開啟瀏覽器 Console：
+
+```js
+csv2txtTest.help()
+csv2txtTest.state()
+await csv2txtTest.worker("msgerr")
+await csv2txtTest.worker("error")
+await csv2txtTest.worker("fatal")
+```
+
+命令會走正式的全站復原路徑。閒置時的 `msgerr`／`error` 超過 300ms 才顯示「正在處理背景資料」；執行可安全重試的操作時會鎖定畫面、靜默復原並重試一次。錯誤內容只放在收合的「查看詳細資料」。`fatal` 會直接顯示「無法處理背景資料」與「重新載入」。
+
+同一操作重試後再次中斷時，對應操作卡只顯示簡短錯誤；「查看詳細資料」會顯示「這項操作在自動重試後再次中斷。」。
+
 正式建置輸出在 `dist/`。只有在有明確用途時才新增或更新依賴，並同時提交 `package.json` 與 `package-lock.json`。本專案預設停用 dependency lifecycle scripts；不得為方便而全域解除。
 
 開發與 coding-agent 協作以可供人理解、驗證的最小完整變更為原則；詳見 [貢獻指南](CONTRIBUTING.md)。

@@ -165,6 +165,7 @@ src/
   app/
     batch/
       protocol.ts
+      worker-channel.ts
       batch-client.ts
       batch-worker.ts
       batch-engine.ts
@@ -204,9 +205,12 @@ src/
       resource-policy.ts
     shell/
       app-status.ts
+      deferred-feedback.ts
+      action-details.ts
       readiness-view.ts
       status-indicator.ts
       state-transition.ts
+      worker-runtime-dialog.ts
   browser/
     advanced-preferences.ts
     dom.ts
@@ -218,7 +222,7 @@ src/
 
 CSV、BIG-5E TXT 與 Spreadsheet 是三個 tabular codec，各自擁有 parse 與 serialize。ZIP 是 container codec，交換 archive entries 而非 logical rows，因此放在 `core/archive/`，也不成為格式選項。格式分類與 active／other 投影集中在 `file-formats.ts` 及 `workspace-selectors.ts`，controller 與 view 不各自重寫副檔名規則。
 
-`src/main.ts` 只建立共享 model、resource manager、controllers 與 views，並連接頂層生命週期。每個 view 只查詢自己 section root 內的元素；跨 section 的 `workspace-model.ts` 只保存輸入 family、列納入決策、整批輸出格式與已公開的檔案摘要。Section 1 controller 擁有 `adding／cancelling／removing／restoring／resetting／idle` 操作狀態，並以同一個 300ms feedback gate 控制新增與移除的 `quiet／visible` 呈現；Section 2 controller 擁有 output assessment 與 `idle／generating／cancelling／error` generation 狀態；Section 3 controller 擁有 reference、join 與 generation 狀態。各 section 只從共用摘要與自己的 dependency key 推導畫面，不把 loading／error 寫回共享 model。Section 1 的互斥 row outcome 與 Section 2 的 download problem 都由 active snapshot 即時計算，不建立第二套 summary state；頁碼、篩選、tabs 與 disclosure 等純呈現狀態留在各 view。`file-picker-view.ts` 只呈現新增鎖與獨立的清空可用狀態，`file-operation-status-view.ts` 擁有固定資訊區的狀態與情境操作，`file-table-view.ts` 只提供 selected-format 與 other 清單共用的 spacer／empty row 及 footer 更新。selected-format／other tabpanel 只擁有對應的固定高度 file table；共享 preview 是 tabpanel 的 sibling，由 `input-section-view.ts` 保留內容，並在 other tab 啟用時以 `visibility`、`inert` 與 `aria-hidden` 隱藏但保留 layout geometry。`state-transition.ts` 只依 view 提供的 semantic state key 重播共用的 commit 後 opacity settle，不擁有流程狀態或延遲計時。
+`src/main.ts` 只建立共享 model、resource manager、controllers 與 views，並連接頂層生命週期。每個 view 只查詢自己 section root 內的元素；跨 section 的 `workspace-model.ts` 只保存輸入 family、列納入決策、整批輸出格式與已公開的檔案摘要。Section 1 controller 擁有 `adding／cancelling／resetting／idle` 操作狀態；移除與復原是立即套用、可由 journal 重播的使用者意圖，不另建等待狀態。Section 2 controller 擁有 output assessment 與 `idle／generating／cancelling／error` generation 狀態。Section 3 的 reference 與 download error 分開保存，兩者不共用錯誤區。各 section 只從共用摘要與自己的 dependency key 推導畫面，不把 loading／error 寫回共享 model，也不保存 worker state。Section 1 的互斥 row outcome 與 Section 2 的 download problem 都由 active snapshot 即時計算，不建立第二套 summary state；頁碼、篩選與 tabs 等純呈現狀態留在各 view。`action-details.ts` 擁有 action detail 的顯示、清除、tone、單一展開、點擊外部收合、Escape 與焦點還原；Section 1–3 的 view 只提供標籤與內容。相同元件以 `data-display="floating"` 使用單一 absolute、實色、外層捲動面板；worker modal 重用同一盒子但保持 inline。`file-picker-view.ts` 只呈現新增鎖與獨立的清空可用狀態，`file-operation-status-view.ts` 擁有固定資訊區的狀態與情境操作，`file-table-view.ts` 只提供 selected-format 與 other 清單共用的 spacer／empty row 及 footer 更新。selected-format／other tabpanel 只擁有對應的固定高度 file table；共享 preview 是 tabpanel 的 sibling，由 `input-section-view.ts` 保留內容，並在 other tab 啟用時以 `visibility`、`inert` 與 `aria-hidden` 隱藏但保留 layout geometry。`state-transition.ts` 只依 view 提供的 semantic state key 重播共用的 commit 後 opacity settle，不擁有流程狀態或延遲計時。
 
 Section 3 是沒有 error、warning 或 validation gate 的 minimal working model。`core/advanced/lookup.ts` 只負責勾選列投影（包括欄位8的 `1 → 男`、`2 → 女` mapping）與純資料 join；controller 保存 reference workbook、worksheet、key 與欄位選擇，view 只處理獨立 picker、mapping controls、摘要、預設收合的提醒 disclosure 與下載。`browser/advanced-preferences.ts` 只保存本機 salt 與 header 的 SHA-256 fingerprints，controller 在 reference sheet 解析後還原為目前 indices；不保存 header、檔名或 sheet name。Reference duplicate 以 one-to-many 結果展開，未命中以空白參照值保留原列，兩者都不是 blocking issue。
 
@@ -239,7 +243,7 @@ Batch node 至少包含：
 
 一般 UI 只固定顯示 `TXT`、`CSV`、`XLSX` family，不顯示 decoder 或技術堆疊；只有問題需要診斷時才在「查看技術資訊」揭露必要證據。
 
-每次 picker selection 是 controller-owned transaction。Worker 可暫存該次已解析檔案，但 controller 只在整批完成時以一次 model commit 公開 sources 與 items；失敗分類同樣只屬於該次結果。取消以 batch token 停止後續來源，並以 source-scoped worker cancellation 在 ZIP entry 與 parse 邊界合作停止目前來源，再移除該次所有 worker 暫存；不得清除先前工作區。移除與復原都先等待 worker command 成功，再更新 model，因此自動選取與預覽不會看見 worker 尚未持有的檔案。「清空清單」可搶先任何主要工作區操作，以新的 workspace epoch 使舊 request／response 失效。
+每次 picker selection 是 controller-owned transaction。Worker 可暫存該次已解析檔案，但 controller 只在整批完成時以一次 model commit 公開 sources 與 items；失敗分類同樣只屬於該次結果。取消以 batch token 停止後續來源，並以 source-scoped worker cancellation 在 ZIP entry 與 parse 邊界合作停止目前來源，再移除該次所有 worker 暫存；不得清除先前工作區。移除、復原與列勾選先同步更新 client journal 與 UI；worker request 成功後才公告，一般失敗同時回滾兩者，worker 中斷則由 journal replay 完成。「清空清單」可搶先任何主要工作區操作，以新的 workspace epoch 使舊 request／response 失效。
 
 ## 7. Worker 邊界
 
@@ -252,9 +256,13 @@ ZIP、Excel、CSV、BIG-5E TXT、驗證、標準／進階輸出與 ZIP 輸出由
 - Batch output format。
 - Concise application status。
 
-`protocol.ts` 定義 request ID、輸入／預覽／選取／輸出／取消輸出／進階流程命令與進度事件；`batch-client.ts` 是唯一 worker 生命週期 owner，負責 transferable input bytes、stale response 隔離、目前頁與相鄰頁 cache。Worker error、message decode error 或同步 postMessage 失敗都會拒絕相關 request；不可用的 worker 會終止，下一次操作才建立乾淨 instance。`batch-worker.ts` 只接收訊息並轉交 `batch-engine.ts`；engine 編排 active files、output generation token 與參照 workbook，並把重複 header、空白 header 與未儲存公式結果依類型整理為有界的 reference 提醒摘要，不把整份 issue graph 傳回主執行緒。`compact-workspace.ts` 保存 column-oriented values、selection bitset 與 sparse diagnostics，`workspace-summary.ts` 建立清單／輸出問題摘要，`preview-query.ts` 只建立最多 100 rows 的 page DTO，`standard-output.ts` 與 `advanced-data.ts` 分別投影標準輸出與進階查詢資料；`output-artifact.ts` 建立跨 worker 傳遞的 immutable `Blob`。進階摘要重用參照 key index 與主要資料 key counts，不建立完整 join rows，下載時才逐列投影。`scheduler.ts` 負責節流進度及逐檔讓出 worker event loop。
+`protocol.ts` 定義 worker 命令、結果、進度與 fatal 事件。來源新增進度依 `sourceId` 路由；標準與進階下載進度依 worker `requestId` 路由到該次 pending request，避免並行、取消或自動重試的舊進度更新目前卡片。私有 `worker-channel.ts` 只管理 Worker instance、request ID、pending promise、`postMessage` 與原生事件；它不認識 workspace、journal 或 UI。公開 `batch-client.ts` 是唯一應用層入口，集中管理 `ready → recovering → ready／failed`、transferable input、stale response、preview cache、最小 replay journal 與每類 action policy。Journal 只保留已公開頂層 `File`、接受項目 manifest、永久丟棄／暫時移除項目、已取消勾選的 source rows 與 Section 3 reference `File`／sheet，不複製 compact IR。Worker fault 會停止舊 channel、拒絕其 pending request，並由單一 recovery promise 依來源順序重建、核對 manifest、套用移除／勾選與 reference；重建中再次 fault 則進入 `failed`，不建立空 worker 配合舊 UI。可安全重試的長操作在全站鎖定期間靜默復原並重試一次；第二次中斷以 `ActionInterruptedError` 結束該 action，但已恢復的 worker 保持 `ready`。journal-backed intent 由 replay 完成；衍生讀取則由 controller 在 recovered event 後按目前 UI 重新查詢。
+
+各 section 不訂閱或保存 worker runtime。`worker-runtime-dialog.ts` 是唯一 runtime view：所有非 `ready` 狀態都把主要內容設為 inert；閒置復原超過共用 300ms delay 才顯示 modal，covered action 復原保持靜默，只有 `failed` 顯示「無法處理背景資料」。原始錯誤預設收合，唯一操作為重新載入。`batch-worker.ts` 只接收訊息、回報未處理錯誤並轉交 `batch-engine.ts`；engine 編排 active files、output generation token 與參照 workbook，並把重複 header、空白 header 與未儲存公式結果依類型整理為有界的 reference 提醒摘要，不把整份 issue graph 傳回主執行緒。`compact-workspace.ts` 保存 column-oriented values、selection bitset 與 sparse diagnostics，`workspace-summary.ts` 建立清單／輸出問題摘要，`preview-query.ts` 只建立最多 100 rows 的 page DTO，`standard-output.ts` 與 `advanced-data.ts` 分別投影標準輸出與進階查詢資料；`output-artifact.ts` 建立跨 worker 傳遞的 immutable `Blob`。進階摘要重用參照 key index 與主要資料 key counts，不建立完整 join rows，下載時才逐列投影。`scheduler.ts` 負責節流進度及逐檔讓出 worker event loop。
 
 Section 2／3 以目前格式、canonical active file IDs、各檔案既有 `selectionRevision` 與 Section 3 mapping 組成衍生 dependency key；不另存跨 section 的 output-intent state。建立結果返回主執行緒後若 key 已改變，只丟棄舊結果並顯示可重試提示。提示是否停用下載必須重新取自目前 output plan，不得沿用舊 generation 的 disabled 狀態。
+
+Section 2 建立輸出時，`batch-client.ts` 同時持有單一 active-output lease。Section 0／1 在影響目前輸出的操作意圖開始時使 lease 失效；client 立即送出既有 `cancel-output`，Section 2 轉為 mutation-cancelling 狀態。ZIP writer 已在每個 entry 前後檢查 generation 並 yield，因此最多完成目前 entry 就停止；controller 的 dependency key 終局檢查仍保留為防線。
 
 主執行緒的 `WorkspaceFileRecord` 只保存 file summary、file-level blocking 狀態、blocking output findings 與 replacement row count，不保存完整 rows。一般 row/cell diagnostics 留在 worker 的 sparse maps，只有目前頁相關項目跨越 protocol。每個檔案完成既有 parsing、normalization、validation 與 transformation 後，立即轉成 column-oriented compact state：固定小值域欄位使用 byte code；其餘欄位在單檔 distinct value 少於 10 時使用 byte dictionary，否則保存原字串 column。無法安全編碼的原值與其 cell issue 共存於同一筆 sparse detail；`normalizedValue` 是 column base，只有不同的 `finalValue` 才另存 sparse override，避免整批長期保留 row/cell object graph。
 
@@ -266,7 +274,7 @@ Compact state 是儲存方式，不是新的資料規則：重新 materialize �
 
 Worker 採有界、近似序列的重型工作以控制記憶體與結果順序；只有 profiling 證明有益時才提高 concurrency。
 
-資源取捨：packed／dictionary column 會增加建立時的 value-domain 判斷與輸出時的 decode，但一般低基數欄位由每列一個字串 reference 降為一個 byte；高基數欄位在第 10 個 distinct value 時回退為原字串 column，避免維護無效的大 dictionary。ZIP walker 不再同時保留所有 sibling 的展開 bytes，但仍保留使用者選取的 ZIP bytes、目前 member、parser 暫存與 compact workspace；CSV／TXT parser 與 Excel workbook 仍採整檔 materialization。Section 2 先 preflight 全部輸出路徑與資格，再逐檔 materialize、加入 ZIP、釋放並 yield；CSV／TXT 的 ZIP entry 使用 level 6，XLSX 以 pass-through 保存。ZIP chunks 直接成為最終 `Blob` parts，不再合併為完整 `Uint8Array` 或在下載前複製。這仍會保留最終 Blob，並非直接寫入磁碟；單一 SheetJS workbook 也只能在 `write()` 返回後合作取消。進階摘要以 cached reference index 與每檔 selection-revision key counts 換取額外 cache 記憶體，避免每次 UI 摘要都建立完整 primary rows 和 join result；真正下載仍須配置完整結果 rows 與 XLSX bytes。
+資源取捨：packed／dictionary column 會增加建立時的 value-domain 判斷與輸出時的 decode，但一般低基數欄位由每列一個字串 reference 降為一個 byte；高基數欄位在第 10 個 distinct value 時回退為原字串 column，避免維護無效的大 dictionary。ZIP walker 不再同時保留所有 sibling 的展開 bytes，但仍保留使用者選取的 ZIP bytes、目前 member、parser 暫存與 compact workspace；CSV／TXT parser 與 Excel workbook 仍採整檔 materialization。Section 2 先 preflight 全部輸出路徑與資格，再逐檔 materialize、加入 ZIP、釋放、回報逐檔進度並 yield；CSV／TXT 的 ZIP entry 使用 level 6，XLSX 以 pass-through 保存。Section 3 在 canonical file 邊界回報 join 進度，全部 primary files 完成後切換為 finalizing，再建立單一 XLSX。ZIP chunks 直接成為最終 `Blob` parts，不再合併為完整 `Uint8Array` 或在下載前複製。這仍會保留最終 Blob，並非直接寫入磁碟；單一 SheetJS workbook 也只能在 `write()` 返回後合作取消。進階摘要以 cached reference index 與每檔 selection-revision key counts 換取額外 cache 記憶體，避免每次 UI 摘要都建立完整 primary rows 和 join result；真正下載仍須配置完整結果 rows 與 XLSX bytes。
 
 ## 8. Resource reuse
 
@@ -315,17 +323,15 @@ ZIP library 採獨立 lazy chunk，由 `codec-manager` 載入 `core/archive/zip.
 
 ### Offline cache
 
-Vite manifest 繼續是 resource graph 的唯一來源。Service worker group 預計為：
+Vite manifest 繼續是 immutable resource graph 的唯一來源。正式 build 另外產生：
 
-- Base shell。
-- Excel chunk。
-- ZIP chunk。
-- Worker chunk。
-- Preview font。
+- `assets/boot-<content-hash>.js`：仍在 `<head>` 同步執行，檔名由 boot bytes 決定。
+- `release.json`：只保存 schema、content-derived release ID、最低 service-worker protocol、shell URL／SHA-256，以及完整 immutable asset 清單。
+- 穩定 URL 的 `sw.js`：app release 不把 release ID 或 asset 路徑寫入 worker bytes；只有 worker protocol／實作改變時才改變內容。
 
-Build verifier 必須確認 manifest 與 group 一致、沒有遺漏 dynamic asset，且 base budget 不包含 Excel、ZIP 或 font。
+新 worker 在 install 階段先完整 staging `release.json` 指定的 shell 與 assets，成功後才 `skipWaiting()`，activate 只 `clients.claim()`。Active worker 在 fetch event 喚醒時按 15 分鐘節流，同時檢查 `release.json` 與自己的 `registration.update()`；service worker 不依賴持久 timer。新 app release 先補齊共用 immutable asset pool 及 release-specific shell cache，驗證 shell SHA-256 後才原子更新 active release pointer；新 navigation 只取得 active shell，舊 tab 仍可依 hashed URL 使用共用 pool。現階段不做已完成 release 或 shared asset GC；只有失敗且尚未啟用的 shell staging cache會移除。舊版 `csv2txt-app-*`／`csv2txt-fonts` cache 不再參與路由。
 
-Worker 使用獨立 ES module build graph。Service worker 不與 processing worker 交換資料；它只把 emitted worker core、Excel、archive 與 font 靜態資源分組快取。使用者 bytes、IR、issues 與輸出永遠不進入 Cache Storage。CSP 明確使用 `worker-src 'self'`，正式環境仍維持 `connect-src 'none'`。
+主程式只在 fresh browser 尚無 registration 時註冊 `sw.js`，其後的 worker implementation update 由 active worker 負責；`PREPARE_RESOURCES` 訊息暫時保留為 readiness／preview-font 相容介面。Worker 使用獨立 ES module build graph；使用者 bytes、IR、issues 與輸出永遠不進入 Cache Storage。Build verifier 必須確認 release graph 完整、boot hash、shell digest、worker 不含 release-specific bytes、staging-before-activation、self-update、legacy lookup 與無 activate GC；base JavaScript budget 仍不包含 Excel、ZIP 或 font。CSP 明確使用 `worker-src 'self'`，正式環境仍維持 `connect-src 'none'`。
 
 ## 9. Dependency policy
 

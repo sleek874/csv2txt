@@ -40,13 +40,13 @@
 - 未還原 PUA 與預計替代的位置在預覽以 `■` 顯示，code point 留在展開問題區；原始 PUA 仍由 IR 保存。BIG-5E 輸入的無對照 byte segment 在 IR 以 `？` 代替並在預覽該位置顯示 `■`，其餘可解碼內容保留。技術代碼與 byte 證據只在 disclosure 顯示。
 - 使用者選取的來源與參照 Excel、ZIP 內每個 entry 都採 100 MiB 單檔上限；ZIP reader 另限制巢狀深度與項目數，逐項丟棄並記錄 traversal、加密、symlink 與碰撞，整體拒絕 ZIP64、分割式／不可驗證結構及超額累計項目，不限制累計輸入大小。
 - Section 2 的 ZIP 最多 5,000 個 100 MiB entries、最終 500 MiB；先 preflight，再依所選格式逐檔 level-6 deflate 或 XLSX store、yield 並合作取消。零勾選檔案明確略過，不阻擋其他輸出。
-- Excel、ZIP 與預覽字型維持 manifest-derived lazy resource group；正式 CSP 保持 connect-src 'none'。
-- 靜態 build verifier 持續檢查 semantic shell、ARIA reference、legacy residue、離線資源與 JavaScript budget。
+- Excel、ZIP 與預覽字型維持 lazy execution，但由 manifest-derived `release.json` 在 release staging 時一併下載；正式 CSP 保持 connect-src 'none'。
+- 靜態 build verifier 持續檢查 semantic shell、ARIA reference、legacy residue、hashed boot、release graph／shell digest、service-worker staging／retention 與 JavaScript budget。
 
 ## 發布前仍需確認
 
 1. 由實際接收系統使用核准的去識別來源／輸出 pair，確認 BIG-5E bytes、padding、CRLF 與最後一筆 CRLF 均被接受。
-2. 在部署 origin 完成 service-worker 安裝、optional resource 預備、離線 reload 與更新恢復 smoke test。
+2. 在部署 origin 完成 service-worker 首次安裝、app release staging、worker implementation update、同一 release model 內的舊 tab asset 相容、離線 reload 與更新失敗回復 smoke test。
 3. 以鍵盤、螢幕閱讀器、reduced-motion、forced-colors、深／淺色及真實窄螢幕走完整檔案、treegrid、問題 disclosure、分頁與下載流程。
 
 ## 下一階段
@@ -87,6 +87,11 @@ Section 3 已完成：
 - 第一次使用不預選附加欄位；之後以本機 salt 加 SHA-256 header fingerprints 還原相同欄位，不保存 header、檔名或工作表名稱。
 - Primary duplicates 逐列保留；reference duplicates 展開為多筆；未命中保留原列並填入空白參照值。這些資料 issue 不阻止下載或 Section 2 標準輸出。
 - 結果以解析後文字值輸出為單一 `進階輸出-YYYYMMDDHHmm.xlsx`，不保留公式、不打包 ZIP。
+
+後續候選（尚未排入實作）：
+
+- 先解決大型 join rows、worksheet 與完整 XLSX bytes 同時 materialize 的限制；候選方向須能逐列建立工作表 XML、增量封裝 XLSX ZIP 並以有界 chunks 直接輸出，且先證明既有 bytes／儲存格／順序 parity、取消邊界與瀏覽器峰值記憶體。
+- 只有上述大型 XLSX 路徑完成後，才評估以「另存新檔」取得使用者選定的 writable，將增量輸出直接寫入暫存檔並在失敗、取消或 revision 變更時 abort。現階段把已完整建立的 Blob 改寫入 Save As 只改變目的地與權限 UX，不降低主要峰值記憶體，因此不先加入 picker、磁碟快取或可重複下載連結。
 
 ## 不在目前範圍
 
