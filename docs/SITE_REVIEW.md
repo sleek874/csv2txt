@@ -47,7 +47,7 @@ File／ZIP 先依 `TXT`／`CSV`／`XLSX` family 分類；只有目前輸入 fami
 - 正式 CSP 保持 connect-src 'none'；沒有 upload endpoint、telemetry、runtime CDN 或第三方連線。
 - 檔案內容、路徑、issue、IR 與輸出不寫入 localStorage、IndexedDB、URL 或 log；localStorage 只保存 UI theme，以及 Section 3 的本機 salt 與 header SHA-256 fingerprints，不保存可讀 header、檔名或工作表名稱。
 - ZIP 在解壓前檢查中央目錄，限制 entry、深度及每個 entry 的 100 MiB 大小；reader 依 local offset 深度優先、一次展開及處理一個檔案。traversal、控制字元、加密、symlink、未知 compression、碰撞、過深 nested ZIP 與損壞 member 只丟棄並記錄該項，安全 sibling 繼續；ZIP64、分割式／不可驗證的頂層結構及累計 entry quota 仍使整個來源失敗。輸入不限制累計大小。
-- Service worker 的 base、Excel、archive 與 font 群組由 Vite manifest 產生，舊 app cache 會在 activate 清理。
+- Vite manifest 產生完整 immutable asset graph、hashed boot 與最小 `release.json`；穩定 URL 的 service worker 在 release 完整 staging 並驗證 shell 後才切換 active pointer。新 navigation 使用 active shell，舊 tab 可透過共用 asset pool 繼續取得目前 release model 留存的 hashed assets；現階段保留 shared assets 與舊 release shells，不做版本 GC。release model 以前的 app／font caches 不再參與路由。
 - robots.txt、llms.txt 與 sitemap.xml 由正式建置提供；本次 Lighthouse 的 robots fetch 失敗來自 `connect-src 'none'` 阻擋其頁內檢索器，因此保留隱私 CSP 並由 build verifier 檢查內容。
 
 ## 本次驗證
