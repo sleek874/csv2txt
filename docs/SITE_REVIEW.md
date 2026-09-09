@@ -1,11 +1,12 @@
-# 站點健康檢查
+# 站點健康與發布界線
 
-檢查日期：2026-08-24
-範圍：格式分流、來源證據、共同資料管線、CSV／XLSX／TXT／ZIP I/O、工作區 UI 契約、離線建置、安全、dependency、測試與文件。
+證據更新：2026-09-09
+
+本頁整理站點目前的架構保證、release gate 與仍需人工或外部系統確認的界線。範圍涵蓋格式分流、來源證據、共同資料管線、CSV／XLSX／TXT／ZIP I/O、工作區 UI 契約、離線建置、安全、dependency 與測試。
 
 ## 結論
 
-目前工作樹的 Node tests、TypeScript、正式建置與 static build verifier 已通過。2026-08-14 的桌面 headless Chrome smoke 與 Lighthouse 屬於較早的 UI 範圍；本次逐檔輸出、取消下載與摘要調整尚未重跑瀏覽器測試，也不宣稱螢幕閱讀器、原生 picker、下載對話框或真實裝置證據。
+本地 release gate 包含分類式 Node tests、all-file coverage、TypeScript、正式建置與 static build verifier。完整 gate 另以隔離的 Linux Chrome 實際加入 CSV、等待 worker、建立並下載 TXT，檢查桌面／窄螢幕、reduced-motion 與 console／page／HTTP errors，再執行 Lighthouse。這些自動證據仍不代表螢幕閱讀器、原生 picker、下載對話框或真實裝置已驗證。
 
 CSV serializer 使用標準 literal-value 輸出，固定 UTF-8 BOM、CRLF、無標題列並保存最終 IR；需要可靠的試算表文字型別與前置零時使用 XLSX。
 
@@ -48,11 +49,12 @@ File／ZIP 先依 `TXT`／`CSV`／`XLSX` family 分類；只有目前輸入 fami
 - 檔案內容、路徑、issue、IR 與輸出不寫入 localStorage、IndexedDB、URL 或 log；localStorage 只保存 UI theme，以及 Section 3 的本機 salt 與 header SHA-256 fingerprints，不保存可讀 header、檔名或工作表名稱。
 - ZIP 在解壓前檢查中央目錄，限制 entry、深度及每個 entry 的 100 MiB 大小；reader 依 local offset 深度優先、一次展開及處理一個檔案。traversal、控制字元、加密、symlink、未知 compression、碰撞、過深 nested ZIP 與損壞 member 只丟棄並記錄該項，安全 sibling 繼續；ZIP64、分割式／不可驗證的頂層結構及累計 entry quota 仍使整個來源失敗。輸入不限制累計大小。
 - Vite manifest 產生完整 immutable asset graph、hashed boot 與最小 `release.json`；穩定 URL 的 service worker 在 release 完整 staging 並驗證 shell 後才切換 active pointer。新 navigation 使用 active shell，舊 tab 可透過共用 asset pool 繼續取得目前 release model 留存的 hashed assets；現階段保留 shared assets 與舊 release shells，不做版本 GC。release model 以前的 app／font caches 不再參與路由。
-- robots.txt、llms.txt 與 sitemap.xml 由正式建置提供；本次 Lighthouse 的 robots fetch 失敗來自 `connect-src 'none'` 阻擋其頁內檢索器，因此保留隱私 CSP 並由 build verifier 檢查內容。
+- robots.txt、llms.txt 與 sitemap.xml 由正式建置提供；Lighthouse 的 page-context fetch 會被 `connect-src 'none'` 阻擋，因此保留隱私 CSP 並由 build verifier 直接檢查檔案內容。
 
-## 本次驗證
+## 驗證範圍
 
-- `npm run verify`：21 個 Node test files、TypeScript、Vite production build、static build verifier。
+- `npm run test:coverage`：25 個已分類 Node test files；critical scope 為 92.16% statements／lines、81.81% branches、91.34% functions，並套用每檔最低 70% statements／lines、60% branches／functions。
+- `npm run build`：TypeScript、Vite production build、static build verifier。
 - Mapping：已知 BIG-5E／HKSCS 衝突、未知 bytes、完整 mapping round-trip、PUA recovery／unresolved cases。
 - Data：CSV quoting／CRLF／literal values、Excel formatted values／formula cache、208-byte TXT／padding／final CRLF。
 - Pipeline：日期、證號、性別、問號 warning、跨欄、空白列、rejected evidence、TEL transformation、row inclusion、format-specific output gate。
@@ -60,15 +62,15 @@ File／ZIP 先依 `TXT`／`CSV`／`XLSX` family 分類；只有目前輸入 fami
 - UI contracts：雙格式分類、tree aggregation、rejected filter、page-scoped bulk selection、ARIA references、responsive/static style rules。
 - Output state：Node 回歸測試涵蓋建立下載期間切換輸入 family 與合作取消，確認舊檔或部分結果不儲存、spinner 停止，且目前有效下載按鈕恢復可用。
 - Production：CSP、agent discovery、offline manifest groups、no source maps、base／Excel JavaScript budgets。
-- 歷史瀏覽器基線（2026-08-14）：Chrome 151、1280×900 的隔離 profile smoke 載入合成 fixture 後沒有 console warning 或 exception；本次變更未重跑。
-- 歷史 Lighthouse 基線（2026-08-14）：13.4.1 的 Performance 100、Accessibility 100、Best Practices 100、SEO 92；本次變更未重跑。SEO 扣分來自 `connect-src 'none'` 阻擋頁內 robots 檢索器，未為分數放寬 CSP。
+- Headless Chrome：隔離 `/tmp` profile；1280×900 與 390×844 均檢查整頁水平 overflow，實際 `clean-single.csv` 上傳後建立並下載一個 TXT，確認 reduced-motion，並要求沒有 console error、page exception 或 HTTP error。
+- Lighthouse：對 production preview 設定 Performance 80、Accessibility 100、Best Practices 100、SEO 90 的 regression floors，保存完整報告與主要 findings。分數是單次合成量測，不作效能普遍保證。
 
-## 剩餘風險
+## 尚待外部或人工驗證
 
 1. 接收端是否接受這份官方 BIG-5E profile、padding 與 CRLF 尚需核准的去識別 fixture 實測；本機 round-trip 不能替代外部系統 acceptance。
-2. 大型 Excel／ZIP 已移入 dedicated worker；極限 ZIP fixture 的自動測試不證明 306,051 或 2,000,000 列的瀏覽器端到端耗時與記憶體可接受，其中 200 檔 fixture 更只讀取 metadata。2026-08-23 的單次 Node 24 local profile 以 51 檔／306,051 列完整走過 ZIP → parser → compact workspace，約 4.6 秒、maximum RSS 約 571 MiB、GC 後新增 retained heap 約 82 MiB；這不是 Chrome、低記憶體裝置、互動反應或輸出階段的保證。新的逐檔輸出與 Blob path 也尚未以真實 500 MiB 瀏覽器下載驗證。100 MiB 單檔上限不是整批效能或記憶體保證，工作區與 ZIP 累計輸入大小由使用者自行控制。
+2. 大型 Excel／ZIP 已移入 dedicated worker；極限 ZIP fixture 的自動測試不證明 306,051 或 2,000,000 列的瀏覽器端到端耗時與記憶體可接受，其中 200 檔 fixture 更只讀取 metadata。2026-08-23 的單次 Node 24 local profile 以 51 檔／306,051 列完整走過 ZIP → parser → compact workspace，約 4.6 秒、maximum RSS 約 571 MiB、GC 後新增 retained heap 約 82 MiB；這不是 Chrome、低記憶體裝置、互動反應或輸出階段的保證。目前的逐檔輸出與 Blob path 也尚未以真實 500 MiB 瀏覽器下載驗證。100 MiB 單檔上限不是整批效能或記憶體保證，工作區與 ZIP 累計輸入大小由使用者自行控制。
 3. 部署 origin 的 service-worker 安裝、更新與完全離線 reload 尚需瀏覽器 smoke test。
-4. Lighthouse 與本次 headless smoke 不等於 screen reader、forced-colors、reduced-motion、原生 picker、下載對話框或完整鍵盤／觸控旅程；這些仍需人工或正式 browser automation 覆蓋。
+4. Lighthouse 與 headless smoke 不等於 screen reader、forced-colors、原生 picker、下載對話框或完整鍵盤／觸控旅程；這些仍需人工或更完整 browser automation 覆蓋。
 5. 專案本身尚未選定 license；在此之前不應接受第三方 contribution。
 
 後續工作與明確不做的相容範圍見 [ROADMAP.md](ROADMAP.md)，BIG-5E 來源與重建方式見 [BIG5E_MAPPING.md](BIG5E_MAPPING.md)。

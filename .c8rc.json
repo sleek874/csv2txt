@@ -1,0 +1,36 @@
+{
+  "all": true,
+  "src": [
+    "src"
+  ],
+  "extension": [
+    ".ts"
+  ],
+  "include": [
+    "src/core/**/*.ts",
+    "src/app/adapters/**/*.ts",
+    "src/app/batch/**/*.ts",
+    "src/app/resources/**/*.ts",
+    "src/app/state/**/*.ts",
+    "src/app/sections/**/*-controller.ts",
+    "src/browser/advanced-preferences.ts",
+    "src/browser/offline-cache.ts"
+  ],
+  "exclude": [
+    "src/app/batch/batch-worker.ts",
+    "src/app/batch/protocol.ts",
+    "src/app/state/workspace-types.ts",
+    "src/core/archive/types.ts",
+    "src/core/big5e-mapping.ts",
+    "src/core/formats/types.ts",
+    "src/core/private-use-recovery-mapping.ts"
+  ],
+  "exclude-after-remap": true,
+  "report-dir": "coverage/unit",
+  "reporter": [
+    "text",
+    "json-summary",
+    "lcovonly"
+  ],
+  "skip-full": true
+}

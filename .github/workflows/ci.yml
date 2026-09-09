@@ -29,11 +29,14 @@ jobs:
       - name: Audit dependencies
         run: npm audit --audit-level=high
 
-      - name: Type-check
-        run: npm run check
-
-      - name: Test
-        run: npm test
+      - name: Node tests and coverage
+        run: npm run test:coverage
 
       - name: Build
         run: npm run build
+
+      - name: Headless Chrome smoke
+        run: npm run test:browser
+
+      - name: Lighthouse
+        run: npm run audit:lighthouse

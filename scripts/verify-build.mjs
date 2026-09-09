@@ -361,6 +361,11 @@ assert.doesNotMatch(
   /registration\.update\(/u,
   "The main app must leave subsequent worker update checks to the active worker.",
 );
+assert.doesNotMatch(
+  offlineCacheSource,
+  /include(?:Archive|Excel)/u,
+  "Offline preparation must not retain ignored optional-resource flags.",
+);
 
 verifyHtmlReferences(indexHtml);
 assert.match(indexHtml, /<h1>離線資料轉換<\/h1>/u);
