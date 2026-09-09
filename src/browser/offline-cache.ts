@@ -21,8 +21,6 @@ interface OfflinePreparationResult {
 }
 
 interface OfflinePreparationRequest {
-  includeArchive: boolean;
-  includeExcel: boolean;
   type: "PREPARE_RESOURCES";
 }
 
@@ -39,11 +37,7 @@ function runWhenIdle(task: () => void): void {
   }, IDLE_PREPARATION_DELAY_MS);
 }
 
-function requestPreparation(
-  worker: ServiceWorker,
-  includeExcel: boolean,
-  includeArchive: boolean,
-): Promise<void> {
+function requestPreparation(worker: ServiceWorker): Promise<void> {
   return new Promise((resolve, reject) => {
     const channel = new MessageChannel();
 
@@ -60,11 +54,7 @@ function requestPreparation(
       reject(new Error("無法確認離線資源狀態。"));
     };
 
-    const request: OfflinePreparationRequest = {
-      includeArchive,
-      includeExcel,
-      type: "PREPARE_RESOURCES",
-    };
+    const request: OfflinePreparationRequest = { type: "PREPARE_RESOURCES" };
     worker.postMessage(request, [channel.port2]);
   });
 }
@@ -77,12 +67,8 @@ async function loadPreviewFont(): Promise<void> {
   }
 }
 
-async function activatePreviewFont(
-  worker: ServiceWorker,
-  includeExcel: boolean,
-  includeArchive: boolean,
-): Promise<void> {
-  await requestPreparation(worker, includeExcel, includeArchive);
+async function activatePreviewFont(worker: ServiceWorker): Promise<void> {
+  await requestPreparation(worker);
   await loadPreviewFont();
 }
 
@@ -134,7 +120,7 @@ export function createOfflineCache(options: OfflineCacheOptions) {
           return;
         }
 
-        void activatePreviewFont(worker, true, true)
+        void activatePreviewFont(worker)
           .then(() => options.onStateChange("ready"))
           .catch(() => options.onStateChange("error"));
       });
@@ -152,7 +138,7 @@ export function createOfflineCache(options: OfflineCacheOptions) {
     try {
       const worker = await prepareWorker();
       if (worker) {
-        await activatePreviewFont(worker, false, false);
+        await activatePreviewFont(worker);
       } else {
         await loadPreviewFont();
       }

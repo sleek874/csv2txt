@@ -83,14 +83,25 @@ npm run dev
 npm run verify
 ```
 
+含 WSL/Linux Chrome 實際檔案流程與 Lighthouse 報告的完整驗證：
+
+```bash
+npm run verify:full
+```
+
 個別檢查：
 
 ```bash
 npm run check
 npm test
+npm run test:coverage
 npm run build
+npm run test:browser
+npm run audit:lighthouse
 npm run preview
 ```
+
+各測試範圍、coverage 分母／門檻及 browser／Lighthouse 證據界線見 [`docs/TESTING.md`](docs/TESTING.md)。
 
 開發伺服器另提供不進正式建置的 worker 復原測試介面。先加入合成測試檔，再開啟瀏覽器 Console：
 
@@ -125,8 +136,9 @@ npm run generate:testdata
 - [固定資料與產品規格](docs/DESIGN.md)
 - [架構與資源責任](docs/ARCHITECTURE.md)
 - [BIG-5E 對照來源與重建方式](docs/BIG5E_MAPPING.md)
+- [測試範圍與驗證方式](docs/TESTING.md)
 - [分階段更新計畫](docs/ROADMAP.md)
-- [目前站點健康檢查](docs/SITE_REVIEW.md)
+- [站點健康與發布界線](docs/SITE_REVIEW.md)
 - [貢獻指南](CONTRIBUTING.md)
 - [安全政策](SECURITY.md)
 - [第三方授權](THIRD_PARTY_NOTICES.md)

@@ -82,8 +82,10 @@ Before opening a pull request:
 npm run verify
 ```
 
-`npm run verify` runs the Node test suite, TypeScript check, production build,
-and static build-contract verifier. Run `npm run generate:testdata` only when
+`npm run verify` runs the classified Node suites with all-file coverage gates,
+the TypeScript check, production build, and static build-contract verifier.
+See [the testing guide](docs/TESTING.md) for focused suites and the optional
+Linux Chrome/Lighthouse gate. Run `npm run generate:testdata` only when
 intentionally regenerating the complete synthetic dataset, then review the
 resulting fixture diff and preserve CSV/TXT CRLF bytes.
 

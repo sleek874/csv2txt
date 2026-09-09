@@ -331,7 +331,7 @@ Vite manifest 繼續是 immutable resource graph 的唯一來源。正式 build 
 
 新 worker 在 install 階段先完整 staging `release.json` 指定的 shell 與 assets，成功後才 `skipWaiting()`，activate 只 `clients.claim()`。Active worker 在 fetch event 喚醒時按 15 分鐘節流，同時檢查 `release.json` 與自己的 `registration.update()`；service worker 不依賴持久 timer。新 app release 先補齊共用 immutable asset pool 及 release-specific shell cache，驗證 shell SHA-256 後才原子更新 active release pointer；新 navigation 只取得 active shell，舊 tab 仍可依 hashed URL 使用共用 pool。現階段不做已完成 release 或 shared asset GC；只有失敗且尚未啟用的 shell staging cache會移除。舊版 `csv2txt-app-*`／`csv2txt-fonts` cache 不再參與路由。
 
-主程式只在 fresh browser 尚無 registration 時註冊 `sw.js`，其後的 worker implementation update 由 active worker 負責；`PREPARE_RESOURCES` 訊息暫時保留為 readiness／preview-font 相容介面。Worker 使用獨立 ES module build graph；使用者 bytes、IR、issues 與輸出永遠不進入 Cache Storage。Build verifier 必須確認 release graph 完整、boot hash、shell digest、worker 不含 release-specific bytes、staging-before-activation、self-update、legacy lookup 與無 activate GC；base JavaScript budget 仍不包含 Excel、ZIP 或 font。CSP 明確使用 `worker-src 'self'`，正式環境仍維持 `connect-src 'none'`。
+主程式只在 fresh browser 尚無 registration 時註冊 `sw.js`，其後的 worker implementation update 由 active worker 負責；`PREPARE_RESOURCES` 只觸發完整 release check，完成後再載入 preview font，不接受已失去作用的 optional-resource flags。Worker 使用獨立 ES module build graph；使用者 bytes、IR、issues 與輸出永遠不進入 Cache Storage。Build verifier 必須確認 release graph 完整、boot hash、shell digest、worker 不含 release-specific bytes、staging-before-activation、self-update、legacy lookup 與無 activate GC；base JavaScript budget 仍不包含 Excel、ZIP 或 font。CSP 明確使用 `worker-src 'self'`，正式環境仍維持 `connect-src 'none'`。
 
 ## 9. Dependency policy
 
@@ -384,12 +384,13 @@ Live region 只宣告批次開始、完成、取消與目前選取檔案的重�
 
 ## 12. Verification ownership
 
-- Core tests：fixed profile、normalization、validation、transformation、mapping、serializer。
-- Archive tests：safe path、depth 10、quota、symlink、collision、nested ZIP。
-- Batch tests：decoder assignment、混合來源、filter、status aggregation、output selection、cancel stale work。
-- View tests：rules disclosure、priority、pagination 100、selection、issue disclosure、blocked download。
-- Advanced tests：reference workbook boundaries、exact/duplicate/missing match、stable output ordering；規格確認後才具體化。
-- Build verifier：CSP、semantic shell、ARIA connections、manifest groups、base budget、obsolete settings residue。
-- Browser smoke：雙格式選擇、active／other tabs、keyboard tree、issue disclosure、multi-file picker、download、offline reload。
+驗證依可證明的行為分層，避免把 pure helper test 當成瀏覽器互動證據：
 
-每次 release candidate 都執行 `npm run verify`，並對未能自動驗證的 browser 行為明確記錄限制。
+- Unit：固定 profile、parser、normalization、validation、transformation、mapping、serializer、selector 與瀏覽器資源 policy。
+- Application：controller、worker client／engine、archive traversal、output generation 與 cancellation 等跨模組 state machine。
+- Contract：repository fixtures、跨格式 boundary 與測試分類完整性。
+- Presentation：pure label／projection helper；不宣稱 layout、focus 或 interaction。
+- Static build：CSP、semantic shell、ARIA references、release graph、resource groups、bundle budgets 與 obsolete residue。
+- Browser／Lighthouse：正式建置的真實檔案 smoke、桌面／窄螢幕、reduced-motion、browser errors 與合成 page-load audit。
+
+每個 release candidate 執行 `npm run verify`；具備 Linux Chrome 時再執行 `npm run verify:full`。完整 command、coverage 分母／門檻與人工驗證界線見 [TESTING.md](TESTING.md)。

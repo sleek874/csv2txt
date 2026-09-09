@@ -7,9 +7,17 @@
   "scripts": {
     "dev": "vite",
     "check": "tsc --noEmit",
-    "test": "node --import ./tests/register-typescript.mjs --test tests/*.test.mjs",
+    "test": "node scripts/run-tests.mjs all",
+    "test:unit": "node scripts/run-tests.mjs unit",
+    "test:application": "node scripts/run-tests.mjs application",
+    "test:contract": "node scripts/run-tests.mjs contract",
+    "test:presentation": "node scripts/run-tests.mjs presentation",
+    "test:coverage": "c8 node scripts/run-tests.mjs all && node scripts/verify-coverage.mjs",
+    "test:browser": "node scripts/run-browser-smoke.mjs",
+    "audit:lighthouse": "node scripts/run-lighthouse.mjs",
     "build": "npm run check && vite build && npm run verify:build",
-    "verify": "npm test && npm run build",
+    "verify": "npm run test:coverage && npm run build",
+    "verify:full": "npm run verify && npm run test:browser && npm run audit:lighthouse",
     "verify:build": "node scripts/verify-build.mjs",
     "generate:big5e-mapping": "node scripts/generate-big5e-mapping.mjs",
     "generate:testdata": "node --import ./tests/register-typescript.mjs scripts/generate-testdata.mjs",
@@ -29,6 +37,9 @@
   },
   "devDependencies": {
     "@types/papaparse": "^5.5.2",
+    "c8": "^12.0.0",
+    "lighthouse": "^13.4.1",
+    "puppeteer-core": "^25.9.0",
     "typescript": "^7.0.2",
     "vite": "^8.2.1"
   }
