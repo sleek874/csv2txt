@@ -41,6 +41,6 @@
     "lighthouse": "^13.4.1",
     "puppeteer-core": "^25.9.0",
     "typescript": "^7.0.2",
-    "vite": "^8.2.1"
+    "vite": "^8.2.2"
   }
 }
